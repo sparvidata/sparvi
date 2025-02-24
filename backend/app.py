@@ -46,22 +46,24 @@ def token_required(f):
 @app.route("/api/login", methods=["POST"])
 def login():
     auth_data = request.get_json()
+    print("Received auth_data:", auth_data)  # Debug log
     if not auth_data or not auth_data.get("username") or not auth_data.get("password"):
         return jsonify({"error": "Missing credentials"}), 400
 
     username = auth_data.get("username")
     password = auth_data.get("password")
+    print("Parsed credentials - username:", username, "password:", password)  # Debug log
 
     if username not in users or users[username] != password:
         return jsonify({"error": "Invalid credentials"}), 401
 
-    # Create token that expires in 1 hour
     token = jwt.encode(
         {"user": username, "exp": datetime.datetime.utcnow() + datetime.timedelta(hours=1)},
         app.config["SECRET_KEY"],
         algorithm="HS256"
     )
     return jsonify({"token": token})
+
 
 # Protected profile endpoint: returns profiling results
 @app.route("/api/profile", methods=["GET"])

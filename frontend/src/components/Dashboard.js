@@ -1,28 +1,29 @@
-import React, { useEffect, useState } from "react";
-import axios from "axios";
-import TrendChart from "./TrendChart";
-import AnomalyList from "./AnomalyList";
-import SchemaShift from "./SchemaShift";
+// frontend/src/components/Dashboard.js
+import React, { useEffect, useState } from 'react';
+import { fetchProfile } from '../api';
+import TrendChart from './TrendChart';
+import AnomalyList from './AnomalyList';
+import SchemaShift from './SchemaShift';
 
 function Dashboard() {
   const [profileData, setProfileData] = useState(null);
+  const token = localStorage.getItem('token');
+
+  // Update the connection string to match your environment.
+  const connectionString = "duckdb:///C:/Users/mhard/PycharmProjects/HawkDB/my_database.duckdb";
+  const table = "employees";
 
   useEffect(() => {
-    const fetchProfileData = async () => {
-      try {
-        const token = localStorage.getItem("token");
-        // Adjust the endpoint URL as needed.
-        const response = await axios.get("/api/profile", {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        setProfileData(response.data);
-      } catch (error) {
-        console.error("Error fetching profile data", error);
-      }
-    };
+    const connectionString = "duckdb:///C:/Users/mhard/PycharmProjects/HawkDB/my_database.duckdb";
+    const table = "employees";
 
-    fetchProfileData();
-  }, []);
+    fetchProfile(token, connectionString, table)
+      .then((data) => {
+        console.log("Profile Data:", data);
+        setProfileData(data);
+      })
+      .catch((error) => console.error("Error fetching profile:", error));
+  }, [token]);
 
   return (
     <div className="container mt-5">

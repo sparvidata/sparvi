@@ -1,6 +1,7 @@
+// frontend/src/components/Login.js
 import React, { useState } from "react";
-import axios from "axios";
 import { useNavigate } from "react-router-dom";
+import { loginUser } from "../api"; // This should correctly import the loginUser function
 
 function Login() {
   const navigate = useNavigate();
@@ -11,11 +12,11 @@ function Login() {
   const handleSubmit = async (e) => {
     e.preventDefault();
     try {
-      // Implement your actual login API endpoint here.
-      const response = await axios.post("/api/login", { username, password });
-      localStorage.setItem("token", response.data.token);
+      const data = await loginUser(username, password);
+      localStorage.setItem("token", data.token);
       navigate("/dashboard");
     } catch (err) {
+      console.error(err);
       setError("Invalid credentials");
     }
   };
@@ -27,11 +28,23 @@ function Login() {
       <form onSubmit={handleSubmit}>
         <div className="mb-3">
           <label>Username:</label>
-          <input type="text" className="form-control" value={username} onChange={(e) => setUsername(e.target.value)} required/>
+          <input
+            type="text"
+            className="form-control"
+            value={username}
+            onChange={(e) => setUsername(e.target.value)}
+            required
+          />
         </div>
         <div className="mb-3">
           <label>Password:</label>
-          <input type="password" className="form-control" value={password} onChange={(e) => setPassword(e.target.value)} required/>
+          <input
+            type="password"
+            className="form-control"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            required
+          />
         </div>
         <button type="submit" className="btn btn-primary">Login</button>
       </form>
