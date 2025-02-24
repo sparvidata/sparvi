@@ -4,7 +4,7 @@ import duckdb
 import pandas as pd
 
 # 1️⃣ Setup: Create a persistent DuckDB database
-DB_PATH = r"C:\Users\mhard\PycharmProjects\HawkDB\my_database.duckdb"
+DB_PATH = r"/my_database.duckdb"
 conn = duckdb.connect(DB_PATH)
 
 # Create and populate the employees table
@@ -21,7 +21,7 @@ conn.execute("CREATE OR REPLACE TABLE employees AS SELECT * FROM df")
 conn.close()  # ✅ Close the connection before running the profiler
 
 # 2️⃣ Run the profiler
-PROFILER_PATH = r"C:\Users\mhard\PycharmProjects\HawkDB\data_quality_engine\src\profiler\profiler.py"
+PROFILER_PATH = r"/backend/data_quality_engine\src\profiler\profiler.py"
 DB_CONNECTION = f"duckdb:///{DB_PATH}"
 TABLE_NAME = "employees"
 
