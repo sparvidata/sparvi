@@ -2,6 +2,7 @@ from flask import Flask, render_template, jsonify, request
 import datetime
 import os
 import jwt
+import traceback
 from functools import wraps
 from dotenv import load_dotenv
 from flask_cors import CORS
@@ -29,21 +30,25 @@ def token_required(f):
     @wraps(f)
     def decorated(*args, **kwargs):
         token = None
-        # Get token from Authorization header (Bearer token)
         auth_header = request.headers.get("Authorization", None)
         if auth_header:
             parts = auth_header.split()
             if len(parts) == 2 and parts[0] == "Bearer":
                 token = parts[1]
         if not token:
+            print("DEBUG: No token provided")
             return jsonify({"error": "Token is missing!"}), 401
         try:
+            print("DEBUG: Token received:", token)
             data = jwt.decode(token, app.config["SECRET_KEY"], algorithms=["HS256"])
             current_user = data["user"]
+            print("DEBUG: Token valid for user:", current_user)
         except Exception as e:
+            print("DEBUG: Token decoding error:", str(e))
             return jsonify({"error": "Token is invalid!", "message": str(e)}), 401
         return f(current_user, *args, **kwargs)
     return decorated
+
 
 @app.before_request
 def log_request_info():
@@ -83,7 +88,6 @@ def login():
 @app.route("/api/profile", methods=["GET"])
 @token_required
 def get_profile(current_user):
-    # Use the connection string from query parameters or environment variable
     connection_string = request.args.get("connection_string", os.getenv("DEFAULT_CONNECTION_STRING"))
     table_name = request.args.get("table", "employees")
     try:
@@ -91,6 +95,7 @@ def get_profile(current_user):
         result["timestamp"] = datetime.datetime.now().isoformat()
         return jsonify(result)
     except Exception as e:
+        traceback.print_exc()  # Print the full traceback to your console
         return jsonify({"error": str(e)}), 500
 
 # Optional: a simple index page (for testing or informational purposes)

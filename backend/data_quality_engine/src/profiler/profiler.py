@@ -58,48 +58,71 @@ def profile_table(connection_str: str, table: str) -> Dict[str, Any]:
         # Top 100 Data Samples
         sample_query = f"SELECT * FROM {table} LIMIT 100"
 
-        # Execute Queries wrapped in text()
+        # Build a single query that returns:
+        # 1. Row count
+        # 2. For each column: null count, blank count, distinct count
+        # 3. Then numeric stats and text length stats.
         query = f"""
-        SELECT COUNT(*) AS row_count, {null_counts}, {blank_counts}, {distinct_counts}, {numeric_stats}, {text_length_stats}
+        SELECT 
+            COUNT(*) AS row_count, 
+            {null_counts}, 
+            {blank_counts}, 
+            {distinct_counts}, 
+            {numeric_stats}, 
+            {text_length_stats}
         FROM {table}
         """
         result = conn.execute(text(query)).fetchone()
-
-        # Get Frequent Values
         frequent_values = conn.execute(text(freq_query)).fetchall()
-
-        # Get Data Samples
         samples = conn.execute(text(sample_query)).fetchall()
 
-    # Format output
+    # Now, construct the profile dictionary.
+    # The ordering is:
+    # result[0] = row_count
+    # For i in range(len(column_names)):
+    #   result[i + 1] = null count for column i
+    # For i in range(len(column_names)):
+    #   result[i + len(column_names) + 1] = blank count for column i
+    # For i in range(len(column_names)):
+    #   result[i + 2*len(column_names) + 1] = distinct count for column i
     profile = {
         "table": table,
         "row_count": result[0],
-        "completeness": {col: {"nulls": result[i + 1], "blanks": result[i + len(column_names) + 1]}
-                         for i, col in enumerate(column_names)},
-        "uniqueness": {col: {"distinct_count": result[i + 2 * len(column_names) + 1]}
-                       for i, col in enumerate(column_names)},
+        "completeness": {
+            col: {
+                "nulls": result[i + 1],
+                "blanks": result[i + len(column_names) + 1],
+                "distinct_count": result[i + 2 * len(column_names) + 1]
+            }
+            for i, col in enumerate(column_names)
+        },
         "numeric_stats": {
-            col: {"min": result[i + 3 * len(column_names) + 1],
-                  "max": result[i + 3 * len(column_names) + 2],
-                  "avg": result[i + 3 * len(column_names) + 3],
-                  "sum": result[i + 3 * len(column_names) + 4],
-                  "stdev": result[i + 3 * len(column_names) + 5]}
+            col: {
+                "min": result[i + 3 * len(column_names) + 1],
+                "max": result[i + 3 * len(column_names) + 2],
+                "avg": result[i + 3 * len(column_names) + 3],
+                "sum": result[i + 3 * len(column_names) + 4],
+                "stdev": result[i + 3 * len(column_names) + 5]
+            }
             for i, col in enumerate(numeric_cols)
         },
         "text_length_stats": {
-            col: {"min_length": result[i + 4 * len(column_names) + 1],
-                  "max_length": result[i + 4 * len(column_names) + 2],
-                  "avg_length": result[i + 4 * len(column_names) + 3]}
+            col: {
+                "min_length": result[i + 4 * len(column_names) + 1],
+                "max_length": result[i + 4 * len(column_names) + 2],
+                "avg_length": result[i + 4 * len(column_names) + 3]
+            }
             for i, col in enumerate(text_cols)
         },
-        "frequent_values": {row[0]: {"value": row[1], "frequency": row[2]} for row in frequent_values},
+        "frequent_values": {
+            row[0]: {"value": row[1], "frequency": row[2]} for row in frequent_values
+        },
         "samples": [dict(zip(column_names, row)) for row in samples],
-        "fuzzy_matches": "TODO: Implement fuzzy matching logic",
-        "timestamp": datetime.datetime.now().isoformat()
+        "fuzzy_matches": "TODO: Implement fuzzy matching logic"
     }
 
     return profile
+
 
 if __name__ == "__main__":
     import sys

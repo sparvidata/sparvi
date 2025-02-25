@@ -5,3 +5,4 @@ SQLAlchemy==1.4.46
 duckdb==1.1.1
 Werkzeug==2.1.2
 Flask-Cors==3.0.10
+duckdb-engine==0.15.0
