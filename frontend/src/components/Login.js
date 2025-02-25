@@ -12,14 +12,17 @@ function Login() {
   const handleSubmit = async (e) => {
     e.preventDefault();
     try {
+      console.log("DEBUG: Submitting login", { username, password });
       const data = await loginUser(username, password);
+      console.log("DEBUG: Received token", data.token);
       localStorage.setItem("token", data.token);
       navigate("/dashboard");
     } catch (err) {
-      console.error(err);
+      console.error("DEBUG: Error in login", err);
       setError("Invalid credentials");
     }
   };
+
 
   return (
     <div className="container mt-5">

@@ -4,6 +4,8 @@ import os
 import jwt
 from functools import wraps
 from dotenv import load_dotenv
+from flask_cors import CORS
+
 
 # Load environment variables from .env file
 load_dotenv()
@@ -12,6 +14,7 @@ load_dotenv()
 from data_quality_engine.src.profiler.profiler import profile_table
 
 app = Flask(__name__, template_folder="templates")
+CORS(app)  # This enables CORS for all routes
 
 # Set the secret key from environment variables
 app.config["SECRET_KEY"] = os.getenv("SECRET_KEY", "default_secret_key")
@@ -42,27 +45,38 @@ def token_required(f):
         return f(current_user, *args, **kwargs)
     return decorated
 
+@app.before_request
+def log_request_info():
+    print("DEBUG: Received request:", request.method, request.url)
+    print("DEBUG: Headers:", dict(request.headers))
+    print("DEBUG: Body:", request.get_data(as_text=True))
+
+
 # Login endpoint: verifies credentials and returns a JWT token
 @app.route("/api/login", methods=["POST"])
 def login():
     auth_data = request.get_json()
-    print("Received auth_data:", auth_data)  # Debug log
+    print("DEBUG: Received auth_data:", auth_data)
     if not auth_data or not auth_data.get("username") or not auth_data.get("password"):
         return jsonify({"error": "Missing credentials"}), 400
 
     username = auth_data.get("username")
     password = auth_data.get("password")
-    print("Parsed credentials - username:", username, "password:", password)  # Debug log
+    print("DEBUG: Parsed credentials - username:", username, "password:", password)
 
     if username not in users or users[username] != password:
+        print("DEBUG: Invalid credentials for user:", username)
         return jsonify({"error": "Invalid credentials"}), 401
 
+    # Generate token with PyJWT
     token = jwt.encode(
         {"user": username, "exp": datetime.datetime.utcnow() + datetime.timedelta(hours=1)},
         app.config["SECRET_KEY"],
         algorithm="HS256"
     )
+    print("DEBUG: Token generated for user:", username)
     return jsonify({"token": token})
+
 
 
 # Protected profile endpoint: returns profiling results
