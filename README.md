@@ -1,5 +1,5 @@
-# HawkDB
-An open-source data quality and profiling engine for modern data warehouses. HawkDB monitors data pipelines, detects anomalies, tracks schema changes, and ensures data integrity with sharp precision—like a hawk keeping watch over your data.
+# Sparvi
+An open-source data quality and profiling engine for modern data warehouses. Sparvi monitors data pipelines, detects anomalies, tracks schema changes, and ensures data integrity with sharp precision—like a hawk keeping watch over your data.
 
 This repository contains both the backend (Flask API with a data profiler) and the frontend (React) for the HawkDB Data Profiler MVP.
 
