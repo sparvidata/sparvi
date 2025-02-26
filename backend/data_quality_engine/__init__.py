@@ -1,4 +1,4 @@
-# backend/data_quality_engine/__init__.py
-from .version import __version__
-
-__all__ = ['__version__']
+try:
+    from .version import __version__
+except ImportError:
+    __version__ = "0.1.0"  # Default version if file not found

@@ -197,11 +197,19 @@ def profile_table(connection_str: str, table: str, historical_data: Optional[Dic
     # Populate text patterns
     idx_offset = 3 * len(column_names) + 1 + (8 * len(numeric_cols)) + (3 * len(text_cols))
     for i, col in enumerate(text_cols):
-        profile["text_patterns"][col] = {
-            "numeric_pattern_count": result[idx_offset + i * 3],
-            "email_pattern_count": result[idx_offset + i * 3 + 1],
-            "date_pattern_count": result[idx_offset + i * 3 + 2]
-        }
+        try:
+            profile["text_patterns"][col] = {
+                "numeric_pattern_count": result[idx_offset + i * 3] if idx_offset + i * 3 < len(result) else 0,
+                "email_pattern_count": result[idx_offset + i * 3 + 1] if idx_offset + i * 3 + 1 < len(result) else 0,
+                "date_pattern_count": result[idx_offset + i * 3 + 2] if idx_offset + i * 3 + 2 < len(result) else 0
+            }
+        except IndexError:
+            # Fall back to default values if the index is out of range
+            profile["text_patterns"][col] = {
+                "numeric_pattern_count": 0,
+                "email_pattern_count": 0,
+                "date_pattern_count": 0
+            }
 
     # Populate date stats
     idx_offset = 3 * len(column_names) + 1 + (8 * len(numeric_cols)) + (3 * len(text_cols)) + (3 * len(text_cols))
