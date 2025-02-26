@@ -1,0 +1,65 @@
+name: Version and Changelog Check
+
+on:
+  pull_request:
+    branches: [ main, master ]
+    # Only run on changes to these files/paths
+    paths:
+      - '**/*.py'
+      - 'backend/**'
+      - 'frontend/**'
+      - 'package.json'
+      - 'requirements.txt'
+
+jobs:
+  version-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          fetch-depth: 0  # Fetch all history for all branches and tags
+
+      - name: Check version changes
+        run: |
+          # Get the base branch (usually main or master)
+          BASE_BRANCH=${{ github.base_ref }}
+          
+          # Check Python version file changes
+          if git diff --name-only origin/$BASE_BRANCH HEAD | grep -q "backend/data_quality_engine/version.py"; then
+            echo "✅ Version file was updated"
+          else
+            # Check if any significant files changed that would require a version bump
+            if git diff --name-only origin/$BASE_BRANCH HEAD | grep -q -E '\.py$|requirements\.txt'; then
+              echo "❌ Changes to Python files detected but version.py was not updated"
+              echo "Please update backend/data_quality_engine/version.py"
+              exit 1
+            fi
+          fi
+          
+          # Check package.json version for frontend changes
+          if git diff --name-only origin/$BASE_BRANCH HEAD | grep -q "frontend/"; then
+            if git diff --name-only origin/$BASE_BRANCH HEAD | grep -q "frontend/package.json"; then
+              VERSION_CHANGED=$(git diff origin/$BASE_BRANCH HEAD frontend/package.json | grep -q '"version":' && echo "true" || echo "false")
+              if [ "$VERSION_CHANGED" = "true" ]; then
+                echo "✅ Frontend version was updated"
+              else
+                echo "❌ Changes to frontend files detected but version in package.json was not updated"
+                echo "Please update version in frontend/package.json"
+                exit 1
+              fi
+            fi
+          fi
+
+      - name: Check changelog updates
+        run: |
+          # Get the base branch
+          BASE_BRANCH=${{ github.base_ref }}
+          
+          # Check if CHANGELOG.md was updated
+          if git diff --name-only origin/$BASE_BRANCH HEAD | grep -q "CHANGELOG.md"; then
+            echo "✅ CHANGELOG.md was updated"
+          else
+            echo "❌ CHANGELOG.md was not updated"
+            echo "Please add your changes to CHANGELOG.md"
+            exit 1
+          fi

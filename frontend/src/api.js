@@ -18,3 +18,33 @@ export const fetchProfile = async (token, connectionString, table) => {
   });
   return response.data;
 };
+
+export const fetchValidations = async (token, table) => {
+  const response = await axios.get(`${API_BASE_URL}/api/validations`, {
+    params: { table },
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  return response.data;
+};
+
+export const addValidationRule = async (token, table, rule) => {
+  const response = await axios.post(`${API_BASE_URL}/api/validations`, rule, {
+    params: { table },
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  return response.data;
+};
+
+export const fetchAlertConfig = async (token) => {
+  const response = await axios.get(`${API_BASE_URL}/api/alert-config`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  return response.data;
+};
+
+export const updateAlertConfig = async (token, config) => {
+  const response = await axios.post(`${API_BASE_URL}/api/alert-config`, config, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  return response.data;
+};
