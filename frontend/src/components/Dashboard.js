@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { fetchProfile } from '../api';
+import { fetchProfile, fetchTables } from '../api';
 import TrendChart from './TrendChart';
 import AnomalyList from './AnomalyList';
 import SchemaShift from './SchemaShift';
@@ -297,6 +297,53 @@ function Dashboard() {
                               <td>{typeof stats.stdev === 'number' ? stats.stdev.toFixed(2) : stats.stdev}</td>
                             </tr>
                           ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Date Range Statistics - Add this new section */}
+              {profileData.date_stats && Object.keys(profileData.date_stats).length > 0 && (
+                <div className="card mb-4 shadow-sm">
+                  <div className="card-header">
+                    <h5 className="mb-0">Date Range Statistics</h5>
+                  </div>
+                  <div className="card-body">
+                    <div className="table-responsive">
+                      <table className="table table-striped table-hover">
+                        <thead>
+                          <tr>
+                            <th>Date Column</th>
+                            <th>Min Date</th>
+                            <th>Max Date</th>
+                            <th>Distinct Count</th>
+                            <th>Date Range</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {Object.entries(profileData.date_stats).map(([col, stats]) => {
+                            // Calculate date difference if both min and max exist
+                            let dateRange = '';
+                            if (stats.min_date && stats.max_date) {
+                              const minDate = new Date(stats.min_date);
+                              const maxDate = new Date(stats.max_date);
+                              const diffTime = Math.abs(maxDate - minDate);
+                              const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+                              dateRange = `${diffDays} days`;
+                            }
+
+                            return (
+                              <tr key={col}>
+                                <td>{col}</td>
+                                <td>{stats.min_date ? new Date(stats.min_date).toLocaleDateString() : 'N/A'}</td>
+                                <td>{stats.max_date ? new Date(stats.max_date).toLocaleDateString() : 'N/A'}</td>
+                                <td>{stats.distinct_count}</td>
+                                <td>{dateRange || 'N/A'}</td>
+                              </tr>
+                            );
+                          })}
                         </tbody>
                       </table>
                     </div>

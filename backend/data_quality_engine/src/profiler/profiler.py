@@ -140,19 +140,21 @@ def profile_table(connection_str: str, table: str, historical_data: Optional[Dic
                 date_query = f"""
                 SELECT MIN({col}) AS min_date, 
                        MAX({col}) AS max_date, 
-                       COUNT(DISTINCT {col}) AS distinct_dates
+                       COUNT(DISTINCT {col}) AS distinct_dates,
+                       DATEDIFF('day', MIN({col}), MAX({col})) AS date_range_days
                 FROM {table}
                 """
                 date_result = conn.execute(text(date_query)).fetchone()
                 date_stats[col] = {
                     "min_date": date_result[0],
                     "max_date": date_result[1],
-                    "distinct_count": date_result[2]
+                    "distinct_count": date_result[2],
+                    "date_range_days": date_result[3]
                 }
             except Exception as e:
                 print(f"Error getting date stats for {col}: {str(e)}")
                 date_stats[col] = {
-                    "min_date": None, "max_date": None, "distinct_count": 0
+                    "min_date": None, "max_date": None, "distinct_count": 0, "date_range_days": 0
                 }
 
         # Most Frequent Values
