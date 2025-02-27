@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback} from 'react';
 import { fetchProfile, fetchTables } from '../api';
 import TrendChart from './TrendChart';
 import AnomalyList from './AnomalyList';
@@ -8,7 +8,7 @@ import AlertsPanel from './AlertsPanel';
 import ConnectionForm from './ConnectionForm';
 import { Tabs, Tab } from 'react-bootstrap';
 
-function Dashboard() {
+function Dashboard({ onStoreRefreshHandler }) {
   const [profileData, setProfileData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -20,6 +20,25 @@ function Dashboard() {
 
   const token = localStorage.getItem("token");
 
+  // Define the refresh handler
+  const handleRefresh = () => {
+    // Re-fetch data when the refresh button is clicked
+    if (token && connectionString && tableName) {
+      setProfileData(null);
+      fetchProfile(token, connectionString, tableName)
+        .then(data => setProfileData(data))
+        .catch(err => setError(err.response?.data?.error || 'Failed to refresh data'));
+    }
+  };
+
+  // Share the refresh handler with the parent component
+  useEffect(() => {
+    if (onStoreRefreshHandler) {
+      onStoreRefreshHandler(handleRefresh);
+    }
+  }, [onStoreRefreshHandler, handleRefresh]);
+
+  // Initial data loading
   useEffect(() => {
     const getData = async () => {
       try {
@@ -48,54 +67,35 @@ function Dashboard() {
     }
   }, [token, connectionString, tableName]);
 
-  const handleRefresh = () => {
-    // Re-fetch data when the refresh button is clicked
-    if (token && connectionString && tableName) {
-      setProfileData(null);
-      fetchProfile(token, connectionString, tableName)
-        .then(data => setProfileData(data))
-        .catch(err => setError(err.response?.data?.error || 'Failed to refresh data'));
-    }
-  };
-
   const handleConnectionSubmit = (newConnection, newTable) => {
     setConnectionString(newConnection);
     setTableName(newTable);
-  };
-
-  const handleLogout = () => {
-    localStorage.removeItem("token");
-    window.location.href = "/login";
   };
 
   return (
     <div className="container-fluid mt-3">
       <div className="d-flex justify-content-between align-items-center mb-4">
         <h2>
-          <i className="bi bi-database-check me-2"></i>
           Sparvi Data Profiler
         </h2>
         <div>
-          <button className="btn btn-outline-secondary me-2" onClick={handleRefresh}>
+          <button className="btn btn-outline-secondary" onClick={handleRefresh}>
             <i className="bi bi-arrow-clockwise me-1"></i> Refresh
-          </button>
-          <button className="btn btn-outline-danger" onClick={handleLogout}>
-            <i className="bi bi-box-arrow-right me-1"></i> Logout
           </button>
         </div>
       </div>
 
       <ConnectionForm
-        initialConnection={connectionString}
-        initialTable={tableName}
-        onSubmit={handleConnectionSubmit}
+          initialConnection={connectionString}
+          initialTable={tableName}
+          onSubmit={handleConnectionSubmit}
       />
 
       {error && (
-        <div className="alert alert-danger mt-3" role="alert">
-          <i className="bi bi-exclamation-triangle-fill me-2"></i>
-          {error}
-        </div>
+          <div className="alert alert-danger mt-3" role="alert">
+            <i className="bi bi-exclamation-triangle-fill me-2"></i>
+            {error}
+          </div>
       )}
 
       {loading ? (

@@ -1,21 +1,21 @@
 import React from 'react';
-import { Link, useLocation } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 
 function Header() {
   const location = useLocation();
+  const navigate = useNavigate();
   const isDocumentation = location.pathname.startsWith('/docs');
   const isDashboard = location.pathname.startsWith('/dashboard');
 
   const handleLogout = () => {
     localStorage.removeItem("token");
-    window.location.href = "/login";
+    navigate("/login");
   };
 
   return (
     <nav className="navbar navbar-expand-lg navbar-dark bg-primary">
       <div className="container-fluid">
         <Link className="navbar-brand" to="/">
-          <i className="bi bi-database-check me-2"></i>
           Sparvi
         </Link>
 
