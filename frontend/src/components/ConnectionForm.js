@@ -1,15 +1,62 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import { fetchTables } from '../api';
 
 function ConnectionForm({ initialConnection, initialTable, onSubmit }) {
   const [connectionString, setConnectionString] = useState(initialConnection || '');
   const [tableName, setTableName] = useState(initialTable || '');
   const [showForm, setShowForm] = useState(false);
+  const [tables, setTables] = useState([]);
+  const [loadingTables, setLoadingTables] = useState(false);
+  const [tableError, setTableError] = useState(null);
 
   const handleSubmit = (e) => {
     e.preventDefault();
     onSubmit(connectionString, tableName);
     setShowForm(false);
   };
+
+  const handleConnectionChange = async (e) => {
+    const newConnection = e.target.value;
+    setConnectionString(newConnection);
+
+    if (newConnection) {
+      await loadTables(newConnection);
+    } else {
+      setTables([]);
+    }
+  };
+
+  const loadTables = async (connString) => {
+    try {
+      setLoadingTables(true);
+      setTableError(null);
+      const token = localStorage.getItem("token");
+
+      if (token && connString) {
+        const result = await fetchTables(token, connString);
+        setTables(result.tables || []);
+
+        // If tables are loaded and we don't have a table selected yet,
+        // select the first one by default
+        if (result.tables && result.tables.length > 0 && !tableName) {
+          setTableName(result.tables[0]);
+        }
+      }
+    } catch (error) {
+      console.error("Error loading tables:", error);
+      setTableError("Failed to load tables from database");
+      setTables([]);
+    } finally {
+      setLoadingTables(false);
+    }
+  };
+
+  // Load tables when showing the form and we have a connection string
+  useEffect(() => {
+    if (showForm && connectionString) {
+      loadTables(connectionString);
+    }
+  }, [showForm]);
 
   return (
     <div className="card mb-4 shadow-sm">
@@ -49,7 +96,7 @@ function ConnectionForm({ initialConnection, initialTable, onSubmit }) {
                 className="form-control"
                 id="connectionString"
                 value={connectionString}
-                onChange={(e) => setConnectionString(e.target.value)}
+                onChange={handleConnectionChange}
                 placeholder="e.g., duckdb:///path/to/database.duckdb"
                 required
               />
@@ -60,15 +107,43 @@ function ConnectionForm({ initialConnection, initialTable, onSubmit }) {
 
             <div className="mb-3">
               <label htmlFor="tableName" className="form-label">Table Name</label>
-              <input
-                type="text"
-                className="form-control"
-                id="tableName"
-                value={tableName}
-                onChange={(e) => setTableName(e.target.value)}
-                placeholder="e.g., employees"
-                required
-              />
+              {loadingTables ? (
+                <div className="d-flex align-items-center">
+                  <div className="spinner-border spinner-border-sm me-2" role="status">
+                    <span className="visually-hidden">Loading tables...</span>
+                  </div>
+                  <span>Loading available tables...</span>
+                </div>
+              ) : tables.length > 0 ? (
+                <select
+                  className="form-select"
+                  id="tableName"
+                  value={tableName}
+                  onChange={(e) => setTableName(e.target.value)}
+                  required
+                >
+                  {tables.map(table => (
+                    <option key={table} value={table}>{table}</option>
+                  ))}
+                </select>
+              ) : (
+                <>
+                  <input
+                    type="text"
+                    className="form-control"
+                    id="tableName"
+                    value={tableName}
+                    onChange={(e) => setTableName(e.target.value)}
+                    placeholder="e.g., employees"
+                    required
+                  />
+                  {tableError && (
+                    <div className="form-text text-danger">
+                      {tableError}. Please enter table name manually.
+                    </div>
+                  )}
+                </>
+              )}
             </div>
 
             <div className="d-flex justify-content-end">
@@ -79,6 +154,16 @@ function ConnectionForm({ initialConnection, initialTable, onSubmit }) {
                 <i className="bi bi-lightning-charge-fill me-1"></i>
                 Connect
               </button>
+              {connectionString && !loadingTables && (
+                <button
+                  type="button"
+                  className="btn btn-outline-secondary ms-2"
+                  onClick={() => loadTables(connectionString)}
+                >
+                  <i className="bi bi-arrow-repeat me-1"></i>
+                  Refresh Tables
+                </button>
+              )}
             </div>
           </form>
         </div>

@@ -6,13 +6,11 @@ import traceback
 from functools import wraps
 from dotenv import load_dotenv
 from flask_cors import CORS
-
+from data_quality_engine.src.profiler.profiler import profile_table
+from sqlalchemy import inspect, create_engine
 
 # Load environment variables from .env file
 load_dotenv()
-
-# Import the profiler function from your existing module
-from data_quality_engine.src.profiler.profiler import profile_table
 
 app = Flask(__name__, template_folder="templates")
 CORS(app)  # This enables CORS for all routes
@@ -102,6 +100,24 @@ def get_profile(current_user):
 @app.route("/")
 def index():
     return render_template("index.html")
+
+
+@app.route("/api/tables", methods=["GET"])
+@token_required
+def get_tables(current_user):
+    connection_string = request.args.get("connection_string", os.getenv("DEFAULT_CONNECTION_STRING"))
+    try:
+        # Create engine and get inspector
+        engine = create_engine(connection_string)
+        inspector = inspect(engine)
+
+        # Get all table names
+        tables = inspector.get_table_names()
+
+        return jsonify({"tables": tables})
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
 
 if __name__ == "__main__":
     # In production, ensure you run with HTTPS (via a reverse proxy or WSGI server with SSL configured)

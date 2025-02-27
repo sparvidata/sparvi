@@ -48,3 +48,12 @@ export const updateAlertConfig = async (token, config) => {
   });
   return response.data;
 };
+
+// Fetch all tables for a given connection string
+export const fetchTables = async (token, connectionString) => {
+  const response = await axios.get(`${API_BASE_URL}/api/tables`, {
+    params: { connection_string: connectionString },
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  return response.data;
+};
