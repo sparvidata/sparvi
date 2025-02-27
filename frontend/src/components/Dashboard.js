@@ -13,7 +13,7 @@ function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [connectionString, setConnectionString] = useState(
-    localStorage.getItem('connectionString') || "duckdb:///C:/Users/mhard/PycharmProjects/HawkDB/backend/my_database.duckdb"
+    localStorage.getItem('connectionString') || "duckdb:///C:/Users/mhard/PycharmProjects/sparvidata/backend/my_database.duckdb"
   );
   const [tableName, setTableName] = useState(localStorage.getItem('tableName') || "employees");
   const [activeTab, setActiveTab] = useState('overview');

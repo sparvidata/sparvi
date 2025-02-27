@@ -1,11 +1,22 @@
 import duckdb
 import pandas as pd
 import numpy as np
+import os
 
-# Create a DuckDB database with sample tables for testing
-conn = duckdb.connect("backend/my_database.duckdb")
+# Get the project root directory (one level up from backend directory)
+project_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
 
-# Create employees table
+# Create the database path
+db_path = os.path.join(project_dir, "backend", "my_database.duckdb")
+
+# Connect to the database
+conn = duckdb.connect(db_path)
+
+# Drop existing tables if they exist
+conn.execute("DROP TABLE IF EXISTS employees")
+conn.execute("DROP TABLE IF EXISTS orders")
+
+# Create employees table from DataFrame
 employees = pd.DataFrame({
     "id": range(1, 101),
     "name": ["Employee " + str(i) for i in range(1, 101)],
@@ -21,6 +32,7 @@ employees.loc[15:18, "department"] = None
 employees.loc[25, "salary"] = 500000  # outlier
 employees.loc[50, "email"] = "badformat"  # incorrect format
 
+# Create the employees table directly from the DataFrame
 conn.execute("CREATE TABLE employees AS SELECT * FROM employees")
 
 # Create orders table
@@ -33,6 +45,7 @@ orders = pd.DataFrame({
                         p=[0.7, 0.1, 0.15, 0.05])
 })
 
+# Create the orders table directly from the DataFrame
 conn.execute("CREATE TABLE orders AS SELECT * FROM orders")
 
 print(f"Created sample tables: employees ({len(employees)} rows), orders ({len(orders)} rows)")
