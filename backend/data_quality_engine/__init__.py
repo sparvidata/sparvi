@@ -1,4 +1,4 @@
 try:
     from .version import __version__
 except ImportError:
-    __version__ = "0.1.0"  # Default version if file not found
+    __version__ = "0.2.0"  # Default version if file not found

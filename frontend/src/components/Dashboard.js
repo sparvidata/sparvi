@@ -462,7 +462,10 @@ function Dashboard() {
               <div className="row">
                 <div className="col-md-12">
                   {/* Validation Results */}
-                  <ValidationResults results={profileData.validation_results} />
+                  <ValidationResults
+                    tableName={tableName}
+                    connectionString={connectionString}
+                  />
                 </div>
               </div>
             </Tab>

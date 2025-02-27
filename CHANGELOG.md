@@ -2,6 +2,16 @@
 
 All notable changes to Sparvi will be documented in this file.
 
+## [0.2.0] - 2025-02-27
+### Added
+- Validation rules feature for defining custom data quality checks
+- API endpoints for managing and running validations
+- UI components for creating, viewing and running validation rules
+- SQLite storage for validation rules and history
+- Optional default validation rules
+- Sample validation rules for common data quality checks
+- Documentation section in header
+
 ## [0.1.0] - 2025-02-26
 ### Added
 - Initial implementation of data profiler

@@ -6,8 +6,10 @@ import traceback
 from functools import wraps
 from dotenv import load_dotenv
 from flask_cors import CORS
-from data_quality_engine.src.profiler.profiler import profile_table
 from sqlalchemy import inspect, create_engine
+from data_quality_engine.src.profiler.profiler import profile_table
+from data_quality_engine.src.validations.validation_manager import ValidationManager
+from data_quality_engine.src.validations.default_validations import add_default_validations
 
 # Load environment variables from .env file
 load_dotenv()
@@ -115,6 +117,138 @@ def get_tables(current_user):
         tables = inspector.get_table_names()
 
         return jsonify({"tables": tables})
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+
+# Initialize validation manager
+validation_manager = ValidationManager()
+
+
+@app.route("/api/validations", methods=["GET"])
+@token_required
+def get_validations(current_user):
+    """Get all validation rules for a table"""
+    table_name = request.args.get("table")
+    if not table_name:
+        return jsonify({"error": "Table name is required"}), 400
+
+    try:
+        rules = validation_manager.get_rules(table_name)
+        return jsonify({"rules": rules})
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/validations", methods=["POST"])
+@token_required
+def add_validation(current_user):
+    """Add a new validation rule"""
+    table_name = request.args.get("table")
+    if not table_name:
+        return jsonify({"error": "Table name is required"}), 400
+
+    rule_data = request.get_json()
+    if not rule_data:
+        return jsonify({"error": "Rule data is required"}), 400
+
+    required_fields = ["name", "query", "operator", "expected_value"]
+    for field in required_fields:
+        if field not in rule_data:
+            return jsonify({"error": f"Missing required field: {field}"}), 400
+
+    try:
+        rule_id = validation_manager.add_rule(table_name, rule_data)
+        return jsonify({"success": True, "rule_id": rule_id})
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/validations", methods=["DELETE"])
+@token_required
+def delete_validation(current_user):
+    """Delete a validation rule"""
+    table_name = request.args.get("table")
+    rule_name = request.args.get("rule_name")
+
+    if not table_name or not rule_name:
+        return jsonify({"error": "Table name and rule name are required"}), 400
+
+    try:
+        deleted = validation_manager.delete_rule(table_name, rule_name)
+        if deleted:
+            return jsonify({"success": True})
+        else:
+            return jsonify({"error": "Rule not found"}), 404
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/run-validations", methods=["POST"])
+@token_required
+def run_validations(current_user):
+    """Run all validation rules for a table"""
+    data = request.get_json()
+
+    if not data or "table" not in data:
+        return jsonify({"error": "Table name is required"}), 400
+
+    connection_string = data.get("connection_string", os.getenv("DEFAULT_CONNECTION_STRING"))
+    table_name = data["table"]
+
+    try:
+        results = validation_manager.execute_rules(connection_string, table_name)
+        return jsonify({"results": results})
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/validation-history", methods=["GET"])
+@token_required
+def get_validation_history(current_user):
+    """Get validation history for a table"""
+    table_name = request.args.get("table")
+    limit = request.args.get("limit", 10, type=int)
+
+    if not table_name:
+        return jsonify({"error": "Table name is required"}), 400
+
+    try:
+        history = validation_manager.get_validation_history(table_name, limit)
+        return jsonify({"history": history})
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/generate-default-validations", methods=["POST"])
+@token_required
+def generate_default_validations(current_user):
+    """Generate and add default validation rules for a table"""
+    data = request.get_json()
+
+    if not data or "table" not in data:
+        return jsonify({"error": "Table name is required"}), 400
+
+    connection_string = data.get("connection_string", os.getenv("DEFAULT_CONNECTION_STRING"))
+    table_name = data["table"]
+
+    try:
+        # Add default validations to the validation manager
+        result = add_default_validations(validation_manager, connection_string, table_name)
+
+        return jsonify({
+            "success": True,
+            "message": f"Added {result['added']} default validation rules ({result['skipped']} skipped as duplicates)",
+            "count": result['added'],
+            "skipped": result['skipped'],
+            "total": result['total']
+        })
     except Exception as e:
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
