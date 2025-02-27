@@ -150,7 +150,7 @@ def profile_table(connection_str: str, table: str, historical_data: Optional[Dic
                 "nulls": result[i + 1],
                 "null_percentage": round((result[i + 1] / result[0]) * 100, 2) if result[0] > 0 else 0,
                 "blanks": result[i + len(column_names) + 1] if i < len(text_cols) else 0,
-                "distinct_count": result[i + 2 * len(column_names) + 1],
+                "distinct_count": int(result[i + 2 * len(column_names) + 1]),
                 "distinct_percentage": round((result[i + 2 * len(column_names) + 1] / result[0]) * 100, 2) if result[
                                                                                                                   0] > 0 else 0
             }

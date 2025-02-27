@@ -1,15 +1,13 @@
 # Sparvi
 
-![Sparvi Logo](https://via.placeholder.com/150x50?text=Sparvi)
-
 Sparvi is a data quality and profiling engine designed for modern data warehouses. It monitors data pipelines, detects anomalies, tracks schema changes, and ensures data integrity with sharp precision—like a hawk keeping watch over your data.
 
 ## Community and Commercial Editions
 
 Sparvi follows an open core model:
 
-- **Community Edition**: Open source with core functionality for data profiling and basic monitoring
-- **Enterprise Edition**: Commercial offering with advanced features for larger organizations (coming soon)
+- **Community Edition**: Open source, self-hosted with core functionality for data profiling and basic monitoring
+- **Sparvi Cloud**: Commercial offering with advanced features (coming soon)
 
 This repository contains the Community Edition of Sparvi.
 
@@ -24,14 +22,14 @@ This repository contains the Community Edition of Sparvi.
 - **🔄 Schema Change Detection**: Get alerted when table schemas change unexpectedly
 - **🔌 Multi-Source Connectivity**: Connect to various databases and data warehouses through SQLAlchemy
 
-### Enterprise Edition (Coming Soon)
+### Sparvi Cloud (Coming Soon)
 - **🔄 Advanced Scheduling**: Set up automated profiling runs with complex schedules
-- **🔔 Enterprise Notifications**: Advanced alerting integrations with SLAs and alert routing
+- **🔔 Notifications**: Advanced alerting integrations with alert routing
 - **🔒 Role-Based Access Control**: Granular permissions for teams and organizations
 - **📊 Advanced Visualizations**: Enhanced dashboards and customizable reports
 - **🤖 ML-Powered Anomaly Detection**: Intelligent anomaly detection using machine learning
 - **📱 Mobile Support**: Mobile app for on-the-go monitoring
-- **💬 Priority Support**: Enterprise-grade support and SLAs
+- **💬 Priority Support**: Enterprise-grade support
 
 ## Getting Started
 
