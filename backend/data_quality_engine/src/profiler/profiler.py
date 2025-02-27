@@ -156,16 +156,38 @@ def profile_table(connection_str: str, table: str, historical_data: Optional[Dic
                 }
 
         # Most Frequent Values
-        freq_queries = []
+        frequent_values = []
         for col in column_names:
-            freq_queries.append(f"""
-            (SELECT '{col}' AS column_name, {col} AS value, COUNT(*) AS frequency,
-             (COUNT(*) * 100.0 / (SELECT COUNT(*) FROM {table})) AS percentage 
-             FROM {table}
-             GROUP BY {col} ORDER BY frequency DESC LIMIT 5)
-            """)
-        freq_query = " UNION ALL ".join(freq_queries)
-        frequent_values = conn.execute(text(freq_query)).fetchall()
+            try:
+                # Handle each column separately to avoid type conversion issues
+                if col in date_cols:
+                    # Cast dates to strings for consistent handling
+                    query = f"""
+                    SELECT '{col}' AS column_name, 
+                           CAST({col} AS VARCHAR) AS value, 
+                           COUNT(*) AS frequency,
+                           (COUNT(*) * 100.0 / (SELECT COUNT(*) FROM {table})) AS percentage 
+                    FROM {table}
+                    GROUP BY {col} 
+                    ORDER BY frequency DESC 
+                    LIMIT 5
+                    """
+                else:
+                    query = f"""
+                    SELECT '{col}' AS column_name, 
+                           {col} AS value, 
+                           COUNT(*) AS frequency,
+                           (COUNT(*) * 100.0 / (SELECT COUNT(*) FROM {table})) AS percentage 
+                    FROM {table}
+                    GROUP BY {col} 
+                    ORDER BY frequency DESC 
+                    LIMIT 5
+                    """
+
+                col_values = conn.execute(text(query)).fetchall()
+                frequent_values.extend(col_values)
+            except Exception as e:
+                print(f"Error getting frequent values for {col}: {str(e)}")
 
         # Sample Data
         sample_query = f"SELECT * FROM {table} LIMIT 100"
