@@ -5,6 +5,7 @@ import Login from './components/Login';
 import Dashboard from './components/Dashboard';
 import Documentation from './components/Documentation';
 import Header from './components/Header';
+import TestConnection from './components/TestConnection';
 
 function App() {
   const [session, setSession] = useState(null);
@@ -90,6 +91,7 @@ function App() {
         <Routes>
           <Route path="/login" element={!session ? <Login /> : <Navigate to="/dashboard" />} />
           <Route path="/dashboard" element={session ? <Dashboard /> : <Navigate to="/login" />} />
+          <Route path="/test-connection" element={session ? <TestConnection /> : <Navigate to="/login" />} />
           <Route path="/docs/:page" element={<Documentation />} />
           <Route path="/docs" element={<Navigate to="/docs/overview" />} />
           <Route path="/" element={<Navigate to={session ? "/dashboard" : "/login"} />} />
