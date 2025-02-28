@@ -2,6 +2,16 @@
 
 All notable changes to Sparvi will be documented in this file.
 
+## [0.3.1] - 2025-02-28
+### Added
+- Support for Supabase logins
+
+### Changed
+- Updated login on back and front to use Supabase
+
+### Fixed
+- Login expired token issue
+
 ## [0.3.0] - 2025-02-28
 ### Added
 - Support for Supabase logins

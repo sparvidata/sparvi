@@ -11,8 +11,9 @@ from flask_cors import CORS
 from sqlalchemy import inspect, create_engine
 from supabase import create_client, Client
 from data_quality_engine.src.profiler.profiler import profile_table
-from data_quality_engine.src.validations.validation_manager import ValidationManager
+from data_quality_engine.src.validations.supabase_validation_manager import SupabaseValidationManager
 from data_quality_engine.src.validations.default_validations import add_default_validations
+from data_quality_engine.src.history.supabase_profile_history import SupabaseProfileHistoryManager
 
 
 def setup_comprehensive_logging():
@@ -117,12 +118,23 @@ def token_required(f):
             current_user = decoded.user.id
 
             logger.info(f"Token valid for user: {current_user}")
+
+            # Get the user's organization ID
+            from backend.src.storage.supabase_manager import SupabaseManager
+            supabase_mgr = SupabaseManager()
+            organization_id = supabase_mgr.get_user_organization(current_user)
+
+            if not organization_id:
+                logger.error(f"No organization found for user: {current_user}")
+                return jsonify({"error": "User has no associated organization"}), 403
+
         except Exception as e:
             logger.error(f"Token verification error: {str(e)}")
             logger.error(traceback.format_exc())
             return jsonify({"error": "Token is invalid!", "message": str(e)}), 401
 
-        return f(current_user, *args, **kwargs)
+        # Pass both user_id and organization_id to the decorated function
+        return f(current_user, organization_id, *args, **kwargs)
 
     return decorated
 
@@ -190,10 +202,11 @@ def env_check():
         "SUPABASE_SERVICE_KEY": bool(os.getenv("SUPABASE_SERVICE_KEY"))
     })
 
+
 # Refresh token endpoint
 @app.route("/api/refresh-token", methods=["POST"])
 @token_required
-def refresh_token(current_user):
+def refresh_token(current_user, organization_id):
     """Create a new token with a renewed expiration time"""
     new_token = jwt.encode(
         {"user": current_user, "exp": datetime.datetime.utcnow() + datetime.timedelta(hours=24)},
@@ -207,13 +220,30 @@ def refresh_token(current_user):
 # Protected profile endpoint: returns profiling results
 @app.route("/api/profile", methods=["GET"])
 @token_required
-def get_profile(current_user):
+def get_profile(current_user, organization_id):
     connection_string = request.args.get("connection_string", os.getenv("DEFAULT_CONNECTION_STRING"))
     table_name = request.args.get("table", "employees")
     try:
         logger.info(f"Profiling table {table_name} with connection {connection_string}")
-        result = profile_table(connection_string, table_name)
+
+        # Create profile history manager
+        profile_history = SupabaseProfileHistoryManager()
+
+        # Try to get previous profile to detect changes
+        previous_profile = profile_history.get_latest_profile(organization_id, table_name)
+
+        # Run the profiler
+        result = profile_table(connection_string, table_name, previous_profile)
         result["timestamp"] = datetime.datetime.now().isoformat()
+
+        # Save the profile to Supabase
+        profile_history.save_profile(current_user, organization_id, result, connection_string)
+
+        # Get trend data from history
+        trends = profile_history.get_trends(organization_id, table_name)
+        if not isinstance(trends, dict) or "error" not in trends:
+            result["trends"] = trends
+
         return jsonify(result)
     except Exception as e:
         logger.error(f"Error profiling table: {str(e)}")
@@ -229,7 +259,7 @@ def index():
 
 @app.route("/api/tables", methods=["GET"])
 @token_required
-def get_tables(current_user):
+def get_tables(current_user, organization_id):
     connection_string = request.args.get("connection_string", os.getenv("DEFAULT_CONNECTION_STRING"))
     try:
         logger.info(f"Getting tables for connection: {connection_string}")
@@ -255,13 +285,13 @@ def get_tables(current_user):
         return jsonify({"error": error_message}), 500
 
 
-# Initialize validation manager
-validation_manager = ValidationManager()
+# Initialize Supabase validation manager
+validation_manager = SupabaseValidationManager()
 
 
 @app.route("/api/validations", methods=["GET"])
 @token_required
-def get_validations(current_user):
+def get_validations(current_user, organization_id):
     """Get all validation rules for a table"""
     table_name = request.args.get("table")
     if not table_name:
@@ -269,7 +299,7 @@ def get_validations(current_user):
 
     try:
         logger.info(f"Getting validation rules for table: {table_name}")
-        rules = validation_manager.get_rules(table_name)
+        rules = validation_manager.get_rules(organization_id, table_name)
         return jsonify({"rules": rules})
     except Exception as e:
         logger.error(f"Error getting validation rules: {str(e)}")
@@ -279,7 +309,7 @@ def get_validations(current_user):
 
 @app.route("/api/validations", methods=["POST"])
 @token_required
-def add_validation(current_user):
+def add_validation(current_user, organization_id):
     """Add a new validation rule"""
     table_name = request.args.get("table")
     if not table_name:
@@ -296,7 +326,7 @@ def add_validation(current_user):
 
     try:
         logger.info(f"Adding validation rule {rule_data['name']} for table {table_name}")
-        rule_id = validation_manager.add_rule(table_name, rule_data)
+        rule_id = validation_manager.add_rule(organization_id, table_name, rule_data)
         return jsonify({"success": True, "rule_id": rule_id})
     except Exception as e:
         logger.error(f"Error adding validation rule: {str(e)}")
@@ -306,7 +336,7 @@ def add_validation(current_user):
 
 @app.route("/api/validations", methods=["DELETE"])
 @token_required
-def delete_validation(current_user):
+def delete_validation(current_user, organization_id):
     """Delete a validation rule"""
     table_name = request.args.get("table")
     rule_name = request.args.get("rule_name")
@@ -316,7 +346,7 @@ def delete_validation(current_user):
 
     try:
         logger.info(f"Deleting validation rule {rule_name} for table {table_name}")
-        deleted = validation_manager.delete_rule(table_name, rule_name)
+        deleted = validation_manager.delete_rule(organization_id, table_name, rule_name)
         if deleted:
             return jsonify({"success": True})
         else:
@@ -329,7 +359,7 @@ def delete_validation(current_user):
 
 @app.route("/api/run-validations", methods=["POST"])
 @token_required
-def run_validations(current_user):
+def run_validations(current_user, organization_id):
     """Run all validation rules for a table"""
     data = request.get_json()
 
@@ -341,7 +371,7 @@ def run_validations(current_user):
 
     try:
         logger.info(f"Running validations for table {table_name}")
-        results = validation_manager.execute_rules(connection_string, table_name)
+        results = validation_manager.execute_rules(organization_id, connection_string, table_name)
         return jsonify({"results": results})
     except Exception as e:
         logger.error(f"Error running validations: {str(e)}")
@@ -351,7 +381,7 @@ def run_validations(current_user):
 
 @app.route("/api/validation-history", methods=["GET"])
 @token_required
-def get_validation_history(current_user):
+def get_validation_history(current_user, organization_id):
     """Get validation history for a table"""
     table_name = request.args.get("table")
     limit = request.args.get("limit", 10, type=int)
@@ -361,7 +391,7 @@ def get_validation_history(current_user):
 
     try:
         logger.info(f"Getting validation history for table {table_name}, limit {limit}")
-        history = validation_manager.get_validation_history(table_name, limit)
+        history = validation_manager.get_validation_history(organization_id, table_name, limit)
         return jsonify({"history": history})
     except Exception as e:
         logger.error(f"Error getting validation history: {str(e)}")
@@ -371,7 +401,7 @@ def get_validation_history(current_user):
 
 @app.route("/api/generate-default-validations", methods=["POST"])
 @token_required
-def generate_default_validations(current_user):
+def generate_default_validations(current_user, organization_id):
     """Generate and add default validation rules for a table"""
     data = request.get_json()
 
@@ -383,8 +413,39 @@ def generate_default_validations(current_user):
 
     try:
         logger.info(f"Generating default validations for table {table_name}")
-        # Add default validations to the validation manager
-        result = add_default_validations(validation_manager, connection_string, table_name)
+        # We need to modify the add_default_validations function to work with our SupabaseValidationManager
+        # or create a custom implementation here
+
+        # For now, we'll adapt by implementing similar logic directly:
+        from data_quality_engine.src.validations.default_validations import get_default_validations
+
+        # Get existing rules
+        existing_rules = validation_manager.get_rules(organization_id, table_name)
+        existing_rule_names = {rule['rule_name'] for rule in existing_rules}
+
+        # Generate potential new validations
+        validations = get_default_validations(connection_string, table_name)
+
+        count_added = 0
+        count_skipped = 0
+
+        for validation in validations:
+            try:
+                # Skip if rule with same name already exists
+                if validation['name'] in existing_rule_names:
+                    count_skipped += 1
+                    continue
+
+                validation_manager.add_rule(organization_id, table_name, validation)
+                count_added += 1
+            except Exception as e:
+                logger.error(f"Failed to add validation rule {validation['name']}: {str(e)}")
+
+        result = {
+            "added": count_added,
+            "skipped": count_skipped,
+            "total": count_added + count_skipped
+        }
 
         logger.info(f"Added {result['added']} default validation rules ({result['skipped']} skipped as duplicates)")
         return jsonify({

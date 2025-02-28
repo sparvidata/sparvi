@@ -1,6 +1,6 @@
 import React from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { supabase } from '../lib/supabase';
+import AuthHandler from '../auth/AuthHandler';
 
 function Header({ session }) {
   const location = useLocation();
@@ -9,7 +9,7 @@ function Header({ session }) {
   const isDashboard = location.pathname.startsWith('/dashboard');
 
   const handleLogout = async () => {
-    await supabase.auth.signOut();
+    await AuthHandler.signOut();
     navigate("/login");
   };
 
