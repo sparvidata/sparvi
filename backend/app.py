@@ -10,10 +10,16 @@ from dotenv import load_dotenv
 from flask_cors import CORS
 from sqlalchemy import inspect, create_engine
 from supabase import create_client, Client
+
+# Add the current directory to the path so we can import modules
+current_dir = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, current_dir)
+
 from data_quality_engine.src.profiler.profiler import profile_table
 from data_quality_engine.src.validations.supabase_validation_manager import SupabaseValidationManager
 from data_quality_engine.src.validations.default_validations import add_default_validations
 from data_quality_engine.src.history.supabase_profile_history import SupabaseProfileHistoryManager
+from src.storage.supabase_manager import SupabaseManager
 
 
 def setup_comprehensive_logging():
@@ -120,7 +126,6 @@ def token_required(f):
             logger.info(f"Token valid for user: {current_user}")
 
             # Get the user's organization ID
-            from backend.src.storage.supabase_manager import SupabaseManager
             supabase_mgr = SupabaseManager()
             organization_id = supabase_mgr.get_user_organization(current_user)
 

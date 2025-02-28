@@ -7,8 +7,48 @@ const API_BASE_URL = process.env.REACT_APP_API_BASE_URL || 'http://localhost:500
 
 // Get the current session token
 const getToken = async () => {
-  const { data: { session } } = await supabase.auth.getSession();
-  return session?.access_token;
+  try {
+    console.log("Getting auth session...");
+    const { data } = await supabase.auth.getSession();
+    const session = data.session;
+
+    if (!session) {
+      console.log("No session found, attempting to refresh...");
+      // Try to refresh the session
+      const { data: refreshData } = await supabase.auth.refreshSession();
+      const refreshedSession = refreshData.session;
+
+      if (refreshedSession) {
+        console.log("Session refreshed successfully");
+        return refreshedSession.access_token;
+      } else {
+        console.log("No session after refresh attempt");
+        return null;
+      }
+    }
+
+    // Check if token is close to expiry (within 5 minutes)
+    const expiresAt = session.expires_at * 1000; // Convert to milliseconds
+    const now = Date.now();
+    const fiveMinutesInMs = 5 * 60 * 1000;
+
+    if (expiresAt - now < fiveMinutesInMs) {
+      console.log("Token expiring soon, refreshing...");
+      const { data: refreshData } = await supabase.auth.refreshSession();
+      const refreshedSession = refreshData.session;
+
+      if (refreshedSession) {
+        console.log("Session refreshed successfully");
+        return refreshedSession.access_token;
+      }
+    }
+
+    console.log("Using existing token");
+    return session.access_token;
+  } catch (error) {
+    console.error("Error getting token:", error);
+    return null;
+  }
 };
 
 // Export a direct fetch profile function that doesn't rely on interceptors
