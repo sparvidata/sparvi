@@ -1,14 +1,15 @@
 import React from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { supabase } from '../lib/supabase';
 
-function Header() {
+function Header({ session }) {
   const location = useLocation();
   const navigate = useNavigate();
   const isDocumentation = location.pathname.startsWith('/docs');
   const isDashboard = location.pathname.startsWith('/dashboard');
 
-  const handleLogout = () => {
-    localStorage.removeItem("token");
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
     navigate("/login");
   };
 
@@ -25,7 +26,7 @@ function Header() {
 
         <div className="collapse navbar-collapse" id="navbarNav">
           <ul className="navbar-nav me-auto">
-            {localStorage.getItem("token") && (
+            {session && (
               <>
                 <li className="nav-item">
                   <Link className={`nav-link ${isDashboard ? 'active' : ''}`} to="/dashboard">
@@ -43,8 +44,12 @@ function Header() {
             )}
           </ul>
 
-          {localStorage.getItem("token") && (
+          {session && (
             <div className="d-flex">
+              <span className="navbar-text me-3">
+                <i className="bi bi-person-circle me-1"></i>
+                {session.user.email}
+              </span>
               <button className="btn btn-outline-light" onClick={handleLogout}>
                 <i className="bi bi-box-arrow-right me-1"></i>
                 Logout

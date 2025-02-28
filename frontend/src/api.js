@@ -12,6 +12,7 @@ export const loginUser = async (username, password) => {
 
 // Export the fetchProfile function
 export const fetchProfile = async (token, connectionString, table) => {
+  console.log("DEBUG: Using token for fetchProfile:", token);
   const response = await axios.get(`${API_BASE_URL}/api/profile`, {
     params: { connection_string: connectionString, table },
     headers: { Authorization: `Bearer ${token}` },
