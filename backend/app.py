@@ -190,15 +190,216 @@ def env_check():
         "SUPABASE_SERVICE_KEY": bool(os.getenv("SUPABASE_SERVICE_KEY"))
     })
 
+# Refresh token endpoint
+@app.route("/api/refresh-token", methods=["POST"])
+@token_required
+def refresh_token(current_user):
+    """Create a new token with a renewed expiration time"""
+    new_token = jwt.encode(
+        {"user": current_user, "exp": datetime.datetime.utcnow() + datetime.timedelta(hours=24)},
+        app.config["SECRET_KEY"],
+        algorithm="HS256"
+    )
+    logger.info(f"Token refreshed for user: {current_user}")
+    return jsonify({"token": new_token})
 
-# Rest of the existing routes remain the same...
-# [Previous routes like refresh_token, get_profile, get_tables, etc. would be here]
 
-# The existing code for validation routes, profiling, etc. remains unchanged
+# Protected profile endpoint: returns profiling results
+@app.route("/api/profile", methods=["GET"])
+@token_required
+def get_profile(current_user):
+    connection_string = request.args.get("connection_string", os.getenv("DEFAULT_CONNECTION_STRING"))
+    table_name = request.args.get("table", "employees")
+    try:
+        logger.info(f"Profiling table {table_name} with connection {connection_string}")
+        result = profile_table(connection_string, table_name)
+        result["timestamp"] = datetime.datetime.now().isoformat()
+        return jsonify(result)
+    except Exception as e:
+        logger.error(f"Error profiling table: {str(e)}")
+        traceback.print_exc()  # Print the full traceback to your console
+        return jsonify({"error": str(e)}), 500
+
+
+# Optional: a simple index page (for testing or informational purposes)
+@app.route("/")
+def index():
+    return render_template("index.html")
+
+
+@app.route("/api/tables", methods=["GET"])
+@token_required
+def get_tables(current_user):
+    connection_string = request.args.get("connection_string", os.getenv("DEFAULT_CONNECTION_STRING"))
+    try:
+        logger.info(f"Getting tables for connection: {connection_string}")
+        # Create engine and get inspector
+        engine = create_engine(connection_string)
+        inspector = inspect(engine)
+
+        # Test connection
+        with engine.connect() as conn:
+            pass  # Just test that we can connect
+
+        # Get all table names
+        tables = inspector.get_table_names()
+        logger.info(f"Found {len(tables)} tables")
+
+        return jsonify({"tables": tables})
+    except Exception as e:
+        logger.error(f"Error getting tables: {str(e)}")
+        traceback.print_exc()
+        error_message = str(e)
+        if "could not connect" in error_message.lower():
+            return jsonify({"error": "Could not connect to database. Please check your connection string."}), 500
+        return jsonify({"error": error_message}), 500
+
+
+# Initialize validation manager
+validation_manager = ValidationManager()
+
+
+@app.route("/api/validations", methods=["GET"])
+@token_required
+def get_validations(current_user):
+    """Get all validation rules for a table"""
+    table_name = request.args.get("table")
+    if not table_name:
+        return jsonify({"error": "Table name is required"}), 400
+
+    try:
+        logger.info(f"Getting validation rules for table: {table_name}")
+        rules = validation_manager.get_rules(table_name)
+        return jsonify({"rules": rules})
+    except Exception as e:
+        logger.error(f"Error getting validation rules: {str(e)}")
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/validations", methods=["POST"])
+@token_required
+def add_validation(current_user):
+    """Add a new validation rule"""
+    table_name = request.args.get("table")
+    if not table_name:
+        return jsonify({"error": "Table name is required"}), 400
+
+    rule_data = request.get_json()
+    if not rule_data:
+        return jsonify({"error": "Rule data is required"}), 400
+
+    required_fields = ["name", "query", "operator", "expected_value"]
+    for field in required_fields:
+        if field not in rule_data:
+            return jsonify({"error": f"Missing required field: {field}"}), 400
+
+    try:
+        logger.info(f"Adding validation rule {rule_data['name']} for table {table_name}")
+        rule_id = validation_manager.add_rule(table_name, rule_data)
+        return jsonify({"success": True, "rule_id": rule_id})
+    except Exception as e:
+        logger.error(f"Error adding validation rule: {str(e)}")
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/validations", methods=["DELETE"])
+@token_required
+def delete_validation(current_user):
+    """Delete a validation rule"""
+    table_name = request.args.get("table")
+    rule_name = request.args.get("rule_name")
+
+    if not table_name or not rule_name:
+        return jsonify({"error": "Table name and rule name are required"}), 400
+
+    try:
+        logger.info(f"Deleting validation rule {rule_name} for table {table_name}")
+        deleted = validation_manager.delete_rule(table_name, rule_name)
+        if deleted:
+            return jsonify({"success": True})
+        else:
+            return jsonify({"error": "Rule not found"}), 404
+    except Exception as e:
+        logger.error(f"Error deleting validation rule: {str(e)}")
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/run-validations", methods=["POST"])
+@token_required
+def run_validations(current_user):
+    """Run all validation rules for a table"""
+    data = request.get_json()
+
+    if not data or "table" not in data:
+        return jsonify({"error": "Table name is required"}), 400
+
+    connection_string = data.get("connection_string", os.getenv("DEFAULT_CONNECTION_STRING"))
+    table_name = data["table"]
+
+    try:
+        logger.info(f"Running validations for table {table_name}")
+        results = validation_manager.execute_rules(connection_string, table_name)
+        return jsonify({"results": results})
+    except Exception as e:
+        logger.error(f"Error running validations: {str(e)}")
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/validation-history", methods=["GET"])
+@token_required
+def get_validation_history(current_user):
+    """Get validation history for a table"""
+    table_name = request.args.get("table")
+    limit = request.args.get("limit", 10, type=int)
+
+    if not table_name:
+        return jsonify({"error": "Table name is required"}), 400
+
+    try:
+        logger.info(f"Getting validation history for table {table_name}, limit {limit}")
+        history = validation_manager.get_validation_history(table_name, limit)
+        return jsonify({"history": history})
+    except Exception as e:
+        logger.error(f"Error getting validation history: {str(e)}")
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/generate-default-validations", methods=["POST"])
+@token_required
+def generate_default_validations(current_user):
+    """Generate and add default validation rules for a table"""
+    data = request.get_json()
+
+    if not data or "table" not in data:
+        return jsonify({"error": "Table name is required"}), 400
+
+    connection_string = data.get("connection_string", os.getenv("DEFAULT_CONNECTION_STRING"))
+    table_name = data["table"]
+
+    try:
+        logger.info(f"Generating default validations for table {table_name}")
+        # Add default validations to the validation manager
+        result = add_default_validations(validation_manager, connection_string, table_name)
+
+        logger.info(f"Added {result['added']} default validation rules ({result['skipped']} skipped as duplicates)")
+        return jsonify({
+            "success": True,
+            "message": f"Added {result['added']} default validation rules ({result['skipped']} skipped as duplicates)",
+            "count": result['added'],
+            "skipped": result['skipped'],
+            "total": result['total']
+        })
+    except Exception as e:
+        logger.error(f"Error generating default validations: {str(e)}")
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
 
 if __name__ == "__main__":
-    # Ensure extensive logging is captured during startup
-    logger.info("Application starting up")
-
     # In production, ensure you run with HTTPS (via a reverse proxy or WSGI server with SSL configured)
     app.run(debug=True)

@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { signIn } from "../services/auth";
+import { supabase } from "../lib/supabase";
 
 function Login() {
   const navigate = useNavigate();
@@ -11,27 +11,27 @@ function Login() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    setLoading(true);
+    setError(null);
+
     try {
-      console.log("DEBUG: Submitting login", { username, password });
-      const data = await loginUser(username, password);
-      console.log("DEBUG: Received token", data.token);
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+      });
 
-      // Make sure to store the full token string
-      const token = data.token;
+      if (error) {
+        throw error;
+      }
 
-      // Clear any existing token first
-      localStorage.removeItem("token");
-
-      // Store the new token
-      localStorage.setItem("token", token);
-
-      // Log the stored token to verify
-      console.log("DEBUG: Stored token:", localStorage.getItem("token"));
-
+      // If successful, Supabase will automatically update the session
+      // The onAuthStateChange in App.js will handle the session update
       navigate("/dashboard");
     } catch (err) {
-      console.error("DEBUG: Error in login", err);
-      setError("Invalid credentials");
+      console.error("Login error:", err);
+      setError(err.message || "Login failed");
+    } finally {
+      setLoading(false);
     }
   };
 
