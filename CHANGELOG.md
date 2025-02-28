@@ -2,6 +2,10 @@
 
 All notable changes to Sparvi will be documented in this file.
 
+## [0.3.0] - 2025-02-28
+### Added
+- Support for Supabase logins
+
 ## [0.2.0] - 2025-02-27
 ### Added
 - Validation rules feature for defining custom data quality checks
