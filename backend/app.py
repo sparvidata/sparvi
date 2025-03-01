@@ -369,16 +369,29 @@ def delete_validation(current_user, organization_id):
 def run_validations(current_user, organization_id):
     """Run all validation rules for a table"""
     data = request.get_json()
+    logger.info(f"Run validations request: {data}")
 
     if not data or "table" not in data:
+        logger.warning("Table name missing in request")
         return jsonify({"error": "Table name is required"}), 400
 
     connection_string = data.get("connection_string", os.getenv("DEFAULT_CONNECTION_STRING"))
     table_name = data["table"]
 
     try:
-        logger.info(f"Running validations for table {table_name}")
+        logger.info(
+            f"Running validations for org: {organization_id}, table: {table_name}, connection: {connection_string}")
+
+        # Get all rules first to check if there are any
+        rules = validation_manager.get_rules(organization_id, table_name)
+        logger.info(f"Found {len(rules)} rules to execute")
+
+        # Execute the rules
         results = validation_manager.execute_rules(organization_id, connection_string, table_name)
+
+        logger.info(f"Validation execution complete, got {len(results)} results")
+        logger.debug(f"Validation results: {results}")
+
         return jsonify({"results": results})
     except Exception as e:
         logger.error(f"Error running validations: {str(e)}")

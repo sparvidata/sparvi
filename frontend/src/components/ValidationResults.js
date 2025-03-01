@@ -241,6 +241,7 @@ function ValidationResults({ tableName, connectionString }) {
 
   // Display existing validation results
   const renderValidationResults = () => {
+    console.log("Rendering validation results:", results);
     if (loading && !showGeneratingSpinner && !results.length) {
       return (
         <div className="d-flex justify-content-center my-3">
