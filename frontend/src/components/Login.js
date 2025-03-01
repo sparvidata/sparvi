@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { supabase } from "../lib/supabase";
+import AuthHandler from "../auth/AuthHandler";
 
 function Login() {
   const navigate = useNavigate();
@@ -15,17 +15,16 @@ function Login() {
     setError(null);
 
     try {
-      const { data, error } = await supabase.auth.signInWithPassword({
-        email,
-        password,
-      });
+      const { data, error } = await AuthHandler.signIn(email, password);
 
       if (error) {
         throw error;
       }
 
-      // If successful, Supabase will automatically update the session
-      // The onAuthStateChange in App.js will handle the session update
+      // Set up session refresh timer
+      AuthHandler.setupSessionRefresh();
+
+      // Navigate to dashboard
       navigate("/dashboard");
     } catch (err) {
       console.error("Login error:", err);

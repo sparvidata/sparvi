@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback} from 'react';
-import { fetchProfile, fetchTables } from '../api';
+import { directFetchProfile } from '../profile-api';
 import TrendChart from './TrendChart';
 import AnomalyList from './AnomalyList';
 import SchemaShift from './SchemaShift';
@@ -18,16 +18,26 @@ function Dashboard({ onStoreRefreshHandler }) {
   const [tableName, setTableName] = useState(localStorage.getItem('tableName') || "employees");
   const [activeTab, setActiveTab] = useState('overview');
 
-  const token = localStorage.getItem("token");
+  console.log("Dashboard rendered with:", { connectionString, tableName });
 
   // Define the refresh handler
   const handleRefresh = () => {
+    console.log("Refresh button clicked");
     // Re-fetch data when the refresh button is clicked
-    if (token && connectionString && tableName) {
+    if (connectionString && tableName) {
+      console.log("Refreshing data for:", { connectionString, tableName });
       setProfileData(null);
-      fetchProfile(token, connectionString, tableName)
-        .then(data => setProfileData(data))
-        .catch(err => setError(err.response?.data?.error || 'Failed to refresh data'));
+      directFetchProfile(connectionString, tableName)
+        .then(data => {
+          console.log("Refresh successful, data received:", data);
+          setProfileData(data);
+        })
+        .catch(err => {
+          console.error("Refresh failed:", err);
+          setError(err.response?.data?.error || 'Failed to refresh data');
+        });
+    } else {
+      console.log("Cannot refresh: missing connection string or table name");
     }
   };
 
@@ -41,35 +51,57 @@ function Dashboard({ onStoreRefreshHandler }) {
   // Initial data loading
   useEffect(() => {
     const getData = async () => {
+      console.log("getData called with:", { connectionString, tableName });
       try {
         setLoading(true);
         setError(null);
-        console.log('DEBUG: Fetching profile data...');
-        const data = await fetchProfile(token, connectionString, tableName);
-        console.log('DEBUG: Received profile data:', data);
+
+        console.log('Fetching profile data from backend...');
+        const data = await directFetchProfile(connectionString, tableName);
+        console.log('Profile data received:', data);
         setProfileData(data);
 
         // Save connection info to localStorage
         localStorage.setItem('connectionString', connectionString);
         localStorage.setItem('tableName', tableName);
+        console.log('Connection info saved to localStorage');
       } catch (error) {
-        console.error('DEBUG: Error fetching profile data:', error);
+        console.error('Error fetching profile data:', error);
+        if (error.response) {
+          console.error('Error response data:', error.response.data);
+          console.error('Error response status:', error.response.status);
+        } else if (error.request) {
+          console.error('No response received:', error.request);
+        } else {
+          console.error('Error message:', error.message);
+        }
         setError(error.response?.data?.error || 'Failed to fetch profile data');
       } finally {
         setLoading(false);
       }
     };
 
-    if (token && connectionString && tableName) {
+    if (connectionString && tableName) {
+      console.log('Connection string and table name available, calling getData()');
       getData();
     } else {
+      console.log('Missing connection string or table name, not loading data');
       setLoading(false);
     }
-  }, [token, connectionString, tableName]);
+  }, [connectionString, tableName]);
 
   const handleConnectionSubmit = (newConnection, newTable) => {
-    setConnectionString(newConnection);
-    setTableName(newTable);
+    console.log('Connection form submitted:', { newConnection, newTable });
+
+    // Make sure the new values are different from the current ones
+    if (newConnection !== connectionString || newTable !== tableName) {
+      console.log('Setting new connection and table values');
+      setConnectionString(newConnection);
+      setTableName(newTable);
+    } else {
+      console.log('Connection and table values unchanged, refreshing anyway');
+      handleRefresh();
+    }
   };
 
   return (

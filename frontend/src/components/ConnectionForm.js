@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { fetchTables } from '../api';
+import { directFetchTables } from '../profile-api';
 
 function ConnectionForm({ initialConnection, initialTable, onSubmit }) {
   const [connectionString, setConnectionString] = useState(initialConnection || '');
@@ -11,36 +11,43 @@ function ConnectionForm({ initialConnection, initialTable, onSubmit }) {
 
   const handleSubmit = (e) => {
     e.preventDefault();
+
+    console.log("=== CONNECT BUTTON CLICKED ===");
+    console.log("Connection string:", connectionString);
+    console.log("Table name:", tableName);
+
+    // Call the onSubmit callback provided by the parent component
     onSubmit(connectionString, tableName);
+
+    console.log("onSubmit function called");
     setShowForm(false);
+    console.log("Form hidden");
   };
 
-  const handleConnectionChange = async (e) => {
+  const handleConnectionChange = (e) => {
     const newConnection = e.target.value;
+    console.log("Connection string changed to:", newConnection);
     setConnectionString(newConnection);
-
-    if (newConnection) {
-      await loadTables(newConnection);
-    } else {
-      setTables([]);
-    }
   };
 
   const loadTables = async (connString) => {
+    console.log("Attempting to load tables for connection:", connString);
     try {
       setLoadingTables(true);
       setTableError(null);
-      const token = localStorage.getItem("token");
 
-      if (token && connString) {
-        const result = await fetchTables(token, connString);
-        setTables(result.tables || []);
+      // Log the token being used
+      console.log("Calling directFetchTables...");
+      const result = await directFetchTables(connString);
+      console.log("Received tables:", result.tables);
 
-        // If tables are loaded and we don't have a table selected yet,
-        // select the first one by default
-        if (result.tables && result.tables.length > 0 && !tableName) {
-          setTableName(result.tables[0]);
-        }
+      setTables(result.tables || []);
+
+      // If tables are loaded and we don't have a table selected yet,
+      // select the first one by default
+      if (result.tables && result.tables.length > 0 && !tableName) {
+        console.log("Setting default table to:", result.tables[0]);
+        setTableName(result.tables[0]);
       }
     } catch (error) {
       console.error("Error loading tables:", error);
@@ -54,9 +61,10 @@ function ConnectionForm({ initialConnection, initialTable, onSubmit }) {
   // Load tables when showing the form and we have a connection string
   useEffect(() => {
     if (showForm && connectionString) {
+      console.log("Form shown with connection string, loading tables...");
       loadTables(connectionString);
     }
-  }, [showForm]);
+  }, [showForm, connectionString]);
 
   return (
     <div className="card mb-4 shadow-sm">
@@ -67,7 +75,10 @@ function ConnectionForm({ initialConnection, initialTable, onSubmit }) {
         </h5>
         <button
           className="btn btn-sm btn-outline-primary"
-          onClick={() => setShowForm(!showForm)}
+          onClick={() => {
+            console.log("Toggling form visibility");
+            setShowForm(!showForm);
+          }}
         >
           {showForm ? 'Hide' : 'Change'} Connection
         </button>
@@ -119,7 +130,10 @@ function ConnectionForm({ initialConnection, initialTable, onSubmit }) {
                   className="form-select"
                   id="tableName"
                   value={tableName}
-                  onChange={(e) => setTableName(e.target.value)}
+                  onChange={(e) => {
+                    console.log("Table changed to:", e.target.value);
+                    setTableName(e.target.value);
+                  }}
                   required
                 >
                   {tables.map(table => (
@@ -133,7 +147,10 @@ function ConnectionForm({ initialConnection, initialTable, onSubmit }) {
                     className="form-control"
                     id="tableName"
                     value={tableName}
-                    onChange={(e) => setTableName(e.target.value)}
+                    onChange={(e) => {
+                      console.log("Table name manually entered:", e.target.value);
+                      setTableName(e.target.value);
+                    }}
                     placeholder="e.g., employees"
                     required
                   />
@@ -158,7 +175,10 @@ function ConnectionForm({ initialConnection, initialTable, onSubmit }) {
                 <button
                   type="button"
                   className="btn btn-outline-secondary ms-2"
-                  onClick={() => loadTables(connectionString)}
+                  onClick={() => {
+                    console.log("Manually refreshing tables");
+                    loadTables(connectionString);
+                  }}
                 >
                   <i className="bi bi-arrow-repeat me-1"></i>
                   Refresh Tables
