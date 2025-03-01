@@ -99,15 +99,19 @@ function ValidationResults({ tableName, connectionString }) {
       setLoading(true);
       setError(null);
 
+      console.log("Adding validation rule with:");
+      console.log("Table name:", tableName);
+      console.log("Rule data:", newRule);
+
       const ruleToAdd = {
         ...newRule,
         expected_value: parsedExpectedValue
       };
 
-      await addValidationRule(token, tableName, ruleToAdd);
+      await addValidationRule(tableName, ruleToAdd);
 
       // Refresh rules list
-      const response = await fetchValidations(token, tableName);
+      const response = await fetchValidations(tableName);
       setRules(response.rules || []);
 
       // Reset form
@@ -137,10 +141,10 @@ function ValidationResults({ tableName, connectionString }) {
 
     try {
       setLoading(true);
-      await deleteValidationRule(token, tableName, ruleName);
+      await deleteValidationRule(tableName, ruleName);
 
       // Refresh rules list
-      const response = await fetchValidations(token, tableName);
+      const response = await fetchValidations(tableName);
       setRules(response.rules || []);
 
       setSuccessMessage("Rule deleted successfully");
