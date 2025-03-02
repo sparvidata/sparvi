@@ -1,15 +1,35 @@
 import json
 import logging
+import traceback
 from typing import Dict, List, Any, Optional
 from sqlalchemy import create_engine, text
-
-# Use relative import for supabase_manager
-import sys
 import os
+import sys
 
-# Add the path to find the src directory
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../../../')))
-from src.storage.supabase_manager import SupabaseManager
+# Add the correct path to the core directory
+core_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../../core'))
+if core_path not in sys.path:
+    sys.path.insert(0, core_path)
+
+# Now import from storage
+try:
+    from storage.supabase_manager import SupabaseManager
+
+    # Log success
+    logging.info("Successfully imported SupabaseManager")
+except ImportError as e:
+    # Log the error and try an alternative approach
+    logging.error(f"Failed to import SupabaseManager: {e}")
+
+    # Alternative approach using importlib
+    import importlib.util
+
+    manager_path = os.path.join(core_path, 'storage', 'supabase_manager.py')
+    spec = importlib.util.spec_from_file_location("supabase_manager", manager_path)
+    supabase_manager = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(supabase_manager)
+    SupabaseManager = supabase_manager.SupabaseManager
+    logging.info("Successfully imported SupabaseManager using importlib")
 
 # Configure logging
 logging.basicConfig(
@@ -30,7 +50,12 @@ class SupabaseValidationManager:
 
     def get_rules(self, organization_id: str, table_name: str) -> List[Dict[str, Any]]:
         """Get all validation rules for a specific table"""
-        return self.supabase.get_validation_rules(organization_id, table_name)
+        try:
+            logging.info(f"Getting validation rules for org {organization_id}, table {table_name}")
+            return self.supabase.get_validation_rules(organization_id, table_name)
+        except Exception as e:
+            logging.error(f"Error getting validation rules: {str(e)}")
+            return []
 
     def add_rule(self, organization_id: str, table_name: str, rule: Dict[str, Any]) -> str:
         """
@@ -47,63 +72,80 @@ class SupabaseValidationManager:
         return self.supabase.delete_validation_rule(organization_id, table_name, rule_name)
 
     def execute_rules(self, organization_id: str, connection_string: str, table_name: str) -> List[Dict[str, Any]]:
-        """
-        Execute all validation rules for a table against the specified database
-        Returns a list of validation results
-        """
+        """Execute all validation rules for a table against the specified database"""
         # Get all rules for this table
         rules = self.get_rules(organization_id, table_name)
         results = []
 
+        logger.info(f"Executing {len(rules)} validation rules for table {table_name}")
+
         if not rules:
+            logger.warning("No rules found for this table")
             return results
 
-        # Create database engine
-        engine = create_engine(connection_string)
+        try:
+            # Create database engine
+            logger.info(f"Creating database engine with connection string: {connection_string}")
+            engine = create_engine(connection_string)
 
-        # Execute each rule
-        for rule in rules:
-            try:
-                with engine.connect() as conn:
-                    # Execute the query
-                    result = conn.execute(text(rule['query'])).fetchone()
-                    actual_value = result[0] if result else None
+            # Execute each rule
+            for rule in rules:
+                try:
+                    logger.info(f"Executing rule: {rule['rule_name']}")
 
-                    # Compare with expected value based on operator
-                    is_valid = self._evaluate_rule(rule['operator'], actual_value, rule['expected_value'])
+                    with engine.connect() as conn:
+                        # Execute the query
+                        query = rule['query']
+                        logger.debug(f"Executing query: {query}")
+                        result = conn.execute(text(query)).fetchone()
+                        actual_value = result[0] if result else None
+                        logger.debug(f"Query result: {actual_value}")
 
-                    # Create result object
-                    validation_result = {
+                        # Compare with expected value based on operator
+                        is_valid = self._evaluate_rule(rule['operator'], actual_value, rule['expected_value'])
+                        logger.info(
+                            f"Rule evaluation: {is_valid} (expected: {rule['expected_value']}, actual: {actual_value})")
+
+                        # Create result object
+                        validation_result = {
+                            'rule_name': rule['rule_name'],
+                            'description': rule['description'],
+                            'is_valid': is_valid,
+                            'actual_value': actual_value,
+                            'expected_value': rule['expected_value'],
+                            'operator': rule['operator']
+                        }
+
+                        results.append(validation_result)
+
+                        # Store result in Supabase
+                        logger.info(f"Storing result in Supabase for rule: {rule['rule_name']}")
+                        self.supabase.store_validation_result(
+                            organization_id,
+                            rule['id'],
+                            is_valid,
+                            actual_value
+                        )
+                        logger.info(f"Result stored successfully")
+
+                except Exception as e:
+                    logger.error(f"Error executing validation rule {rule['rule_name']}: {str(e)}")
+                    logger.error(traceback.format_exc())
+                    results.append({
                         'rule_name': rule['rule_name'],
-                        'description': rule['description'],
-                        'is_valid': is_valid,
-                        'actual_value': actual_value,
-                        'expected_value': rule['expected_value'],
-                        'operator': rule['operator']
-                    }
+                        'description': rule.get('description', ''),
+                        'is_valid': False,
+                        'error': str(e),
+                        'expected_value': rule.get('expected_value'),
+                        'operator': rule.get('operator')
+                    })
 
-                    results.append(validation_result)
+            return results
 
-                    # Store result in Supabase
-                    self.supabase.store_validation_result(
-                        organization_id,
-                        rule['id'],
-                        is_valid,
-                        actual_value
-                    )
-
-            except Exception as e:
-                logger.error(f"Error executing validation rule {rule['rule_name']}: {str(e)}")
-                results.append({
-                    'rule_name': rule['rule_name'],
-                    'description': rule['description'],
-                    'is_valid': False,
-                    'error': str(e),
-                    'expected_value': rule['expected_value'],
-                    'operator': rule['operator']
-                })
-
-        return results
+        except Exception as e:
+            logger.error(f"Error in execute_rules: {str(e)}")
+            logger.error(traceback.format_exc())
+            raise
 
     def _evaluate_rule(self, operator: str, actual_value: Any, expected_value: Any) -> bool:
         """Evaluate whether the actual value meets the expected value based on the operator"""

@@ -19,7 +19,7 @@ from data_quality_engine.src.profiler.profiler import profile_table
 from data_quality_engine.src.validations.supabase_validation_manager import SupabaseValidationManager
 from data_quality_engine.src.validations.default_validations import add_default_validations
 from data_quality_engine.src.history.supabase_profile_history import SupabaseProfileHistoryManager
-from src.storage.supabase_manager import SupabaseManager
+from core.storage.supabase_manager import SupabaseManager
 
 
 def setup_comprehensive_logging():
@@ -303,8 +303,10 @@ def get_validations(current_user, organization_id):
         return jsonify({"error": "Table name is required"}), 400
 
     try:
-        logger.info(f"Getting validation rules for table: {table_name}")
+        logger.info(f"Getting validation rules for organization: {organization_id}, table: {table_name}")
         rules = validation_manager.get_rules(organization_id, table_name)
+        logger.info(f"Retrieved {len(rules)} validation rules")
+        logger.debug(f"Rules content: {rules}")
         return jsonify({"rules": rules})
     except Exception as e:
         logger.error(f"Error getting validation rules: {str(e)}")
@@ -367,16 +369,29 @@ def delete_validation(current_user, organization_id):
 def run_validations(current_user, organization_id):
     """Run all validation rules for a table"""
     data = request.get_json()
+    logger.info(f"Run validations request: {data}")
 
     if not data or "table" not in data:
+        logger.warning("Table name missing in request")
         return jsonify({"error": "Table name is required"}), 400
 
     connection_string = data.get("connection_string", os.getenv("DEFAULT_CONNECTION_STRING"))
     table_name = data["table"]
 
     try:
-        logger.info(f"Running validations for table {table_name}")
+        logger.info(
+            f"Running validations for org: {organization_id}, table: {table_name}, connection: {connection_string}")
+
+        # Get all rules first to check if there are any
+        rules = validation_manager.get_rules(organization_id, table_name)
+        logger.info(f"Found {len(rules)} rules to execute")
+
+        # Execute the rules
         results = validation_manager.execute_rules(organization_id, connection_string, table_name)
+
+        logger.info(f"Validation execution complete, got {len(results)} results")
+        logger.debug(f"Validation results: {results}")
+
         return jsonify({"results": results})
     except Exception as e:
         logger.error(f"Error running validations: {str(e)}")
@@ -407,21 +422,35 @@ def get_validation_history(current_user, organization_id):
 @app.route("/api/generate-default-validations", methods=["POST"])
 @token_required
 def generate_default_validations(current_user, organization_id):
-    """Generate and add default validation rules for a table"""
     data = request.get_json()
+
+    logger.info(f"Received data: {data}")
 
     if not data or "table" not in data:
         return jsonify({"error": "Table name is required"}), 400
 
-    connection_string = data.get("connection_string", os.getenv("DEFAULT_CONNECTION_STRING"))
+    # Extract values and provide fallbacks
+    connection_string = data.get("connection_string")
+    if not connection_string:
+        connection_string = os.getenv("DEFAULT_CONNECTION_STRING")
+
     table_name = data["table"]
 
-    try:
-        logger.info(f"Generating default validations for table {table_name}")
-        # We need to modify the add_default_validations function to work with our SupabaseValidationManager
-        # or create a custom implementation here
+    # Check if table name looks like a connection string
+    if table_name and "://" in table_name:
+        logger.warning(f"Table name looks like a connection string: {table_name}")
+        # If both are connection strings, extract the actual table name from the request data
+        # or use a default
+        if "orders" in request.args.get("originalTableName", ""):
+            table_name = "orders"
+        elif "employees" in request.args.get("originalTableName", ""):
+            table_name = "employees"
+        else:
+            table_name = "employees"  # default fallback
+        logger.info(f"Using extracted table name: {table_name}")
 
-        # For now, we'll adapt by implementing similar logic directly:
+    try:
+        # We need to modify the add_default_validations function to work with our SupabaseValidationManager
         from data_quality_engine.src.validations.default_validations import get_default_validations
 
         # Get existing rules

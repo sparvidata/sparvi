@@ -32,12 +32,18 @@ function ValidationResults({ tableName, connectionString }) {
   // Load existing validation rules when component mounts
   useEffect(() => {
     const loadRules = async () => {
-      if (!tableName || !token) return;
+      if (!tableName) {
+        console.log("No table name provided, skipping rules loading");
+        return;
+      }
 
       try {
         setLoading(true);
-        const response = await fetchValidations(token, tableName);
+        console.log("Fetching validation rules for table:", tableName);
+        const response = await fetchValidations(tableName);
+        console.log("Validation rules response:", response);
         setRules(response.rules || []);
+        console.log("Set rules state:", response.rules);
       } catch (err) {
         console.error("Error loading validation rules:", err);
         setError("Failed to load validation rules");
@@ -47,7 +53,7 @@ function ValidationResults({ tableName, connectionString }) {
     };
 
     loadRules();
-  }, [tableName, token]);
+  }, [tableName]);
 
   // Handle form submission to add a new rule
   const handleAddRule = async (e) => {
@@ -93,15 +99,19 @@ function ValidationResults({ tableName, connectionString }) {
       setLoading(true);
       setError(null);
 
+      console.log("Adding validation rule with:");
+      console.log("Table name:", tableName);
+      console.log("Rule data:", newRule);
+
       const ruleToAdd = {
         ...newRule,
         expected_value: parsedExpectedValue
       };
 
-      await addValidationRule(token, tableName, ruleToAdd);
+      await addValidationRule(tableName, ruleToAdd);
 
       // Refresh rules list
-      const response = await fetchValidations(token, tableName);
+      const response = await fetchValidations(tableName);
       setRules(response.rules || []);
 
       // Reset form
@@ -131,10 +141,10 @@ function ValidationResults({ tableName, connectionString }) {
 
     try {
       setLoading(true);
-      await deleteValidationRule(token, tableName, ruleName);
+      await deleteValidationRule(tableName, ruleName);
 
       // Refresh rules list
-      const response = await fetchValidations(token, tableName);
+      const response = await fetchValidations(tableName);
       setRules(response.rules || []);
 
       setSuccessMessage("Rule deleted successfully");
@@ -147,7 +157,6 @@ function ValidationResults({ tableName, connectionString }) {
     }
   };
 
-  // Run all validation rules
   const handleRunValidations = async () => {
     if (!connectionString || !tableName) {
       setError("Connection string and table name are required to run validations");
@@ -156,16 +165,29 @@ function ValidationResults({ tableName, connectionString }) {
 
     try {
       setLoading(true);
-      setShowGeneratingSpinner(false);
       setError(null);
+      console.log("Running validations with:", { connectionString, tableName });
 
-      const response = await runValidations(token, connectionString, tableName);
-      setResults(response.results || []);
+      const response = await runValidations(connectionString, tableName);
+      console.log("Validation run response:", response);
+
+      // Check if we got results back
+      if (response.results) {
+        console.log(`Received ${response.results.length} validation results`);
+        setResults(response.results);
+
+        // If you have a visualization component for results, make sure it's updating
+        console.log("Updated state with new results");
+      } else {
+        console.warn("No results returned from validation run");
+        setResults([]);
+      }
 
       setSuccessMessage("Validations completed");
       setTimeout(() => setSuccessMessage(null), 3000);
     } catch (err) {
       console.error("Error running validations:", err);
+      console.error("Error details:", err.response?.data || err.message);
       setError(err.response?.data?.error || "Failed to run validations");
     } finally {
       setLoading(false);
@@ -174,36 +196,56 @@ function ValidationResults({ tableName, connectionString }) {
 
   // Generate default validation rules
   const handleGenerateDefaults = async () => {
-    if (!connectionString || !tableName) {
-      setError("Connection string and table name are required to generate default validations");
-      return;
+  if (!connectionString || !tableName) {
+    setError("Connection string and table name are required");
+    console.error("Missing required parameters:", { connectionString, tableName });
+    return;
+  }
+
+  try {
+    console.log("Calling generateDefaultValidations with:", {
+      connectionString,
+      tableName
+    });
+
+    // Make a direct fetch call to see exactly what's being sent
+    const response = await fetch(`${process.env.REACT_APP_API_BASE_URL}/api/generate-default-validations`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${await AuthHandler.getAccessToken()}`
+      },
+      body: JSON.stringify({
+        connection_string: connectionString,
+        table: tableName
+      })
+    });
+
+    const data = await response.json();
+    console.log("Default validations response:", data);
+
+    if (!response.ok) {
+      throw new Error(data.error || "Failed to generate default validations");
     }
 
-    try {
-      setLoading(true);
-      setShowGeneratingSpinner(true);
-      setError(null);
+    // Refresh rules list
+    const rulesResponse = await fetchValidations(tableName);
+    setRules(rulesResponse.rules || []);
 
-      const response = await generateDefaultValidations(token, connectionString, tableName);
-
-      // Refresh rules list
-      const rulesResponse = await fetchValidations(token, tableName);
-      setRules(rulesResponse.rules || []);
-
-      // Show more detailed message that includes information about skipped duplicates
-      setSuccessMessage(response.message || `Added ${response.count} default validation rules`);
-      setTimeout(() => setSuccessMessage(null), 3000);
-    } catch (err) {
-      console.error("Error generating default validations:", err);
-      setError(err.response?.data?.error || "Failed to generate default validations");
-    } finally {
-      setLoading(false);
-      setShowGeneratingSpinner(false);
-    }
-  };
+    setSuccessMessage(data.message || `Added ${data.count} default validation rules`);
+    setTimeout(() => setSuccessMessage(null), 3000);
+  } catch (err) {
+    console.error("Error generating default validations:", err);
+    setError(err.message || "Failed to generate default validations");
+  } finally {
+    setLoading(false);
+    setShowGeneratingSpinner(false);
+  }
+};
 
   // Display existing validation results
   const renderValidationResults = () => {
+    console.log("Rendering validation results:", results);
     if (loading && !showGeneratingSpinner && !results.length) {
       return (
         <div className="d-flex justify-content-center my-3">

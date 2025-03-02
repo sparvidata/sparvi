@@ -1,13 +1,32 @@
 import logging
 from typing import Dict, Any, Optional
-
-# Use relative import for supabase_manager
-import sys
 import os
+import sys
 
-# Add the path to find the src directory
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../../../')))
-from src.storage.supabase_manager import SupabaseManager
+# Add the correct path to the core directory
+core_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../../core'))
+if core_path not in sys.path:
+    sys.path.insert(0, core_path)
+
+# Now import from storage
+try:
+    from storage.supabase_manager import SupabaseManager
+
+    # Log success
+    logging.info("Successfully imported SupabaseManager")
+except ImportError as e:
+    # Log the error and try an alternative approach
+    logging.error(f"Failed to import SupabaseManager: {e}")
+
+    # Alternative approach using importlib
+    import importlib.util
+
+    manager_path = os.path.join(core_path, 'storage', 'supabase_manager.py')
+    spec = importlib.util.spec_from_file_location("supabase_manager", manager_path)
+    supabase_manager = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(supabase_manager)
+    SupabaseManager = supabase_manager.SupabaseManager
+    logging.info("Successfully imported SupabaseManager using importlib")
 
 # Configure logging
 logging.basicConfig(

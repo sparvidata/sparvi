@@ -1,4 +1,4 @@
-// frontend/src/api.js
+// frontend/core/api.js
 import axios from 'axios';
 import AuthHandler from './auth/AuthHandler';
 
@@ -86,10 +86,17 @@ export const fetchTables = async (connectionString) => {
 
 // Fetch validation rules for a table
 export const fetchValidations = async (table) => {
-  const response = await apiClient.get('/api/validations', {
-    params: { table }
-  });
-  return response.data;
+  console.log("fetchValidations called with table:", table);
+  try {
+    const response = await apiClient.get('/api/validations', {
+      params: { table }
+    });
+    console.log("fetchValidations response:", response.data);
+    return response.data;
+  } catch (error) {
+    console.error("Error in fetchValidations:", error);
+    throw error;
+  }
 };
 
 // Add a new validation rule
@@ -110,10 +117,19 @@ export const deleteValidationRule = async (table, ruleName) => {
 
 // Run all validation rules for a table
 export const runValidations = async (connectionString, table) => {
-  const response = await apiClient.post('/api/run-validations', {
-    connection_string: connectionString, table
-  });
-  return response.data;
+  console.log("API runValidations called with:", { connectionString, table });
+
+  try {
+    const response = await apiClient.post('/api/run-validations', {
+      connection_string: connectionString,
+      table
+    });
+    console.log("runValidations API response:", response.data);
+    return response.data;
+  } catch (error) {
+    console.error("runValidations API error:", error);
+    throw error;
+  }
 };
 
 // Get validation history for a table
@@ -126,8 +142,10 @@ export const fetchValidationHistory = async (table, limit = 10) => {
 
 // Generate and add default validation rules for a table
 export const generateDefaultValidations = async (connectionString, table) => {
+  console.log("API call with:", { connectionString, table });
   const response = await apiClient.post('/api/generate-default-validations', {
-    connection_string: connectionString, table
+    connection_string: connectionString, // Make sure this matches what your backend expects
+    table: table
   });
   return response.data;
 };
