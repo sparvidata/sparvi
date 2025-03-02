@@ -150,6 +150,13 @@ export const generateDefaultValidations = async (connectionString, table) => {
   return response.data;
 };
 
+export const fetchProfileHistory = async (table, limit = 10) => {
+  const response = await apiClient.get('/api/profile-history', {
+    params: { table, limit }
+  });
+  return response.data;
+};
+
 // Export the signOut function
 export const signOut = async () => {
   return await AuthHandler.signOut();
@@ -165,6 +172,7 @@ export default {
   runValidations,
   fetchValidationHistory,
   generateDefaultValidations,
+  fetchProfileHistory,
   loginUser,
   signOut
 };

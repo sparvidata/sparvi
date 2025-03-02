@@ -22,7 +22,10 @@ ChartJS.register(
   Legend
 );
 
-function TrendChart({ title, labels, datasets }) {
+function TrendChart({ title, labels, datasets, height = 300, subtitle }) {
+  // Check if we have valid data to display
+  const hasData = labels && labels.length > 1 && datasets && datasets.length > 0;
+
   // Format data for Chart.js
   const chartData = {
     labels: labels || ['No Data Available'],
@@ -47,15 +50,45 @@ function TrendChart({ title, labels, datasets }) {
       tooltip: {
         mode: 'index',
         intersect: false,
+        callbacks: {
+          title: function(tooltipItems) {
+            return tooltipItems[0].label;
+          }
+        }
       },
       title: {
-        display: false,
+        display: !!subtitle,
+        text: subtitle || '',
+        font: {
+          size: 14
+        }
       },
     },
     scales: {
       y: {
         beginAtZero: datasets && datasets[0]?.data?.every(val => val >= 0),
+        ticks: {
+          callback: function(value) {
+            // Format y-axis labels based on dataset type
+            if (title.toLowerCase().includes('percentage') ||
+                title.toLowerCase().includes('rate')) {
+              return value + '%';
+            }
+            // For large numbers, format with k/M/B suffixes
+            if (value >= 1000000) {
+              return (value / 1000000).toFixed(1) + 'M';
+            } else if (value >= 1000) {
+              return (value / 1000).toFixed(1) + 'k';
+            }
+            return value;
+          }
+        }
       },
+      x: {
+        grid: {
+          display: false
+        }
+      }
     },
     elements: {
       line: {
@@ -80,14 +113,14 @@ function TrendChart({ title, labels, datasets }) {
         <h5 className="mb-0">{title || 'Trend Analysis'}</h5>
       </div>
       <div className="card-body">
-        {labels && labels.length > 1 ? (
-          <div style={{ height: '300px' }}>
+        {hasData ? (
+          <div style={{ height: `${height}px` }}>
             <Line data={chartData} options={options} />
           </div>
         ) : (
           <div className="alert alert-info">
             <i className="bi bi-info-circle-fill me-2"></i>
-            Not enough historical data available for trend visualization.
+            Not enough historical data available for trend visualization. Run the profiler multiple times to generate trend data.
           </div>
         )}
       </div>

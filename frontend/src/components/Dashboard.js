@@ -1,16 +1,20 @@
-import React, { useEffect, useState, useCallback} from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { directFetchProfile } from '../profile-api';
+import { fetchProfileHistory } from '../api'; // Import the new function
 import TrendChart from './TrendChart';
 import AnomalyList from './AnomalyList';
 import SchemaShift from './SchemaShift';
 import ValidationResults from './ValidationResults';
 import AlertsPanel from './AlertsPanel';
 import ConnectionForm from './ConnectionForm';
+import ProfileHistory from './ProfileHistory'; // Import the new component
 import { Tabs, Tab } from 'react-bootstrap';
 
 function Dashboard({ onStoreRefreshHandler }) {
   const [profileData, setProfileData] = useState(null);
+  const [profileHistory, setProfileHistory] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [historyLoading, setHistoryLoading] = useState(false);
   const [error, setError] = useState(null);
   const [connectionString, setConnectionString] = useState(
     localStorage.getItem('connectionString') || "duckdb:///C:/Users/mhard/PycharmProjects/sparvidata/backend/my_database.duckdb"
@@ -21,23 +25,42 @@ function Dashboard({ onStoreRefreshHandler }) {
   console.log("Dashboard rendered with:", { connectionString, tableName });
 
   // Define the refresh handler
-  const handleRefresh = () => {
+  const handleRefresh = async () => {
     console.log("Refresh button clicked");
     // Re-fetch data when the refresh button is clicked
     if (connectionString && tableName) {
       console.log("Refreshing data for:", { connectionString, tableName });
       setProfileData(null);
-      directFetchProfile(connectionString, tableName)
-        .then(data => {
-          console.log("Refresh successful, data received:", data);
-          setProfileData(data);
-        })
-        .catch(err => {
-          console.error("Refresh failed:", err);
-          setError(err.response?.data?.error || 'Failed to refresh data');
-        });
+      try {
+        const data = await directFetchProfile(connectionString, tableName);
+        console.log("Refresh successful, data received:", data);
+        setProfileData(data);
+
+        // Also refresh history data
+        await loadProfileHistory(tableName);
+      } catch (err) {
+        console.error("Refresh failed:", err);
+        setError(err.response?.data?.error || 'Failed to refresh data');
+      }
     } else {
       console.log("Cannot refresh: missing connection string or table name");
+    }
+  };
+
+  // Function to load profile history
+  const loadProfileHistory = async (table) => {
+    if (!table) return;
+
+    try {
+      setHistoryLoading(true);
+      const response = await fetchProfileHistory(table, 15); // Get up to 15 history items
+      console.log("Profile history loaded:", response.history);
+      setProfileHistory(response.history || []);
+    } catch (err) {
+      console.error("Error loading profile history:", err);
+      // Don't set error state here to avoid interfering with the main profile display
+    } finally {
+      setHistoryLoading(false);
     }
   };
 
@@ -60,6 +83,9 @@ function Dashboard({ onStoreRefreshHandler }) {
         const data = await directFetchProfile(connectionString, tableName);
         console.log('Profile data received:', data);
         setProfileData(data);
+
+        // Also load profile history
+        await loadProfileHistory(tableName);
 
         // Save connection info to localStorage
         localStorage.setItem('connectionString', connectionString);
@@ -104,6 +130,13 @@ function Dashboard({ onStoreRefreshHandler }) {
     }
   };
 
+  // When the tab changes to "trends", ensure we have the history data
+  useEffect(() => {
+    if (activeTab === 'trends' && tableName && profileHistory.length === 0 && !historyLoading) {
+      loadProfileHistory(tableName);
+    }
+  }, [activeTab, tableName, profileHistory.length, historyLoading]);
+
   return (
     <div className="container-fluid mt-3">
       <div className="d-flex justify-content-between align-items-center mb-4">
@@ -111,8 +144,17 @@ function Dashboard({ onStoreRefreshHandler }) {
           Sparvi Data Profiler
         </h2>
         <div>
-          <button className="btn btn-outline-secondary" onClick={handleRefresh}>
-            <i className="bi bi-arrow-clockwise me-1"></i> Refresh
+          <button className="btn btn-outline-secondary" onClick={handleRefresh} disabled={loading}>
+            {loading ? (
+              <>
+                <span className="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>
+                Loading...
+              </>
+            ) : (
+              <>
+                <i className="bi bi-arrow-clockwise me-1"></i> Refresh
+              </>
+            )}
           </button>
         </div>
       </div>
@@ -436,35 +478,99 @@ function Dashboard({ onStoreRefreshHandler }) {
             </Tab>
 
             <Tab eventKey="trends" title="Trends & Changes">
-              <div className="row">
-                <div className="col-md-6">
-                  {/* Row Count Trend */}
-                  <TrendChart
-                    title="Row Count Trend"
-                    labels={profileData.trends?.timestamps || []}
-                    datasets={[{
-                      label: 'Row Count',
-                      data: profileData.trends?.row_counts || [],
-                      borderColor: 'rgba(0, 123, 255, 1)',
-                      fill: false
-                    }]}
-                  />
+              {!profileData?.trends?.timestamps || profileData.trends.timestamps.length <= 1 ? (
+                <div className="alert alert-info mt-3">
+                  <i className="bi bi-info-circle-fill me-2"></i>
+                  <strong>Insufficient historical data available.</strong> Run the profiler multiple times to generate trend data.
+                  Current run count: {profileData?.trends?.timestamps?.length || 0}/2 minimum required.
                 </div>
+              ) : (
+                <>
+                  <div className="row">
+                    <div className="col-md-6">
+                      {/* Row Count Trend */}
+                      <TrendChart
+                        title="Row Count Trend"
+                        subtitle={`Current: ${profileData.row_count.toLocaleString()}`}
+                        labels={profileData.trends?.formatted_timestamps || profileData.trends?.timestamps || []}
+                        datasets={[{
+                          label: 'Row Count',
+                          data: profileData.trends?.row_counts || [],
+                          borderColor: 'rgba(0, 123, 255, 1)',
+                          backgroundColor: 'rgba(0, 123, 255, 0.1)',
+                          fill: true
+                        }]}
+                      />
+                    </div>
 
-                <div className="col-md-6">
-                  {/* Null Rate Trends */}
-                  <TrendChart
-                    title="Null Rate Trends (%)"
-                    labels={profileData.trends?.timestamps || []}
-                    datasets={Object.entries(profileData.trends?.null_rates || {}).map(([column, values], index) => ({
-                      label: column,
-                      data: values,
-                      borderColor: `hsl(${index * 30}, 70%, 50%)`,
-                      fill: false
-                    }))}
-                  />
+                    <div className="col-md-6">
+                      {/* Duplicate Count Trend */}
+                      <TrendChart
+                        title="Duplicate Rows Trend"
+                        subtitle={`Current: ${(profileData.duplicate_count || 0).toLocaleString()}`}
+                        labels={profileData.trends?.formatted_timestamps || profileData.trends?.timestamps || []}
+                        datasets={[{
+                          label: 'Duplicate Rows',
+                          data: profileData.trends?.duplicate_counts || [],
+                          borderColor: 'rgba(220, 53, 69, 1)',
+                          backgroundColor: 'rgba(220, 53, 69, 0.1)',
+                          fill: true
+                        }]}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="row mt-3">
+                    <div className="col-md-12">
+                      {/* Null Rate Trends */}
+                      <TrendChart
+                        title="Null Rate Trends (%)"
+                        height={400}
+                        labels={profileData.trends?.formatted_timestamps || profileData.trends?.timestamps || []}
+                        datasets={Object.entries(profileData.trends?.null_rates || {})
+                          .filter(([column, values]) => values.some(v => v > 0)) // Only show columns with some nulls
+                          .map(([column, values], index) => ({
+                            label: column,
+                            data: values,
+                            borderColor: `hsl(${index * 30}, 70%, 50%)`,
+                            backgroundColor: `hsla(${index * 30}, 70%, 50%, 0.1)`,
+                            fill: false
+                          }))}
+                      />
+                    </div>
+                  </div>
+
+                  {profileData.trends?.validation_success_rates?.some(rate => rate !== null) && (
+                    <div className="row mt-3">
+                      <div className="col-md-12">
+                        {/* Validation Success Rate Trend */}
+                        <TrendChart
+                          title="Validation Success Rate (%)"
+                          labels={profileData.trends?.formatted_timestamps || profileData.trends?.timestamps || []}
+                          datasets={[{
+                            label: 'Success Rate',
+                            data: profileData.trends?.validation_success_rates || [],
+                            borderColor: 'rgba(40, 167, 69, 1)',
+                            backgroundColor: 'rgba(40, 167, 69, 0.1)',
+                            fill: true
+                          }]}
+                        />
+                      </div>
+                    </div>
+                  )}
+                </>
+              )}
+
+              {/* Profile History Table */}
+              {historyLoading ? (
+                <div className="d-flex justify-content-center my-4">
+                  <div className="spinner-border text-primary" role="status">
+                    <span className="visually-hidden">Loading history...</span>
+                  </div>
                 </div>
-              </div>
+              ) : (
+                <ProfileHistory history={profileHistory} />
+              )}
 
               <div className="row mt-4">
                 <div className="col-md-12">
