@@ -22,6 +22,7 @@ employees = pd.DataFrame({
     "name": ["Employee " + str(i) for i in range(1, 101)],
     "department": np.random.choice(["Sales", "Marketing", "Engineering", "HR", "Finance"], 100),
     "salary": np.random.normal(70000, 15000, 100).astype(int),
+    #"bonus": np.random.normal(7000, 1500, 100).astype(int),
     "hire_date": pd.date_range(start="2015-01-01", periods=100, freq='W'),
     "email": [f"employee{i}@example.com" for i in range(1, 101)]
 })
