@@ -2,6 +2,17 @@
 
 All notable changes to Sparvi will be documented in this file.
 
+## [0.3.3] - 2025-03-03
+### Added
+- History tab to view data from past profiling runs
+- Added Working trends, changes, and schema change detection
+
+### Changed
+- Updated default validation list
+
+### Fixed
+- None
+
 ## [0.3.2] - 2025-02-28
 ### Added
 - None
