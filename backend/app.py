@@ -507,7 +507,7 @@ def generate_default_validations(current_user, organization_id):
 @app.route("/api/profile-history", methods=["GET"])
 @token_required
 def get_profile_history(current_user, organization_id):
-    """Get history of profile runs for a table"""
+    """Get complete history of profile runs for a table"""
     table_name = request.args.get("table")
     limit = request.args.get("limit", 10, type=int)
 
@@ -520,31 +520,39 @@ def get_profile_history(current_user, organization_id):
         # Create the supabase manager directly
         supabase_mgr = SupabaseManager()
 
-        # Use the REST API directly through supabase_mgr.supabase
-        response = supabase_mgr.supabase.table("profiling_history") \
-            .select("collected_at, data") \
+        # Use direct Supabase client for the query
+        import os
+        from supabase import create_client
+
+        supabase_url = os.getenv("SUPABASE_URL")
+        supabase_key = os.getenv("SUPABASE_SERVICE_KEY")
+
+        direct_client = create_client(supabase_url, supabase_key)
+
+        # Query the full profile data
+        # Select all fields to get complete data
+        response = direct_client.table("profiling_history") \
+            .select("*") \
             .eq("organization_id", organization_id) \
             .eq("table_name", table_name) \
-            .order("collected_at", desc=True)  \
+            .order("collected_at", desc=True) \
             .limit(limit) \
             .execute()
 
         if not response.data:
             return jsonify({"history": []})
 
-        # Format the history data
+        # Format the history data - return the full profile data from each record
         history = []
         for item in response.data:
-            # Extract the main fields we need for the history view
-            data = item["data"]
-            profile_item = {
-                "timestamp": item["collected_at"],
-                "row_count": data.get("row_count", 0),
-                "duplicate_count": data.get("duplicate_count", 0),
-                "anomalies": data.get("anomalies", []),
-                "schema_shifts": data.get("schema_shifts", [])
-            }
-            history.append(profile_item)
+            # Use the data field which contains the complete profile
+            profile_data = item["data"]
+
+            # Ensure timestamp is included
+            if "timestamp" not in profile_data:
+                profile_data["timestamp"] = item["collected_at"]
+
+            history.append(profile_data)
 
         return jsonify({"history": history})
     except Exception as e:

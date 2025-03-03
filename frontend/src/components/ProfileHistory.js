@@ -1,6 +1,6 @@
 import React from 'react';
 
-function ProfileHistory({ history }) {
+function ProfileHistory({ history, activeProfileIndex, onSelectProfile }) {
   if (!history || !history.length) {
     return (
       <div className="card mb-4 shadow-sm">
@@ -32,15 +32,16 @@ function ProfileHistory({ history }) {
                 <th>Duplicate Count</th>
                 <th>Anomalies</th>
                 <th>Schema Shifts</th>
+                <th>Actions</th>
               </tr>
             </thead>
             <tbody>
               {history.map((profile, index) => (
-                <tr key={index}>
+                <tr key={index} className={activeProfileIndex === index ? "table-primary" : ""}>
                   <td>
                     {new Date(profile.timestamp).toLocaleString()}
                     {index === 0 && (
-                      <span className="badge bg-primary ms-2">Latest</span>
+                      <span className="badge bg-info ms-2">Latest</span>
                     )}
                   </td>
                   <td>{profile.row_count.toLocaleString()}</td>
@@ -63,6 +64,22 @@ function ProfileHistory({ history }) {
                       <span className="badge bg-success">None</span>
                     )}
                   </td>
+                  <td>
+                    <button
+                      className="btn btn-sm btn-primary"
+                      onClick={() => onSelectProfile(index)}
+                      disabled={activeProfileIndex === index}
+                    >
+                      {activeProfileIndex === index ? (
+                        <>
+                          <i className="bi bi-check-circle me-1"></i>
+                          Active
+                        </>
+                      ) : (
+                        "View"
+                      )}
+                    </button>
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -70,7 +87,7 @@ function ProfileHistory({ history }) {
         </div>
         <div className="text-muted small mt-2">
           <i className="bi bi-info-circle me-1"></i>
-          This table shows the profile runs that contribute to the trend data.
+          Click "View" to see detailed information for a specific profile run.
         </div>
       </div>
     </div>
