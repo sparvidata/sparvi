@@ -143,6 +143,7 @@ class SupabaseProfileHistoryManager:
             import json
             import datetime
             from supabase import create_client
+            import traceback
 
             # Get credentials from environment
             supabase_url = os.getenv("SUPABASE_URL")
@@ -177,7 +178,18 @@ class SupabaseProfileHistoryManager:
             # Reverse to get chronological order (oldest to newest)
             profiles = list(reversed(response.data))
 
-            # Process each profile
+            # First pass: collect all possible column names across all profiles
+            all_columns = set()
+            for profile in profiles:
+                profile_data = profile["data"]
+                completeness = profile_data.get("completeness", {})
+                all_columns.update(completeness.keys())
+
+            # Initialize null_rates with empty arrays for all columns
+            for col in all_columns:
+                trends["null_rates"][col] = []
+
+            # Second pass: process each profile
             for profile in profiles:
                 # Format timestamp for display
                 timestamp = profile["collected_at"]
@@ -212,10 +224,16 @@ class SupabaseProfileHistoryManager:
 
                 # Process null rates for each column
                 completeness = profile_data.get("completeness", {})
-                for col, stats in completeness.items():
-                    if col not in trends["null_rates"]:
-                        trends["null_rates"][col] = []
-                    trends["null_rates"][col].append(stats.get("null_percentage", 0))
+
+                # For each column we know about
+                for col in all_columns:
+                    if col in completeness:
+                        # Column exists in this profile
+                        stats = completeness[col]
+                        trends["null_rates"][col].append(stats.get("null_percentage", 0))
+                    else:
+                        # Column doesn't exist in this profile (added later or removed earlier)
+                        trends["null_rates"][col].append(None)
 
                 # Process validation results if available
                 validation_results = profile_data.get("validation_results", [])
@@ -227,15 +245,8 @@ class SupabaseProfileHistoryManager:
                 else:
                     trends["validation_success_rates"].append(None)
 
-            # Make sure all columns have the same number of data points
-            # Fill in missing values for columns added later
-            for col, values in trends["null_rates"].items():
-                if len(values) < len(trends["timestamps"]):
-                    # Add nulls to the beginning to match the length
-                    padding = [0] * (len(trends["timestamps"]) - len(values))
-                    trends["null_rates"][col] = padding + values
-
-            logger.info(f"Retrieved trend data with {len(trends['timestamps'])} data points")
+            logger.info(
+                f"Retrieved trend data with {len(trends['timestamps'])} data points for {len(all_columns)} columns")
             return trends
 
         except Exception as e:

@@ -520,36 +520,43 @@ function Dashboard({ onStoreRefreshHandler }) {
                     </div>
                   </div>
 
-                  <div className="row mt-3">
-                    <div className="col-md-12">
-                      {/* Null Rate Trends */}
-                      <TrendChart
-                        title="Null Rate Trends (%)"
-                        height={400}
-                        labels={profileData.trends?.formatted_timestamps || profileData.trends?.timestamps || []}
-                        datasets={Object.entries(profileData.trends?.null_rates || {})
-                          .filter(([column, values]) => values.some(v => v > 0)) // Only show columns with some nulls
-                          .map(([column, values], index) => ({
-                            label: column,
-                            data: values,
-                            borderColor: `hsl(${index * 30}, 70%, 50%)`,
-                            backgroundColor: `hsla(${index * 30}, 70%, 50%, 0.1)`,
-                            fill: false
-                          }))}
-                      />
-                    </div>
-                  </div>
-
-                  {profileData.trends?.validation_success_rates?.some(rate => rate !== null) && (
+                  {/* Only render null rates chart if we have data */}
+                  {profileData.trends?.null_rates && Object.keys(profileData.trends.null_rates).length > 0 && (
                     <div className="row mt-3">
                       <div className="col-md-12">
-                        {/* Validation Success Rate Trend */}
+                        {/* Null Rate Trends */}
+                        <TrendChart
+                          title="Null Rate Trends (%)"
+                          height={400}
+                          labels={profileData.trends?.formatted_timestamps || profileData.trends?.timestamps || []}
+                          datasets={Object.entries(profileData.trends.null_rates || {})
+                            .map(([column, values], index) => ({
+                              label: column,
+                              data: values,
+                              borderColor: `hsl(${index * 33 % 360}, 70%, 50%)`,
+                              backgroundColor: `hsla(${index * 33 % 360}, 70%, 50%, 0.1)`,
+                              borderWidth: 2,
+                              pointRadius: 3,
+                              fill: false,
+                              spanGaps: true
+                            }))}
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Only render validation success rate chart if we have data */}
+                  {profileData.trends?.validation_success_rates &&
+                   profileData.trends.validation_success_rates.length > 0 &&
+                   profileData.trends.validation_success_rates.some(rate => rate !== null) && (
+                    <div className="row mt-3">
+                      <div className="col-md-12">
                         <TrendChart
                           title="Validation Success Rate (%)"
                           labels={profileData.trends?.formatted_timestamps || profileData.trends?.timestamps || []}
                           datasets={[{
                             label: 'Success Rate',
-                            data: profileData.trends?.validation_success_rates || [],
+                            data: profileData.trends.validation_success_rates || [],
                             borderColor: 'rgba(40, 167, 69, 1)',
                             backgroundColor: 'rgba(40, 167, 69, 0.1)',
                             fill: true
@@ -575,7 +582,7 @@ function Dashboard({ onStoreRefreshHandler }) {
               <div className="row mt-4">
                 <div className="col-md-12">
                   {/* Schema Shifts */}
-                  <SchemaShift shifts={profileData.schema_shifts} />
+                  <SchemaShift shifts={profileData?.schema_shifts || []} />
                 </div>
               </div>
             </Tab>

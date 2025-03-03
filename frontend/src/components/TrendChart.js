@@ -9,6 +9,7 @@ import {
   Title,
   Tooltip,
   Legend,
+  Filler,
 } from 'chart.js';
 
 // Register all the necessary components
@@ -19,12 +20,18 @@ ChartJS.register(
   LineElement,
   Title,
   Tooltip,
-  Legend
+  Legend,
+  Filler
 );
 
 function TrendChart({ title, labels, datasets, height = 300, subtitle }) {
+  console.log(`Rendering TrendChart: ${title}`);
+  console.log("Labels:", labels);
+  console.log("Datasets:", datasets);
+
   // Check if we have valid data to display
   const hasData = labels && labels.length > 1 && datasets && datasets.length > 0;
+  console.log(`hasData: ${hasData}`);
 
   // Format data for Chart.js
   const chartData = {
@@ -43,9 +50,23 @@ function TrendChart({ title, labels, datasets, height = 300, subtitle }) {
   const options = {
     responsive: true,
     maintainAspectRatio: false,
+    spanGaps: true, // Connects lines across missing (null/undefined) data points
     plugins: {
       legend: {
         position: 'top',
+        labels: {
+          boxWidth: 12,
+          padding: 10,
+          // Limit the number of legends displayed if we have a lot of columns
+          filter: (item, chart) => {
+            if (datasets && datasets.length > 10) {
+              // Only show legend for datasets with some non-zero values
+              const dataset = datasets.find(d => d.label === item.text);
+              return dataset && dataset.data.some(v => v > 0);
+            }
+            return true;
+          }
+        }
       },
       tooltip: {
         mode: 'index',
@@ -53,6 +74,22 @@ function TrendChart({ title, labels, datasets, height = 300, subtitle }) {
         callbacks: {
           title: function(tooltipItems) {
             return tooltipItems[0].label;
+          },
+          label: function(context) {
+            let label = context.dataset.label || '';
+            if (label) {
+                label += ': ';
+            }
+            if (context.parsed.y !== null) {
+                if (title.toLowerCase().includes('percentage') || title.toLowerCase().includes('rate')) {
+                    label += context.parsed.y.toFixed(1) + '%';
+                } else if (context.parsed.y >= 1000) {
+                    label += context.parsed.y.toLocaleString();
+                } else {
+                    label += context.parsed.y;
+                }
+            }
+            return label;
           }
         }
       },
@@ -66,7 +103,9 @@ function TrendChart({ title, labels, datasets, height = 300, subtitle }) {
     },
     scales: {
       y: {
-        beginAtZero: datasets && datasets[0]?.data?.every(val => val >= 0),
+        beginAtZero: title.toLowerCase().includes('rate') ||
+                     title.toLowerCase().includes('percentage') ||
+                     (datasets && datasets[0]?.data?.every(val => val >= 0)),
         ticks: {
           callback: function(value) {
             // Format y-axis labels based on dataset type
