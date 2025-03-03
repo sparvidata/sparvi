@@ -6,6 +6,7 @@ import {
   runValidations,
   generateDefaultValidations
 } from '../api';
+import AuthHandler from "../auth/AuthHandler";
 
 function ValidationResults({ tableName, connectionString }) {
   const [rules, setRules] = useState([]);
@@ -194,8 +195,8 @@ function ValidationResults({ tableName, connectionString }) {
     }
   };
 
-  // Generate default validation rules
-  const handleGenerateDefaults = async () => {
+// Generate default validation rules
+const handleGenerateDefaults = async () => {
   if (!connectionString || !tableName) {
     setError("Connection string and table name are required");
     console.error("Missing required parameters:", { connectionString, tableName });
@@ -203,36 +204,22 @@ function ValidationResults({ tableName, connectionString }) {
   }
 
   try {
+    setShowGeneratingSpinner(true);
     console.log("Calling generateDefaultValidations with:", {
       connectionString,
       tableName
     });
 
-    // Make a direct fetch call to see exactly what's being sent
-    const response = await fetch(`${process.env.REACT_APP_API_BASE_URL}/api/generate-default-validations`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${await AuthHandler.getAccessToken()}`
-      },
-      body: JSON.stringify({
-        connection_string: connectionString,
-        table: tableName
-      })
-    });
+    // Use the API function directly instead of making a direct fetch call
+    const response = await generateDefaultValidations(connectionString, tableName);
 
-    const data = await response.json();
-    console.log("Default validations response:", data);
-
-    if (!response.ok) {
-      throw new Error(data.error || "Failed to generate default validations");
-    }
+    console.log("Default validations response:", response);
 
     // Refresh rules list
     const rulesResponse = await fetchValidations(tableName);
     setRules(rulesResponse.rules || []);
 
-    setSuccessMessage(data.message || `Added ${data.count} default validation rules`);
+    setSuccessMessage(response.message || `Added ${response.count} default validation rules`);
     setTimeout(() => setSuccessMessage(null), 3000);
   } catch (err) {
     console.error("Error generating default validations:", err);
