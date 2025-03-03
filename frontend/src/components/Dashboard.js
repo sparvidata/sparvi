@@ -1,16 +1,22 @@
-import React, { useEffect, useState, useCallback} from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { directFetchProfile } from '../profile-api';
+import { fetchProfileHistory } from '../api';
 import TrendChart from './TrendChart';
 import AnomalyList from './AnomalyList';
 import SchemaShift from './SchemaShift';
 import ValidationResults from './ValidationResults';
 import AlertsPanel from './AlertsPanel';
 import ConnectionForm from './ConnectionForm';
+import HistoryTab from './HistoryTab';
 import { Tabs, Tab } from 'react-bootstrap';
 
 function Dashboard({ onStoreRefreshHandler }) {
   const [profileData, setProfileData] = useState(null);
+  const [profileHistory, setProfileHistory] = useState([]);
+  const [activeProfileIndex, setActiveProfileIndex] = useState(0); // Default to latest profile (index 0)
+  const [selectedProfileData, setSelectedProfileData] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [historyLoading, setHistoryLoading] = useState(false);
   const [error, setError] = useState(null);
   const [connectionString, setConnectionString] = useState(
     localStorage.getItem('connectionString') || "duckdb:///C:/Users/mhard/PycharmProjects/sparvidata/backend/my_database.duckdb"
@@ -20,24 +26,62 @@ function Dashboard({ onStoreRefreshHandler }) {
 
   console.log("Dashboard rendered with:", { connectionString, tableName });
 
+  // Function to handle profile selection from history
+  const handleSelectProfile = (index) => {
+    setActiveProfileIndex(index);
+    // Set the selected profile data to display in other tabs
+    setSelectedProfileData(profileHistory[index]);
+  };
+
   // Define the refresh handler
-  const handleRefresh = () => {
+  const handleRefresh = async () => {
     console.log("Refresh button clicked");
     // Re-fetch data when the refresh button is clicked
     if (connectionString && tableName) {
       console.log("Refreshing data for:", { connectionString, tableName });
       setProfileData(null);
-      directFetchProfile(connectionString, tableName)
-        .then(data => {
-          console.log("Refresh successful, data received:", data);
-          setProfileData(data);
-        })
-        .catch(err => {
-          console.error("Refresh failed:", err);
-          setError(err.response?.data?.error || 'Failed to refresh data');
-        });
+      try {
+        const data = await directFetchProfile(connectionString, tableName);
+        console.log("Refresh successful, data received:", data);
+        setProfileData(data);
+
+        // Also refresh history data
+        await loadProfileHistory(tableName);
+
+        // Reset to showing the latest profile after refresh
+        setActiveProfileIndex(0);
+
+      } catch (err) {
+        console.error("Refresh failed:", err);
+        setError(err.response?.data?.error || 'Failed to refresh data');
+      }
     } else {
       console.log("Cannot refresh: missing connection string or table name");
+    }
+  };
+
+  // Function to load profile history
+  const loadProfileHistory = async (table) => {
+    if (!table) return;
+
+    try {
+      setHistoryLoading(true);
+      const response = await fetchProfileHistory(table, 15); // Get up to 15 history items
+      console.log("Profile history loaded:", response.history);
+
+      if (response.history && response.history.length > 0) {
+        setProfileHistory(response.history);
+        // Set the selected profile data to the most recent one by default
+        setSelectedProfileData(response.history[0]);
+      } else {
+        setProfileHistory([]);
+        setSelectedProfileData(null);
+      }
+    } catch (err) {
+      console.error("Error loading profile history:", err);
+      // Don't set error state here to avoid interfering with the main profile display
+    } finally {
+      setHistoryLoading(false);
     }
   };
 
@@ -60,6 +104,9 @@ function Dashboard({ onStoreRefreshHandler }) {
         const data = await directFetchProfile(connectionString, tableName);
         console.log('Profile data received:', data);
         setProfileData(data);
+
+        // Also load profile history
+        await loadProfileHistory(tableName);
 
         // Save connection info to localStorage
         localStorage.setItem('connectionString', connectionString);
@@ -98,11 +145,17 @@ function Dashboard({ onStoreRefreshHandler }) {
       console.log('Setting new connection and table values');
       setConnectionString(newConnection);
       setTableName(newTable);
+
+      // Reset active profile index when changing tables
+      setActiveProfileIndex(0);
     } else {
       console.log('Connection and table values unchanged, refreshing anyway');
       handleRefresh();
     }
   };
+
+  // Get the active profile data for display
+  const displayData = selectedProfileData || profileData;
 
   return (
     <div className="container-fluid mt-3">
@@ -111,8 +164,17 @@ function Dashboard({ onStoreRefreshHandler }) {
           Sparvi Data Profiler
         </h2>
         <div>
-          <button className="btn btn-outline-secondary" onClick={handleRefresh}>
-            <i className="bi bi-arrow-clockwise me-1"></i> Refresh
+          <button className="btn btn-outline-secondary" onClick={handleRefresh} disabled={loading}>
+            {loading ? (
+              <>
+                <span className="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>
+                Loading...
+              </>
+            ) : (
+              <>
+                <i className="bi bi-arrow-clockwise me-1"></i> Refresh
+              </>
+            )}
           </button>
         </div>
       </div>
@@ -136,53 +198,61 @@ function Dashboard({ onStoreRefreshHandler }) {
             <span className="visually-hidden">Loading...</span>
           </div>
         </div>
-      ) : profileData ? (
+      ) : displayData ? (
         <>
           {/* Profile Overview Card */}
           <div className="card mb-4 mt-4 shadow-sm">
             <div className="card-header bg-primary text-white">
-              <h5 className="mb-0">Profile Overview: {profileData.table}</h5>
+              <div className="d-flex justify-content-between align-items-center">
+                <h5 className="mb-0">Profile Overview: {displayData.table}</h5>
+                {activeProfileIndex > 0 && (
+                  <span className="badge bg-warning">
+                    <i className="bi bi-clock-history me-1"></i>
+                    Viewing Historical Data
+                  </span>
+                )}
+              </div>
             </div>
             <div className="card-body">
               <div className="row">
                 <div className="col-md-3">
                   <div className="border rounded p-3 text-center mb-3">
                     <h6>Row Count</h6>
-                    <h3>{profileData.row_count.toLocaleString()}</h3>
+                    <h3>{displayData.row_count.toLocaleString()}</h3>
                   </div>
                 </div>
                 <div className="col-md-3">
                   <div className="border rounded p-3 text-center mb-3">
                     <h6>Duplicate Rows</h6>
-                    <h3>{profileData.duplicate_count ? profileData.duplicate_count.toLocaleString() : 0}</h3>
+                    <h3>{(displayData.duplicate_count || 0).toLocaleString()}</h3>
                   </div>
                 </div>
                 <div className="col-md-3">
                   <div className="border rounded p-3 text-center mb-3">
                     <h6>Columns</h6>
-                    <h3>{Object.keys(profileData.completeness).length}</h3>
+                    <h3>{Object.keys(displayData.completeness).length}</h3>
                   </div>
                 </div>
                 <div className="col-md-3">
                   <div className="border rounded p-3 text-center mb-3">
-                    <h6>Last Updated</h6>
-                    <p className="mb-0">{new Date(profileData.timestamp).toLocaleString()}</p>
+                    <h6>Profile Date</h6>
+                    <p className="mb-0">{new Date(displayData.timestamp).toLocaleString()}</p>
                   </div>
                 </div>
               </div>
 
               {/* Alert badges */}
-              {profileData.anomalies && profileData.anomalies.length > 0 && (
+              {displayData.anomalies && displayData.anomalies.length > 0 && (
                 <div className="alert alert-warning mt-3">
                   <i className="bi bi-exclamation-triangle-fill me-2"></i>
-                  <strong>{profileData.anomalies.length} anomalies detected</strong>
+                  <strong>{displayData.anomalies.length} anomalies detected</strong>
                 </div>
               )}
 
-              {profileData.schema_shifts && profileData.schema_shifts.length > 0 && (
+              {displayData.schema_shifts && displayData.schema_shifts.length > 0 && (
                 <div className="alert alert-danger mt-3">
                   <i className="bi bi-exclamation-octagon-fill me-2"></i>
-                  <strong>{profileData.schema_shifts.length} schema shifts detected</strong>
+                  <strong>{displayData.schema_shifts.length} schema shifts detected</strong>
                 </div>
               )}
             </div>
@@ -194,6 +264,16 @@ function Dashboard({ onStoreRefreshHandler }) {
             onSelect={(k) => setActiveTab(k)}
             className="mb-4"
           >
+            {/* Add History tab as the first tab */}
+            <Tab eventKey="history" title="History">
+              <HistoryTab
+                profileHistory={profileHistory}
+                historyLoading={historyLoading}
+                activeProfileIndex={activeProfileIndex}
+                onSelectProfile={handleSelectProfile}
+              />
+            </Tab>
+
             <Tab eventKey="overview" title="Data Overview">
               <div className="row">
                 <div className="col-lg-6">
@@ -215,7 +295,7 @@ function Dashboard({ onStoreRefreshHandler }) {
                             </tr>
                           </thead>
                           <tbody>
-                            {profileData.completeness && Object.entries(profileData.completeness).map(([col, metrics]) => (
+                            {displayData.completeness && Object.entries(displayData.completeness).map(([col, metrics]) => (
                               <tr key={col}>
                                 <td>{col}</td>
                                 <td>{metrics.nulls}</td>
@@ -249,7 +329,7 @@ function Dashboard({ onStoreRefreshHandler }) {
                             </tr>
                           </thead>
                           <tbody>
-                            {profileData.frequent_values && Object.entries(profileData.frequent_values).map(([col, freq]) => (
+                            {displayData.frequent_values && Object.entries(displayData.frequent_values).map(([col, freq]) => (
                               <tr key={col}>
                                 <td>{col}</td>
                                 <td>{freq.value !== null ? freq.value.toString() : 'NULL'}</td>
@@ -266,14 +346,14 @@ function Dashboard({ onStoreRefreshHandler }) {
               </div>
 
               {/* Outliers */}
-              {profileData.outliers && Object.keys(profileData.outliers).length > 0 && (
+              {displayData.outliers && Object.keys(displayData.outliers).length > 0 && (
                 <div className="card mb-4 shadow-sm">
                   <div className="card-header">
                     <h5 className="mb-0">Outliers Detected</h5>
                   </div>
                   <div className="card-body">
                     <div className="row">
-                      {Object.entries(profileData.outliers).map(([col, values]) => (
+                      {Object.entries(displayData.outliers).map(([col, values]) => (
                         <div className="col-md-4" key={col}>
                           <div className="card mb-3">
                             <div className="card-header bg-warning-subtle">
@@ -298,7 +378,7 @@ function Dashboard({ onStoreRefreshHandler }) {
 
             <Tab eventKey="statistics" title="Numeric Statistics">
               {/* Numeric Statistics */}
-              {profileData.numeric_stats && Object.keys(profileData.numeric_stats).length > 0 && (
+              {displayData.numeric_stats && Object.keys(displayData.numeric_stats).length > 0 && (
                 <div className="card mb-4 shadow-sm">
                   <div className="card-header">
                     <h5 className="mb-0">Numeric Statistics</h5>
@@ -318,7 +398,7 @@ function Dashboard({ onStoreRefreshHandler }) {
                           </tr>
                         </thead>
                         <tbody>
-                          {Object.entries(profileData.numeric_stats).map(([col, stats]) => (
+                          {Object.entries(displayData.numeric_stats).map(([col, stats]) => (
                             <tr key={col}>
                               <td>{col}</td>
                               <td>{stats.min}</td>
@@ -336,8 +416,8 @@ function Dashboard({ onStoreRefreshHandler }) {
                 </div>
               )}
 
-              {/* Date Range Statistics - Add this new section */}
-              {profileData.date_stats && Object.keys(profileData.date_stats).length > 0 && (
+              {/* Date Range Statistics */}
+              {displayData.date_stats && Object.keys(displayData.date_stats).length > 0 && (
                 <div className="card mb-4 shadow-sm">
                   <div className="card-header">
                     <h5 className="mb-0">Date Range Statistics</h5>
@@ -355,7 +435,7 @@ function Dashboard({ onStoreRefreshHandler }) {
                           </tr>
                         </thead>
                         <tbody>
-                          {Object.entries(profileData.date_stats).map(([col, stats]) => {
+                          {Object.entries(displayData.date_stats).map(([col, stats]) => {
                             // Calculate date difference if both min and max exist
                             let dateRange = '';
                             if (stats.min_date && stats.max_date) {
@@ -384,7 +464,7 @@ function Dashboard({ onStoreRefreshHandler }) {
               )}
 
               {/* Text Length Statistics */}
-              {profileData.text_length_stats && Object.keys(profileData.text_length_stats).length > 0 && (
+              {displayData.text_length_stats && Object.keys(displayData.text_length_stats).length > 0 && (
                 <div className="card mb-4 shadow-sm">
                   <div className="card-header">
                     <h5 className="mb-0">Text Length Statistics</h5>
@@ -398,28 +478,28 @@ function Dashboard({ onStoreRefreshHandler }) {
                             <th>Min Length</th>
                             <th>Max Length</th>
                             <th>Avg Length</th>
-                            {profileData.text_patterns && <th>Patterns</th>}
+                            {displayData.text_patterns && <th>Patterns</th>}
                           </tr>
                         </thead>
                         <tbody>
-                          {Object.entries(profileData.text_length_stats).map(([col, stats]) => (
+                          {Object.entries(displayData.text_length_stats).map(([col, stats]) => (
                             <tr key={col}>
                               <td>{col}</td>
                               <td>{stats.min_length}</td>
                               <td>{stats.max_length}</td>
                               <td>{typeof stats.avg_length === 'number' ? stats.avg_length.toFixed(1) : stats.avg_length}</td>
-                              {profileData.text_patterns && (
+                              {displayData.text_patterns && (
                                 <td>
-                                  {profileData.text_patterns[col] && (
+                                  {displayData.text_patterns[col] && (
                                     <ul className="list-unstyled mb-0">
-                                      {profileData.text_patterns[col].email_pattern_count > 0 && (
-                                        <li><span className="badge bg-info">Email: {profileData.text_patterns[col].email_pattern_count}</span></li>
+                                      {displayData.text_patterns[col].email_pattern_count > 0 && (
+                                        <li><span className="badge bg-info">Email: {displayData.text_patterns[col].email_pattern_count}</span></li>
                                       )}
-                                      {profileData.text_patterns[col].numeric_pattern_count > 0 && (
-                                        <li><span className="badge bg-secondary">Numeric: {profileData.text_patterns[col].numeric_pattern_count}</span></li>
+                                      {displayData.text_patterns[col].numeric_pattern_count > 0 && (
+                                        <li><span className="badge bg-secondary">Numeric: {displayData.text_patterns[col].numeric_pattern_count}</span></li>
                                       )}
-                                      {profileData.text_patterns[col].date_pattern_count > 0 && (
-                                        <li><span className="badge bg-warning">Date: {profileData.text_patterns[col].date_pattern_count}</span></li>
+                                      {displayData.text_patterns[col].date_pattern_count > 0 && (
+                                        <li><span className="badge bg-warning">Date: {displayData.text_patterns[col].date_pattern_count}</span></li>
                                       )}
                                     </ul>
                                   )}
@@ -436,56 +516,125 @@ function Dashboard({ onStoreRefreshHandler }) {
             </Tab>
 
             <Tab eventKey="trends" title="Trends & Changes">
-              <div className="row">
-                <div className="col-md-6">
-                  {/* Row Count Trend */}
-                  <TrendChart
-                    title="Row Count Trend"
-                    labels={profileData.trends?.timestamps || []}
-                    datasets={[{
-                      label: 'Row Count',
-                      data: profileData.trends?.row_counts || [],
-                      borderColor: 'rgba(0, 123, 255, 1)',
-                      fill: false
-                    }]}
-                  />
+              {!profileData?.trends?.timestamps || profileData.trends.timestamps.length <= 1 ? (
+                <div className="alert alert-info mt-3">
+                  <i className="bi bi-info-circle-fill me-2"></i>
+                  <strong>Insufficient historical data available.</strong> Run the profiler multiple times to generate trend data.
+                  Current run count: {profileData?.trends?.timestamps?.length || 0}/2 minimum required.
                 </div>
+              ) : (
+                <>
+                  {/* Show a note when viewing historical data */}
+                  {activeProfileIndex > 0 && (
+                    <div className="alert alert-info mb-4">
+                      <i className="bi bi-info-circle-fill me-2"></i>
+                      <strong>Note:</strong> You are viewing a historical profile from {new Date(displayData.timestamp).toLocaleString()}.
+                      The trend charts still show data from all profile runs over time.
+                    </div>
+                  )}
 
-                <div className="col-md-6">
-                  {/* Null Rate Trends */}
-                  <TrendChart
-                    title="Null Rate Trends (%)"
-                    labels={profileData.trends?.timestamps || []}
-                    datasets={Object.entries(profileData.trends?.null_rates || {}).map(([column, values], index) => ({
-                      label: column,
-                      data: values,
-                      borderColor: `hsl(${index * 30}, 70%, 50%)`,
-                      fill: false
-                    }))}
-                  />
-                </div>
-              </div>
+                  <div className="row">
+                    <div className="col-md-6">
+                      {/* Row Count Trend */}
+                      <TrendChart
+                        title="Row Count Trend"
+                        subtitle={`Current: ${displayData.row_count.toLocaleString()}`}
+                        labels={profileData.trends?.formatted_timestamps || profileData.trends?.timestamps || []}
+                        datasets={[{
+                          label: 'Row Count',
+                          data: profileData.trends?.row_counts || [],
+                          borderColor: 'rgba(0, 123, 255, 1)',
+                          backgroundColor: 'rgba(0, 123, 255, 0.1)',
+                          fill: true
+                        }]}
+                      />
+                    </div>
 
-              <div className="row mt-4">
-                <div className="col-md-12">
-                  {/* Schema Shifts */}
-                  <SchemaShift shifts={profileData.schema_shifts} />
-                </div>
-              </div>
+                    <div className="col-md-6">
+                      {/* Duplicate Count Trend */}
+                      <TrendChart
+                        title="Duplicate Rows Trend"
+                        subtitle={`Current: ${(displayData.duplicate_count || 0).toLocaleString()}`}
+                        labels={profileData.trends?.formatted_timestamps || profileData.trends?.timestamps || []}
+                        datasets={[{
+                          label: 'Duplicate Rows',
+                          data: profileData.trends?.duplicate_counts || [],
+                          borderColor: 'rgba(220, 53, 69, 1)',
+                          backgroundColor: 'rgba(220, 53, 69, 0.1)',
+                          fill: true
+                        }]}
+                      />
+                    </div>
+                  </div>
+
+                  {/* Only render null rates chart if we have data */}
+                  {profileData.trends?.null_rates && Object.keys(profileData.trends.null_rates).length > 0 && (
+                    <div className="row mt-3">
+                      <div className="col-md-12">
+                        {/* Null Rate Trends */}
+                        <TrendChart
+                          title="Null Rate Trends (%)"
+                          height={400}
+                          labels={profileData.trends?.formatted_timestamps || profileData.trends?.timestamps || []}
+                          datasets={Object.entries(profileData.trends.null_rates || {})
+                            .map(([column, values], index) => ({
+                              label: column,
+                              data: values,
+                              borderColor: `hsl(${index * 33 % 360}, 70%, 50%)`,
+                              backgroundColor: `hsla(${index * 33 % 360}, 70%, 50%, 0.1)`,
+                              borderWidth: 2,
+                              pointRadius: 3,
+                              fill: false,
+                              spanGaps: true
+                            }))}
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Only render validation success rate chart if we have data */}
+                  {profileData.trends?.validation_success_rates &&
+                   profileData.trends.validation_success_rates.length > 0 &&
+                   profileData.trends.validation_success_rates.some(rate => rate !== null) && (
+                    <div className="row mt-3">
+                      <div className="col-md-12">
+                        <TrendChart
+                          title="Validation Success Rate (%)"
+                          labels={profileData.trends?.formatted_timestamps || profileData.trends?.timestamps || []}
+                          datasets={[{
+                            label: 'Success Rate',
+                            data: profileData.trends.validation_success_rates || [],
+                            borderColor: 'rgba(40, 167, 69, 1)',
+                            backgroundColor: 'rgba(40, 167, 69, 0.1)',
+                            fill: true
+                          }]}
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="row mt-4">
+                    <div className="col-md-12">
+                      {/* Schema Shifts */}
+                      <SchemaShift shifts={displayData?.schema_shifts || []} />
+                    </div>
+                  </div>
+                </>
+              )}
             </Tab>
 
             <Tab eventKey="anomalies" title="Anomalies & Alerts">
               <div className="row">
                 <div className="col-md-12">
                   {/* Anomalies */}
-                  <AnomalyList anomalies={profileData.anomalies} />
+                  <AnomalyList anomalies={displayData.anomalies} />
                 </div>
               </div>
 
               <div className="row mt-4">
                 <div className="col-md-12">
                   {/* Alerts */}
-                  <AlertsPanel alerts={profileData.alerts} />
+                  <AlertsPanel alerts={displayData.alerts} />
                 </div>
               </div>
             </Tab>
@@ -493,18 +642,88 @@ function Dashboard({ onStoreRefreshHandler }) {
             <Tab eventKey="validations" title="Validations">
               <div className="row">
                 <div className="col-md-12">
-                  {/* Validation Results */}
-                  <ValidationResults
-                    tableName={tableName}
-                    connectionString={connectionString}
-                  />
+                  {activeProfileIndex > 0 ? (
+                    <>
+                      {/* Show historical validation results when viewing a historical profile */}
+                      <div className="card mb-4 shadow-sm">
+                        <div className="card-header bg-info-subtle">
+                          <h5 className="mb-0">Historical Validation Results</h5>
+                        </div>
+                        <div className="card-body">
+                          {displayData.validation_results && displayData.validation_results.length > 0 ? (
+                            <>
+                              <div className="alert alert-info mb-4">
+                                <i className="bi bi-info-circle-fill me-2"></i>
+                                <strong>Note:</strong> You are viewing validation results from a historical profile captured on {new Date(displayData.timestamp).toLocaleString()}.
+                              </div>
+
+                              <div className="table-responsive">
+                                <table className="table table-striped">
+                                  <thead>
+                                    <tr>
+                                      <th>Rule</th>
+                                      <th>Status</th>
+                                      <th>Expected</th>
+                                      <th>Actual</th>
+                                      <th>Description</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {displayData.validation_results.map((result, idx) => (
+                                      <tr key={idx}>
+                                        <td>{result.rule_name}</td>
+                                        <td>
+                                          {result.is_valid ? (
+                                            <span className="badge bg-success">PASS</span>
+                                          ) : (
+                                            <span className="badge bg-danger">FAIL</span>
+                                          )}
+                                        </td>
+                                        <td><code>{JSON.stringify(result.expected_value)}</code></td>
+                                        <td><code>{JSON.stringify(result.actual_value)}</code></td>
+                                        <td>{result.description}</td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                              </div>
+                            </>
+                          ) : (
+                            <div className="alert alert-warning">
+                              <i className="bi bi-exclamation-triangle-fill me-2"></i>
+                              No validation results were stored with this historical profile.
+                            </div>
+                          )}
+
+                          <div className="mt-3 text-center">
+                            <button
+                              className="btn btn-primary"
+                              onClick={() => {
+                                setActiveProfileIndex(0);
+                                setActiveTab('validations');
+                              }}
+                            >
+                              <i className="bi bi-arrow-left-circle me-2"></i>
+                              Switch to Current Profile
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    </>
+                  ) : (
+                    /* Current ValidationResults component for the latest profile */
+                    <ValidationResults
+                      tableName={tableName}
+                      connectionString={connectionString}
+                    />
+                  )}
                 </div>
               </div>
             </Tab>
 
             <Tab eventKey="samples" title="Sample Data">
               {/* Sample Data */}
-              {profileData.samples && profileData.samples.length > 0 && (
+              {displayData.samples && displayData.samples.length > 0 && (
                 <div className="card mb-4 shadow-sm">
                   <div className="card-header">
                     <h5 className="mb-0">Sample Data (Top 100)</h5>
@@ -514,13 +733,13 @@ function Dashboard({ onStoreRefreshHandler }) {
                       <table className="table table-striped table-sm table-hover">
                         <thead>
                           <tr>
-                            {Object.keys(profileData.samples[0]).map((key) => (
+                            {Object.keys(displayData.samples[0]).map((key) => (
                               <th key={key}>{key}</th>
                             ))}
                           </tr>
                         </thead>
                         <tbody>
-                          {profileData.samples.map((row, idx) => (
+                          {displayData.samples.map((row, idx) => (
                             <tr key={idx}>
                               {Object.values(row).map((value, index) => (
                                 <td key={index}>{value !== null ? value.toString() : 'NULL'}</td>

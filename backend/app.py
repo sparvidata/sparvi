@@ -229,32 +229,41 @@ def get_profile(current_user, organization_id):
     connection_string = request.args.get("connection_string", os.getenv("DEFAULT_CONNECTION_STRING"))
     table_name = request.args.get("table", "employees")
     try:
+        logger.info(f"========== PROFILING STARTED ==========")
         logger.info(f"Profiling table {table_name} with connection {connection_string}")
+        logger.info(f"User ID: {current_user}, Organization ID: {organization_id}")
 
         # Create profile history manager
         profile_history = SupabaseProfileHistoryManager()
+        logger.info("Created SupabaseProfileHistoryManager")
 
         # Try to get previous profile to detect changes
         previous_profile = profile_history.get_latest_profile(organization_id, table_name)
+        logger.info(f"Previous profile found: {previous_profile is not None}")
 
         # Run the profiler
         result = profile_table(connection_string, table_name, previous_profile)
         result["timestamp"] = datetime.datetime.now().isoformat()
+        logger.info(f"Profile completed with {len(result)} keys")
 
         # Save the profile to Supabase
-        profile_history.save_profile(current_user, organization_id, result, connection_string)
+        logger.info("About to save profile to Supabase")
+        profile_id = profile_history.save_profile(current_user, organization_id, result, connection_string)
+        logger.info(f"Profile save result: {profile_id}")
 
         # Get trend data from history
         trends = profile_history.get_trends(organization_id, table_name)
         if not isinstance(trends, dict) or "error" not in trends:
             result["trends"] = trends
+            logger.info(f"Added trends data with {len(trends.get('timestamps', []))} points")
+        else:
+            logger.warning(f"Could not get trends: {trends.get('error', 'Unknown error')}")
 
         return jsonify(result)
     except Exception as e:
         logger.error(f"Error profiling table: {str(e)}")
         traceback.print_exc()  # Print the full traceback to your console
         return jsonify({"error": str(e)}), 500
-
 
 # Optional: a simple index page (for testing or informational purposes)
 @app.route("/")
@@ -491,6 +500,146 @@ def generate_default_validations(current_user, organization_id):
         })
     except Exception as e:
         logger.error(f"Error generating default validations: {str(e)}")
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/profile-history", methods=["GET"])
+@token_required
+def get_profile_history(current_user, organization_id):
+    """Get complete history of profile runs for a table"""
+    table_name = request.args.get("table")
+    limit = request.args.get("limit", 10, type=int)
+
+    if not table_name:
+        return jsonify({"error": "Table name is required"}), 400
+
+    try:
+        logger.info(f"Getting profile history for table {table_name}, limit {limit}")
+
+        # Create the supabase manager directly
+        supabase_mgr = SupabaseManager()
+
+        # Use direct Supabase client for the query
+        import os
+        from supabase import create_client
+
+        supabase_url = os.getenv("SUPABASE_URL")
+        supabase_key = os.getenv("SUPABASE_SERVICE_KEY")
+
+        direct_client = create_client(supabase_url, supabase_key)
+
+        # Query the full profile data
+        # Select all fields to get complete data
+        response = direct_client.table("profiling_history") \
+            .select("*") \
+            .eq("organization_id", organization_id) \
+            .eq("table_name", table_name) \
+            .order("collected_at", desc=True) \
+            .limit(limit) \
+            .execute()
+
+        if not response.data:
+            return jsonify({"history": []})
+
+        # Format the history data - return the full profile data from each record
+        history = []
+        for item in response.data:
+            # Use the data field which contains the complete profile
+            profile_data = item["data"]
+
+            # Ensure timestamp is included
+            if "timestamp" not in profile_data:
+                profile_data["timestamp"] = item["collected_at"]
+
+            history.append(profile_data)
+
+        return jsonify({"history": history})
+    except Exception as e:
+        logger.error(f"Error getting profile history: {str(e)}")
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/test-profile-save", methods=["GET"])
+@token_required
+def test_profile_save(current_user, organization_id):
+    """Test endpoint for direct profile saving"""
+    try:
+        # Create a simple test profile
+        test_profile = {
+            "table": "test_table",
+            "timestamp": datetime.datetime.now().isoformat(),
+            "row_count": 100,
+            "duplicate_count": 5,
+            "completeness": {
+                "id": {"nulls": 0, "null_percentage": 0, "distinct_count": 100, "distinct_percentage": 100}
+            }
+        }
+
+        # Create manager and try to save
+        profile_history = SupabaseProfileHistoryManager()
+        profile_id = profile_history.save_profile(
+            current_user,
+            organization_id,
+            test_profile,
+            "test_connection_string"
+        )
+
+        return jsonify({
+            "success": profile_id is not None,
+            "profile_id": profile_id,
+            "message": "Test profile saved successfully" if profile_id else "Failed to save test profile"
+        })
+    except Exception as e:
+        logger.error(f"Error in test save: {str(e)}")
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/test-save-no-auth", methods=["GET"])
+def test_profile_save_no_auth():
+    """Test endpoint for direct profile saving without authentication"""
+    try:
+        import uuid
+
+        # Use a valid UUID for the test user
+        test_user_id = "0a2b31f7-ac94-483c-8721-a88f5db9d296"  # Use your actual user ID from logs
+        test_org_id = "78d4fa8f-2652-45c8-ac8f-251cf8ffc98b"  # Use your actual organization ID
+
+        # Create a simple test profile
+        test_profile = {
+            "table": "test_table",
+            "timestamp": datetime.datetime.now().isoformat(),
+            "row_count": 100,
+            "duplicate_count": 5,
+            "completeness": {
+                "id": {"nulls": 0, "null_percentage": 0, "distinct_count": 100, "distinct_percentage": 100}
+            }
+        }
+
+        logger.info(f"========== TEST SAVE STARTED (NO AUTH) ==========")
+        logger.info(f"Using test user ID: {test_user_id}")
+        logger.info(f"Using test org ID: {test_org_id}")
+
+        # Create manager and try to save
+        profile_history = SupabaseProfileHistoryManager()
+        profile_id = profile_history.save_profile(
+            test_user_id,
+            test_org_id,
+            test_profile,
+            "test_connection_string"
+        )
+
+        logger.info(f"Save attempt result: {profile_id}")
+
+        return jsonify({
+            "success": profile_id is not None,
+            "profile_id": profile_id,
+            "message": "Test profile saved successfully" if profile_id else "Failed to save test profile"
+        })
+    except Exception as e:
+        logger.error(f"Error in test save: {str(e)}")
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 

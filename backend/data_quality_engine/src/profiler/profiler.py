@@ -257,6 +257,7 @@ def profile_table(connection_str: str, table: str, historical_data: Optional[Dic
 
     # Compare with historical data to detect anomalies
     anomalies = []
+    schema_shifts = []
     if historical_data:
         # Check for row count anomalies
         if historical_data["row_count"] > 0 and abs(profile["row_count"] - historical_data["row_count"]) / \
@@ -295,8 +296,13 @@ def profile_table(connection_str: str, table: str, historical_data: Optional[Dic
                         "severity": "medium"
                     })
 
+        # Detect schema changes
+        schema_shifts = detect_schema_shifts(profile, historical_data)
+        print(f"DEBUG: Detected {len(schema_shifts)} schema shifts")
+
     # Add anomalies to profile
     profile["anomalies"] = anomalies
+    profile["schema_shifts"] = schema_shifts
 
     # Prepare trend data structure (will be populated from historical runs)
     profile["trends"] = {
@@ -330,7 +336,8 @@ def detect_schema_shifts(current_profile: Dict, historical_profile: Dict) -> Lis
             "type": "column_added",
             "column": col,
             "description": f"New column added: {col}",
-            "severity": "info"
+            "severity": "info",
+            "timestamp": current_profile["timestamp"]
         })
 
     # Check for removed columns
@@ -340,10 +347,80 @@ def detect_schema_shifts(current_profile: Dict, historical_profile: Dict) -> Lis
             "type": "column_removed",
             "column": col,
             "description": f"Column removed: {col}",
-            "severity": "high"
+            "severity": "high",
+            "timestamp": current_profile["timestamp"]
         })
 
-    # Check for type changes (would require more detailed schema info)
+    # Check for data type changes (inferred from statistics)
+    common_columns = current_columns.intersection(historical_columns)
+    for col in common_columns:
+        # Check if column shifted between numeric and non-numeric
+        was_numeric = col in historical_profile.get("numeric_stats", {})
+        is_numeric = col in current_profile.get("numeric_stats", {})
+
+        if was_numeric and not is_numeric:
+            shifts.append({
+                "type": "type_changed",
+                "column": col,
+                "description": f"Column {col} changed from numeric to non-numeric",
+                "from_type": "numeric",
+                "to_type": "non-numeric",
+                "severity": "high",
+                "timestamp": current_profile["timestamp"]
+            })
+        elif not was_numeric and is_numeric:
+            shifts.append({
+                "type": "type_changed",
+                "column": col,
+                "description": f"Column {col} changed from non-numeric to numeric",
+                "from_type": "non-numeric",
+                "to_type": "numeric",
+                "severity": "high",
+                "timestamp": current_profile["timestamp"]
+            })
+
+        # Check if column shifted between date and non-date
+        was_date = col in historical_profile.get("date_stats", {})
+        is_date = col in current_profile.get("date_stats", {})
+
+        if was_date and not is_date:
+            shifts.append({
+                "type": "type_changed",
+                "column": col,
+                "description": f"Column {col} changed from date to non-date",
+                "from_type": "date",
+                "to_type": "non-date",
+                "severity": "high",
+                "timestamp": current_profile["timestamp"]
+            })
+        elif not was_date and is_date:
+            shifts.append({
+                "type": "type_changed",
+                "column": col,
+                "description": f"Column {col} changed from non-date to date",
+                "from_type": "non-date",
+                "to_type": "date",
+                "severity": "high",
+                "timestamp": current_profile["timestamp"]
+            })
+
+        # Check if a text column's max length has changed significantly
+        if col in current_profile.get("text_length_stats", {}) and col in historical_profile.get("text_length_stats",
+                                                                                                 {}):
+            current_max = current_profile["text_length_stats"][col].get("max_length")
+            historical_max = historical_profile["text_length_stats"][col].get("max_length")
+
+            if current_max is not None and historical_max is not None:
+                if current_max > historical_max * 1.5:  # 50% increase in max length
+                    shifts.append({
+                        "type": "length_increased",
+                        "column": col,
+                        "description": f"Column {col} max length increased from {historical_max} to {current_max}",
+                        "from_length": historical_max,
+                        "to_length": current_max,
+                        "severity": "medium",
+                        "timestamp": current_profile["timestamp"]
+                    })
 
     return shifts
 
