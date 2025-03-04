@@ -12,4 +12,4 @@ def cloud_profile_table(connection_string, table_name, previous_profile=None):
         # Other cloud-specific data
     }
 
-    return resultrsion__
+    return result

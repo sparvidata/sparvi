@@ -4,20 +4,11 @@ import os
 import traceback
 import logging
 import sys
-import sparvi
 from functools import wraps
 from dotenv import load_dotenv
 from flask_cors import CORS
 from sqlalchemy import inspect, create_engine
 from supabase import create_client, Client
-
-os.environ["SPARVI_CORE_VERSION"] = sparvi.__version__
-
-# Add the current directory to the path so we can import modules
-current_dir = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, current_dir)
-
-# Import from sparvi-core package
 from sparvi.profiler.profile_engine import profile_table
 from sparvi.validations.default_validations import get_default_validations
 from sparvi.validations.validator import run_validations as sparvi_run_validations
