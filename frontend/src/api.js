@@ -2,8 +2,8 @@
 import axios from 'axios';
 import AuthHandler from './auth/AuthHandler';
 
-// Set the API base URL to your backend, e.g., http://localhost:5000
-const API_BASE_URL = process.env.REACT_APP_API_BASE_URL || 'http://localhost:5000';
+const HOST = process.env.REACT_APP_API_BASE_URL || 'localhost:5000';
+const API_BASE_URL = HOST.includes('://') ? HOST : `https://${HOST}`;
 
 // Create an axios instance
 const apiClient = axios.create({

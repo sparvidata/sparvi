@@ -24,7 +24,7 @@ services:
         fromService:
           name: sparvi-backend
           type: web
-          property: url
+          property: host
       - key: REACT_APP_SUPABASE_URL
         sync: false
       - key: REACT_APP_SUPABASE_ANON_KEY
