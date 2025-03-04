@@ -2,6 +2,16 @@
 
 All notable changes to Sparvi will be documented in this file.
 
+## [0.3.5] - 2025-03-03
+### Added
+- Ability to edit existing validation rules
+
+### Changed
+- None
+
+### Fixed
+- None
+
 ## [0.3.4] - 2025-03-03
 ### Added
 - None

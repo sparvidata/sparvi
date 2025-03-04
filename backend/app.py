@@ -643,6 +643,36 @@ def test_profile_save_no_auth():
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
+@app.route("/api/validations/<rule_id>", methods=["PUT"])
+@token_required
+def update_validation(current_user, organization_id, rule_id):
+        """Update an existing validation rule"""
+        table_name = request.args.get("table")
+        if not table_name:
+            return jsonify({"error": "Table name is required"}), 400
+
+        rule_data = request.get_json()
+        if not rule_data:
+            return jsonify({"error": "Rule data is required"}), 400
+
+        required_fields = ["name", "query", "operator", "expected_value"]
+        for field in required_fields:
+            if field not in rule_data:
+                return jsonify({"error": f"Missing required field: {field}"}), 400
+
+        try:
+            logger.info(f"Updating validation rule {rule_id} for table {table_name}")
+            success = validation_manager.update_rule(organization_id, rule_id, rule_data)
+
+            if success:
+                return jsonify({"success": True})
+            else:
+                return jsonify({"error": "Rule not found or update failed"}), 404
+        except Exception as e:
+            logger.error(f"Error updating validation rule: {str(e)}")
+            traceback.print_exc()
+            return jsonify({"error": str(e)}), 500
+
 
 if __name__ == "__main__":
     # In production, ensure you run with HTTPS (via a reverse proxy or WSGI server with SSL configured)

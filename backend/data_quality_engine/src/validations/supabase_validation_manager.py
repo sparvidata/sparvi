@@ -183,3 +183,10 @@ class SupabaseValidationManager:
     def get_validation_history(self, organization_id: str, table_name: str, limit: int = 10) -> List[Dict[str, Any]]:
         """Get the most recent validation results for a table"""
         return self.supabase.get_validation_history(organization_id, table_name, limit)
+
+    def update_rule(self, organization_id: str, rule_id: str, rule: Dict[str, Any]) -> bool:
+        """
+        Update an existing validation rule
+        Returns True if successful, False if rule not found or update failed
+        """
+        return self.supabase.update_validation_rule(organization_id, rule_id, rule)

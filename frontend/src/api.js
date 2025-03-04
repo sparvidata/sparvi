@@ -162,6 +162,14 @@ export const signOut = async () => {
   return await AuthHandler.signOut();
 };
 
+// Update an existing validation rule
+export const updateValidationRule = async (table, ruleId, rule) => {
+  const response = await apiClient.put(`/api/validations/${ruleId}`, rule, {
+    params: { table }
+  });
+  return response.data;
+};
+
 // Export the default functions
 export default {
   fetchProfile,
@@ -170,6 +178,7 @@ export default {
   addValidationRule,
   deleteValidationRule,
   runValidations,
+  updateValidationRule,
   fetchValidationHistory,
   generateDefaultValidations,
   fetchProfileHistory,
