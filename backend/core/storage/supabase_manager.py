@@ -341,3 +341,29 @@ class SupabaseManager:
         sanitized = re.sub(r'(://[^:]+:)[^@]+(@)', r'\1*****\2', connection_string)
 
         return sanitized
+
+    def update_validation_rule(self, organization_id: str, rule_id: str, rule: Dict) -> bool:
+        """Update an existing validation rule without deleting and recreating it"""
+        try:
+            # Ensure expected_value is stored as a JSON string
+            expected_value = json.dumps(rule.get("expected_value", ""))
+
+            data = {
+                "rule_name": rule.get("name", ""),
+                "description": rule.get("description", ""),
+                "query": rule.get("query", ""),
+                "operator": rule.get("operator", "equals"),
+                "expected_value": expected_value
+            }
+
+            response = self.supabase.table("validation_rules") \
+                .update(data) \
+                .eq("id", rule_id) \
+                .eq("organization_id", organization_id) \
+                .execute()
+
+            return bool(response.data)  # True if any records were updated
+
+        except Exception as e:
+            logger.error(f"Error updating validation rule: {str(e)}")
+            return False

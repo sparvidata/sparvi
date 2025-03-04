@@ -3,6 +3,7 @@ import {
   fetchValidations,
   addValidationRule,
   deleteValidationRule,
+  updateValidationRule,
   runValidations,
   generateDefaultValidations
 } from '../api';
@@ -17,6 +18,16 @@ function ValidationResults({ tableName, connectionString }) {
   const [successMessage, setSuccessMessage] = useState(null);
   const [showGuideModal, setShowGuideModal] = useState(false);
 
+  // State for inline editing
+  const [editingRuleId, setEditingRuleId] = useState(null);
+  const [editedRule, setEditedRule] = useState({
+    rule_name: '',
+    description: '',
+    query: '',
+    operator: 'equals',
+    expected_value: ''
+  });
+
   const [newRule, setNewRule] = useState({
     name: '',
     description: '',
@@ -24,8 +35,6 @@ function ValidationResults({ tableName, connectionString }) {
     operator: 'equals',
     expected_value: ''
   });
-
-  const token = localStorage.getItem("token");
 
   // Function to toggle the guide modal
   const toggleGuideModal = () => setShowGuideModal(!showGuideModal);
@@ -134,6 +143,108 @@ function ValidationResults({ tableName, connectionString }) {
     }
   };
 
+  // Start editing a rule - initialize edit state
+  const startEditing = (rule) => {
+    // Convert expected_value back to string for editing
+    let expectedValueStr;
+    if (typeof rule.expected_value === 'object') {
+      expectedValueStr = JSON.stringify(rule.expected_value);
+    } else {
+      expectedValueStr = String(rule.expected_value);
+    }
+
+    setEditedRule({
+      rule_name: rule.rule_name,
+      description: rule.description || '',
+      query: rule.query,
+      operator: rule.operator,
+      expected_value: expectedValueStr
+    });
+
+    setEditingRuleId(rule.id);
+  };
+
+  // Cancel editing
+  const cancelEditing = () => {
+    setEditingRuleId(null);
+    setEditedRule({
+      rule_name: '',
+      description: '',
+      query: '',
+      operator: 'equals',
+      expected_value: ''
+    });
+  };
+
+  // Update an existing rule
+  // Update an existing rule - using direct update API
+const handleUpdateRule = async (ruleId) => {
+  // Basic validation
+  if (!editedRule.rule_name || !editedRule.query || !editedRule.expected_value) {
+    setError("Please fill in all required fields");
+    return;
+  }
+
+  // Parse expected value based on operator
+  let parsedExpectedValue;
+  try {
+    if (editedRule.operator === 'between') {
+      parsedExpectedValue = JSON.parse(editedRule.expected_value);
+      if (!Array.isArray(parsedExpectedValue) || parsedExpectedValue.length !== 2) {
+        setError("For 'between' operator, expected value should be in format [min, max]");
+        return;
+      }
+    } else if (editedRule.operator === 'equals') {
+      try {
+        parsedExpectedValue = JSON.parse(editedRule.expected_value);
+      } catch {
+        parsedExpectedValue = editedRule.expected_value;
+      }
+    } else {
+      parsedExpectedValue = Number(editedRule.expected_value);
+      if (isNaN(parsedExpectedValue)) {
+        setError("Expected value must be a number for this operator");
+        return;
+      }
+    }
+  } catch (err) {
+    setError(`Invalid expected value format: ${err.message}`);
+    return;
+  }
+
+  try {
+    setLoading(true);
+    setError(null);
+
+    // Prepare the rule data for update
+    const updatedRule = {
+      name: editedRule.rule_name,
+      description: editedRule.description,
+      query: editedRule.query,
+      operator: editedRule.operator,
+      expected_value: parsedExpectedValue
+    };
+
+    // Call the new update API endpoint
+    await updateValidationRule(tableName, ruleId, updatedRule);
+
+    // Refresh rules list
+    const response = await fetchValidations(tableName);
+    setRules(response.rules || []);
+
+    // Exit edit mode
+    setEditingRuleId(null);
+
+    setSuccessMessage("Rule updated successfully");
+    setTimeout(() => setSuccessMessage(null), 3000);
+  } catch (err) {
+    console.error("Error updating validation rule:", err);
+    setError(err.response?.data?.error || "Failed to update validation rule");
+  } finally {
+    setLoading(false);
+  }
+};
+
   // Handle rule deletion
   const handleDeleteRule = async (ruleName) => {
     if (!window.confirm(`Are you sure you want to delete the rule "${ruleName}"?`)) {
@@ -195,40 +306,40 @@ function ValidationResults({ tableName, connectionString }) {
     }
   };
 
-// Generate default validation rules
-const handleGenerateDefaults = async () => {
-  if (!connectionString || !tableName) {
-    setError("Connection string and table name are required");
-    console.error("Missing required parameters:", { connectionString, tableName });
-    return;
-  }
+  // Generate default validation rules
+  const handleGenerateDefaults = async () => {
+    if (!connectionString || !tableName) {
+      setError("Connection string and table name are required");
+      console.error("Missing required parameters:", { connectionString, tableName });
+      return;
+    }
 
-  try {
-    setShowGeneratingSpinner(true);
-    console.log("Calling generateDefaultValidations with:", {
-      connectionString,
-      tableName
-    });
+    try {
+      setShowGeneratingSpinner(true);
+      console.log("Calling generateDefaultValidations with:", {
+        connectionString,
+        tableName
+      });
 
-    // Use the API function directly instead of making a direct fetch call
-    const response = await generateDefaultValidations(connectionString, tableName);
+      // Use the API function directly instead of making a direct fetch call
+      const response = await generateDefaultValidations(connectionString, tableName);
 
-    console.log("Default validations response:", response);
+      console.log("Default validations response:", response);
 
-    // Refresh rules list
-    const rulesResponse = await fetchValidations(tableName);
-    setRules(rulesResponse.rules || []);
+      // Refresh rules list
+      const rulesResponse = await fetchValidations(tableName);
+      setRules(rulesResponse.rules || []);
 
-    setSuccessMessage(response.message || `Added ${response.count} default validation rules`);
-    setTimeout(() => setSuccessMessage(null), 3000);
-  } catch (err) {
-    console.error("Error generating default validations:", err);
-    setError(err.message || "Failed to generate default validations");
-  } finally {
-    setLoading(false);
-    setShowGeneratingSpinner(false);
-  }
-};
+      setSuccessMessage(response.message || `Added ${response.count} default validation rules`);
+      setTimeout(() => setSuccessMessage(null), 3000);
+    } catch (err) {
+      console.error("Error generating default validations:", err);
+      setError(err.message || "Failed to generate default validations");
+    } finally {
+      setLoading(false);
+      setShowGeneratingSpinner(false);
+    }
+  };
 
   // Display existing validation results
   const renderValidationResults = () => {
@@ -292,22 +403,109 @@ const handleGenerateDefaults = async () => {
               <tbody>
                 {rules.map((rule) => (
                   <tr key={rule.rule_name}>
-                    <td>{rule.rule_name}</td>
-                    <td>{rule.description}</td>
-                    <td><code className="small">{rule.query}</code></td>
-                    <td>
-                      <span className="badge bg-secondary">
-                        {rule.operator} {JSON.stringify(rule.expected_value)}
-                      </span>
-                    </td>
-                    <td>
-                      <button
-                        className="btn btn-sm btn-outline-danger"
-                        onClick={() => handleDeleteRule(rule.rule_name)}
-                      >
-                        <i className="bi bi-trash"></i>
-                      </button>
-                    </td>
+                    {editingRuleId === rule.id ? (
+                      // Editing mode - show form inputs
+                      <>
+                        <td>
+                          <input
+                            type="text"
+                            className="form-control form-control-sm"
+                            value={editedRule.rule_name}
+                            onChange={(e) => setEditedRule({...editedRule, rule_name: e.target.value})}
+                            required
+                          />
+                        </td>
+                        <td>
+                          <input
+                            type="text"
+                            className="form-control form-control-sm"
+                            value={editedRule.description}
+                            onChange={(e) => setEditedRule({...editedRule, description: e.target.value})}
+                          />
+                        </td>
+                        <td>
+                          <textarea
+                            className="form-control form-control-sm font-monospace"
+                            rows="2"
+                            value={editedRule.query}
+                            onChange={(e) => setEditedRule({...editedRule, query: e.target.value})}
+                            required
+                          ></textarea>
+                        </td>
+                        <td>
+                          <div className="d-flex">
+                            <select
+                              className="form-select form-select-sm me-1"
+                              value={editedRule.operator}
+                              onChange={(e) => setEditedRule({...editedRule, operator: e.target.value})}
+                              required
+                            >
+                              <option value="equals">Equals (=)</option>
+                              <option value="greater_than">Greater Than (&gt;)</option>
+                              <option value="less_than">Less Than (&lt;)</option>
+                              <option value="between">Between</option>
+                            </select>
+                            <input
+                              type="text"
+                              className="form-control form-control-sm"
+                              value={editedRule.expected_value}
+                              onChange={(e) => setEditedRule({...editedRule, expected_value: e.target.value})}
+                              placeholder={editedRule.operator === 'between' ? '[min, max]' : 'value'}
+                              required
+                            />
+                          </div>
+                        </td>
+                        <td>
+                          <div className="btn-group btn-group-sm">
+                            <button
+                              type="button"
+                              className="btn btn-success"
+                              onClick={() => handleUpdateRule(rule.id)}
+                              disabled={loading}
+                            >
+                              <i className="bi bi-check"></i>
+                            </button>
+                            <button
+                              type="button"
+                              className="btn btn-secondary"
+                              onClick={cancelEditing}
+                            >
+                              <i className="bi bi-x"></i>
+                            </button>
+                          </div>
+                        </td>
+                      </>
+                    ) : (
+                      // View mode - show rule data
+                      <>
+                        <td>{rule.rule_name}</td>
+                        <td>{rule.description}</td>
+                        <td><code className="small">{rule.query}</code></td>
+                        <td>
+                          <span className="badge bg-secondary">
+                            {rule.operator} {JSON.stringify(rule.expected_value)}
+                          </span>
+                        </td>
+                        <td>
+                          <div className="btn-group btn-group-sm">
+                            <button
+                              className="btn btn-outline-primary"
+                              onClick={() => startEditing(rule)}
+                              title="Edit rule"
+                            >
+                              <i className="bi bi-pencil"></i>
+                            </button>
+                            <button
+                              className="btn btn-outline-danger"
+                              onClick={() => handleDeleteRule(rule.rule_name)}
+                              title="Delete rule"
+                            >
+                              <i className="bi bi-trash"></i>
+                            </button>
+                          </div>
+                        </td>
+                      </>
+                    )}
                   </tr>
                 ))}
               </tbody>
@@ -358,23 +556,116 @@ const handleGenerateDefaults = async () => {
                 <th>Rule Name</th>
                 <th>Description</th>
                 <th>Query</th>
+                <th>Condition</th>
                 <th>Actions</th>
               </tr>
             </thead>
             <tbody>
               {rules.map((rule) => (
                 <tr key={rule.rule_name}>
-                  <td>{rule.rule_name}</td>
-                  <td>{rule.description}</td>
-                  <td><code className="small">{rule.query}</code></td>
-                  <td>
-                    <button
-                      className="btn btn-sm btn-outline-danger"
-                      onClick={() => handleDeleteRule(rule.rule_name)}
-                    >
-                      <i className="bi bi-trash"></i>
-                    </button>
-                  </td>
+                  {editingRuleId === rule.id ? (
+                    // Editing mode - show form inputs
+                    <>
+                      <td>
+                        <input
+                          type="text"
+                          className="form-control form-control-sm"
+                          value={editedRule.rule_name}
+                          onChange={(e) => setEditedRule({...editedRule, rule_name: e.target.value})}
+                          required
+                        />
+                      </td>
+                      <td>
+                        <input
+                          type="text"
+                          className="form-control form-control-sm"
+                          value={editedRule.description}
+                          onChange={(e) => setEditedRule({...editedRule, description: e.target.value})}
+                        />
+                      </td>
+                      <td>
+                        <textarea
+                          className="form-control form-control-sm font-monospace"
+                          rows="2"
+                          value={editedRule.query}
+                          onChange={(e) => setEditedRule({...editedRule, query: e.target.value})}
+                          required
+                        ></textarea>
+                      </td>
+                      <td>
+                        <div className="d-flex">
+                          <select
+                            className="form-select form-select-sm me-1"
+                            value={editedRule.operator}
+                            onChange={(e) => setEditedRule({...editedRule, operator: e.target.value})}
+                            required
+                          >
+                            <option value="equals">Equals (=)</option>
+                            <option value="greater_than">Greater Than (&gt;)</option>
+                            <option value="less_than">Less Than (&lt;)</option>
+                            <option value="between">Between</option>
+                          </select>
+                          <input
+                            type="text"
+                            className="form-control form-control-sm"
+                            value={editedRule.expected_value}
+                            onChange={(e) => setEditedRule({...editedRule, expected_value: e.target.value})}
+                            placeholder={editedRule.operator === 'between' ? '[min, max]' : 'value'}
+                            required
+                          />
+                        </div>
+                      </td>
+                      <td>
+                        <div className="btn-group btn-group-sm">
+                          <button
+                            type="button"
+                            className="btn btn-success"
+                            onClick={() => handleUpdateRule(rule.id)}
+                            disabled={loading}
+                          >
+                            <i className="bi bi-check"></i>
+                          </button>
+                          <button
+                            type="button"
+                            className="btn btn-secondary"
+                            onClick={cancelEditing}
+                          >
+                            <i className="bi bi-x"></i>
+                          </button>
+                        </div>
+                      </td>
+                    </>
+                  ) : (
+                    // View mode - show rule data
+                    <>
+                      <td>{rule.rule_name}</td>
+                      <td>{rule.description}</td>
+                      <td><code className="small">{rule.query}</code></td>
+                      <td>
+                        <span className="badge bg-secondary">
+                          {rule.operator} {JSON.stringify(rule.expected_value)}
+                        </span>
+                      </td>
+                      <td>
+                        <div className="btn-group btn-group-sm">
+                          <button
+                            className="btn btn-outline-primary"
+                            onClick={() => startEditing(rule)}
+                            title="Edit rule"
+                          >
+                            <i className="bi bi-pencil"></i>
+                          </button>
+                          <button
+                            className="btn btn-outline-danger"
+                            onClick={() => handleDeleteRule(rule.rule_name)}
+                            title="Delete rule"
+                          >
+                            <i className="bi bi-trash"></i>
+                          </button>
+                        </div>
+                      </td>
+                    </>
+                  )}
                 </tr>
               ))}
             </tbody>
