@@ -84,7 +84,7 @@ logger = setup_comprehensive_logging()
 load_dotenv()
 
 app = Flask(__name__, template_folder="templates")
-CORS(app)  # This enables CORS for all routes
+CORS(app, origins=["https://cloud.sparvi.io", "http://localhost:3000"], supports_credentials=True) # This enables CORS for all routes
 
 # Set the secret key from environment variables
 app.config["SECRET_KEY"] = os.getenv("SECRET_KEY", "default_secret_key")
