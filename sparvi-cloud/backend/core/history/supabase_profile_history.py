@@ -2,7 +2,7 @@ import json
 import logging
 import traceback
 from datetime import datetime
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 import os
 import sys
 
@@ -13,7 +13,7 @@ if core_path not in sys.path:
 
 # Now import from storage
 try:
-    from storage.supabase_manager import SupabaseManager
+    from ..storage.supabase_manager import SupabaseManager
 
     # Log success
     logging.info("Successfully imported SupabaseManager")
@@ -135,6 +135,48 @@ class SupabaseProfileHistoryManager:
             logger.error(f"Error getting latest profile: {str(e)}")
             logger.error(traceback.format_exc())
             return None
+
+    def get_profile_history(self, organization_id: str, table_name: str, limit: int = 10) -> List[Dict[str, Any]]:
+        """Get complete history of profile runs for a table"""
+        try:
+            import os
+            from supabase import create_client
+
+            supabase_url = os.getenv("SUPABASE_URL")
+            supabase_key = os.getenv("SUPABASE_SERVICE_KEY")
+
+            direct_client = create_client(supabase_url, supabase_key)
+
+            # Query the full profile data
+            response = direct_client.table("profiling_history") \
+                .select("*") \
+                .eq("organization_id", organization_id) \
+                .eq("table_name", table_name) \
+                .order("collected_at", desc=True) \
+                .limit(limit) \
+                .execute()
+
+            if not response.data:
+                return []
+
+            # Format the history data - return the full profile data from each record
+            history = []
+            for item in response.data:
+                # Use the data field which contains the complete profile
+                profile_data = item["data"]
+
+                # Ensure timestamp is included
+                if "timestamp" not in profile_data:
+                    profile_data["timestamp"] = item["collected_at"]
+
+                history.append(profile_data)
+
+            return history
+
+        except Exception as e:
+            logger.error(f"Error getting profile history: {str(e)}")
+            logger.error(traceback.format_exc())
+            return []
 
     def get_trends(self, organization_id: str, table_name: str, num_periods: int = 10) -> Dict[str, Any]:
         """Get time-series trend data for a specific table"""

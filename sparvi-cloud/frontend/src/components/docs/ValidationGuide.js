@@ -1,4 +1,3 @@
-// frontend/core/components/docs/ValidationGuide.js
 import React from 'react';
 
 function ValidationGuide() {
