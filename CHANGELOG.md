@@ -2,6 +2,17 @@
 
 All notable changes to Sparvi will be documented in this file.
 
+## [0.3.4] - 2025-03-03
+### Added
+- None
+
+### Changed
+- Profiling only runs on demand, not at login
+- Changed documentation orer
+
+### Fixed
+- None
+
 ## [0.3.3] - 2025-03-03
 ### Added
 - History tab to view data from past profiling runs
