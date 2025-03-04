@@ -8,7 +8,7 @@ All notable changes to Sparvi will be documented in this file.
 
 ### Changed
 - Profiling only runs on demand, not at login
-- Changed documentation orer
+- Changed documentation order
 
 ### Fixed
 - None
