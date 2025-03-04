@@ -1,0 +1,120 @@
+/* Custom CSS variables for your color scheme */
+:root {
+  --primary-blue: #0051ba;
+  --primary-blue-dark: #004097;
+  --primary-blue-light: #3378d1;
+  --secondary-crimson: #e8000d;
+  --secondary-crimson-dark: #c2000b;
+  --secondary-crimson-light: #ff3341;
+  --background-white: #ffffff;
+  --background-light: #f8f9fa;
+  --text-dark: #212529;
+  --text-light: #f8f9fa;
+  --border-light: #dee2e6;
+}
+
+/* Override Bootstrap primary color */
+.bg-primary {
+  background-color: var(--primary-blue) !important;
+}
+
+.text-primary {
+  color: var(--primary-blue) !important;
+}
+
+.btn-primary {
+  background-color: var(--primary-blue);
+  border-color: var(--primary-blue-dark);
+}
+
+.btn-primary:hover, .btn-primary:focus {
+  background-color: var(--primary-blue-dark);
+  border-color: var(--primary-blue-dark);
+}
+
+/* Add secondary crimson elements */
+.bg-secondary-crimson {
+  background-color: var(--secondary-crimson) !important;
+  color: white;
+}
+
+.text-secondary-crimson {
+  color: var(--secondary-crimson) !important;
+}
+
+.btn-secondary-crimson {
+  background-color: var(--secondary-crimson);
+  border-color: var(--secondary-crimson-dark);
+  color: white;
+}
+
+.btn-secondary-crimson:hover, .btn-secondary-crimson:focus {
+  background-color: var(--secondary-crimson-dark);
+  border-color: var(--secondary-crimson-dark);
+  color: white;
+}
+
+.btn-outline-secondary-crimson {
+  color: var(--secondary-crimson);
+  border-color: var(--secondary-crimson);
+}
+
+.btn-outline-secondary-crimson:hover, .btn-outline-secondary-crimson:focus {
+  background-color: var(--secondary-crimson);
+  color: white;
+}
+
+/* Badge styles */
+.badge.bg-secondary-crimson {
+  background-color: var(--secondary-crimson) !important;
+}
+
+/* Card accents */
+.card .card-header.bg-secondary-crimson {
+  background-color: var(--secondary-crimson);
+  color: white;
+}
+
+.border-secondary-crimson {
+  border-color: var(--secondary-crimson) !important;
+}
+
+/* Alert styling */
+.alert-secondary-crimson {
+  background-color: rgba(232, 0, 13, 0.1);
+  border-color: rgba(232, 0, 13, 0.2);
+  color: var(--secondary-crimson);
+}
+
+/* Tab styling */
+.nav-tabs .nav-link.active.crimson-tab {
+  color: var(--secondary-crimson);
+  border-color: var(--border-light) var(--border-light) var(--secondary-crimson);
+  border-bottom-width: 3px;
+}
+
+/* Links */
+a.text-secondary-crimson {
+  color: var(--secondary-crimson);
+  text-decoration: none;
+}
+
+a.text-secondary-crimson:hover {
+  color: var(--secondary-crimson-dark);
+  text-decoration: underline;
+}
+
+/* Table highlights */
+.table .crimson-highlight {
+  background-color: rgba(232, 0, 13, 0.05);
+}
+
+/* Progress bars */
+.progress .progress-bar-crimson {
+  background-color: var(--secondary-crimson);
+}
+
+/* Spinners */
+.spinner-crimson {
+  color: var(--secondary-crimson);
+}

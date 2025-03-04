@@ -9,12 +9,6 @@ function Documentation() {
 
   // Define available documentation pages
   const pages = {
-    'validations': {
-      title: 'Validation Rules Guide',
-      component: ValidationGuide,
-      icon: 'bi-check-circle'
-    },
-    // Add more documentation pages as needed
     'overview': {
       title: 'Documentation Overview',
       component: () => (
@@ -24,7 +18,14 @@ function Documentation() {
         </div>
       ),
       icon: 'bi-book'
+    },
+    'validations': {
+      title: 'Validation Rules Guide',
+      component: ValidationGuide,
+      icon: 'bi-check-circle'
     }
+    // Add more documentation pages as needed
+
   };
 
   // If no page is specified, redirect to overview
