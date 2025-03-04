@@ -33,30 +33,35 @@ function Dashboard({ onStoreRefreshHandler }) {
     setSelectedProfileData(profileHistory[index]);
   };
 
-  // Define the refresh handler
-  const handleRefresh = async () => {
-    console.log("Refresh button clicked");
-    // Re-fetch data when the refresh button is clicked
+  // Define the profile data handler
+  const handleProfileData = async () => {
+    console.log("Profile Data button clicked");
     if (connectionString && tableName) {
-      console.log("Refreshing data for:", { connectionString, tableName });
+      console.log("Profiling data for:", { connectionString, tableName });
       setProfileData(null);
+      setLoading(true);
+      setError(null);
+
       try {
         const data = await directFetchProfile(connectionString, tableName);
-        console.log("Refresh successful, data received:", data);
+        console.log("Profile successful, data received:", data);
         setProfileData(data);
 
         // Also refresh history data
         await loadProfileHistory(tableName);
 
-        // Reset to showing the latest profile after refresh
+        // Reset to showing the latest profile after profiling
         setActiveProfileIndex(0);
 
       } catch (err) {
-        console.error("Refresh failed:", err);
-        setError(err.response?.data?.error || 'Failed to refresh data');
+        console.error("Profile failed:", err);
+        setError(err.response?.data?.error || 'Failed to profile data');
+      } finally {
+        setLoading(false);
       }
     } else {
-      console.log("Cannot refresh: missing connection string or table name");
+      console.log("Cannot profile: missing connection string or table name");
+      setError("Connection string and table name are required to profile data");
     }
   };
 
@@ -85,57 +90,32 @@ function Dashboard({ onStoreRefreshHandler }) {
     }
   };
 
-  // Share the refresh handler with the parent component
+  // Share the profile handler with the parent component if needed
   useEffect(() => {
     if (onStoreRefreshHandler) {
-      onStoreRefreshHandler(handleRefresh);
+      onStoreRefreshHandler(handleProfileData);
     }
-  }, [onStoreRefreshHandler, handleRefresh]);
+  }, [onStoreRefreshHandler, handleProfileData]);
 
-  // Initial data loading
+  // Initial load - only set up connection info but don't profile
   useEffect(() => {
-    const getData = async () => {
-      console.log("getData called with:", { connectionString, tableName });
-      try {
-        setLoading(true);
-        setError(null);
+    // Just load connection info from localStorage, don't run profiling
+    const storedConnString = localStorage.getItem('connectionString');
+    const storedTable = localStorage.getItem('tableName');
 
-        console.log('Fetching profile data from backend...');
-        const data = await directFetchProfile(connectionString, tableName);
-        console.log('Profile data received:', data);
-        setProfileData(data);
-
-        // Also load profile history
-        await loadProfileHistory(tableName);
-
-        // Save connection info to localStorage
-        localStorage.setItem('connectionString', connectionString);
-        localStorage.setItem('tableName', tableName);
-        console.log('Connection info saved to localStorage');
-      } catch (error) {
-        console.error('Error fetching profile data:', error);
-        if (error.response) {
-          console.error('Error response data:', error.response.data);
-          console.error('Error response status:', error.response.status);
-        } else if (error.request) {
-          console.error('No response received:', error.request);
-        } else {
-          console.error('Error message:', error.message);
-        }
-        setError(error.response?.data?.error || 'Failed to fetch profile data');
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    if (connectionString && tableName) {
-      console.log('Connection string and table name available, calling getData()');
-      getData();
-    } else {
-      console.log('Missing connection string or table name, not loading data');
-      setLoading(false);
+    if (storedConnString && storedTable) {
+      setConnectionString(storedConnString);
+      setTableName(storedTable);
+      // Note: Not calling directFetchProfile here anymore
     }
-  }, [connectionString, tableName]);
+
+    // Still load profile history if available
+    if (storedTable) {
+      loadProfileHistory(storedTable);
+    }
+
+    setLoading(false);
+  }, []);
 
   const handleConnectionSubmit = (newConnection, newTable) => {
     console.log('Connection form submitted:', { newConnection, newTable });
@@ -146,11 +126,18 @@ function Dashboard({ onStoreRefreshHandler }) {
       setConnectionString(newConnection);
       setTableName(newTable);
 
+      // Save connection info to localStorage
+      localStorage.setItem('connectionString', newConnection);
+      localStorage.setItem('tableName', newTable);
+
       // Reset active profile index when changing tables
       setActiveProfileIndex(0);
-    } else {
-      console.log('Connection and table values unchanged, refreshing anyway');
-      handleRefresh();
+
+      // Reset profileData to indicate no profile run yet
+      setProfileData(null);
+
+      // Still load profile history for the new table
+      loadProfileHistory(newTable);
     }
   };
 
@@ -164,15 +151,15 @@ function Dashboard({ onStoreRefreshHandler }) {
           Sparvi Data Profiler
         </h2>
         <div>
-          <button className="btn btn-outline-secondary" onClick={handleRefresh} disabled={loading}>
+          <button className="btn btn-primary" onClick={handleProfileData} disabled={loading || !connectionString || !tableName}>
             {loading ? (
               <>
                 <span className="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>
-                Loading...
+                Profiling...
               </>
             ) : (
               <>
-                <i className="bi bi-arrow-clockwise me-1"></i> Refresh
+                <i className="bi bi-lightning-charge me-1"></i> Profile Data
               </>
             )}
           </button>
@@ -755,10 +742,15 @@ function Dashboard({ onStoreRefreshHandler }) {
             </Tab>
           </Tabs>
         </>
+      ) : connectionString && tableName ? (
+        <div className="alert alert-info mt-4">
+          <i className="bi bi-info-circle-fill me-2"></i>
+          Connection established. Click the <strong>"Profile Data"</strong> button to analyze your data.
+        </div>
       ) : (
         <div className="alert alert-info mt-4">
           <i className="bi bi-info-circle-fill me-2"></i>
-          Enter connection details and click "Connect" to profile your data.
+          Enter connection details and click "Connect" to get started.
         </div>
       )}
     </div>
