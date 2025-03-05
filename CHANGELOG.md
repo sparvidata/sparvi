@@ -2,6 +2,16 @@
 
 All notable changes to Sparvi will be documented in this file.
 
+## [0.4.0] - 2025-03-05
+### Added
+- Added new components for login, signup, password change, password reset
+
+### Changed
+- Moved core logic into a separate python package soda-core
+
+### Fixed
+- None
+
 ## [0.3.6] - 2025-03-03
 ### Added
 - Procfile
