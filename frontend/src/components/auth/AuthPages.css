@@ -27,7 +27,7 @@
   align-items: center;
   justify-content: center;
   padding: 2rem 1rem;
-  background: linear-gradient(100deg, #ebf0ff 0%, #f5f0ff 75%, #fff4f1 100%);
+  background-color: white;
 }
 
 .auth-card {
