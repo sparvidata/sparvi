@@ -11,6 +11,9 @@ import Header from './components/Header';
 import TestConnection from './components/TestConnection';
 import './colors.css';
 import './components/auth/AuthPages.css'
+import AdminDashboard from './components/admin/AdminDashboard';
+import InvitePage from './components/auth/InvitePage';
+import DatabaseDebugger from './components/debug/DatabaseDebugger';
 
 function App() {
   const [session, setSession] = useState(null);
@@ -89,6 +92,9 @@ function App() {
     );
   }
 
+  console.log("App: Rendering with session:", session);
+  console.log("App: Routes will include admin route:", !!session);
+
   return (
     <Router>
       <Header session={session} onLogout={() => AuthHandler.signOut()} />
@@ -103,6 +109,9 @@ function App() {
           <Route path="/docs/:page" element={<Documentation />} />
           <Route path="/docs" element={<Navigate to="/docs/overview" />} />
           <Route path="/" element={<Navigate to={session ? "/dashboard" : "/login"} />} />
+          <Route path="/admin" element={session ? <AdminDashboard /> : <Navigate to="/login" />} />
+          <Route path="/invite" element={<InvitePage />} />
+          <Route path="/debug-db" element={<DatabaseDebugger />} />
         </Routes>
       </div>
     </Router>

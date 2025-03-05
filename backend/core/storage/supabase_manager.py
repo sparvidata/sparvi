@@ -367,3 +367,149 @@ class SupabaseManager:
         except Exception as e:
             logger.error(f"Error updating validation rule: {str(e)}")
             return False
+
+    def get_user_role(self, user_id: str) -> str:
+        """Get the role of a user"""
+        try:
+            response = self.supabase.table("profiles").select("role").eq("id", user_id).single().execute()
+            return response.data.get("role") if response.data else 'member'
+        except Exception as e:
+            logger.error(f"Error getting user role: {str(e)}")
+            return 'member'  # Default to member role if error
+
+    def get_organization_users(self, organization_id: str) -> List[Dict]:
+        """Get all users in an organization"""
+        try:
+            response = self.supabase.table("profiles") \
+                .select("id, email, first_name, last_name, role, created_at") \
+                .eq("organization_id", organization_id) \
+                .execute()
+
+            return response.data or []
+        except Exception as e:
+            logger.error(f"Error getting organization users: {str(e)}")
+            return []
+
+    def get_user_details(self, user_id: str) -> Dict:
+        """Get detailed information about a user"""
+        try:
+            response = self.supabase.table("profiles") \
+                .select("*") \
+                .eq("id", user_id) \
+                .single() \
+                .execute()
+
+            return response.data or {}
+        except Exception as e:
+            logger.error(f"Error getting user details: {str(e)}")
+            return {}
+
+    def update_user(self, user_id: str, update_data: Dict) -> bool:
+        """Update a user's profile information"""
+        try:
+            # Only allow updating certain fields
+            allowed_fields = ['first_name', 'last_name', 'role']
+            update_dict = {k: v for k, v in update_data.items() if k in allowed_fields}
+
+            if not update_dict:
+                return False
+
+            # Add updated_at timestamp
+            update_dict['updated_at'] = datetime.datetime.now().isoformat()
+
+            response = self.supabase.table("profiles") \
+                .update(update_dict) \
+                .eq("id", user_id) \
+                .execute()
+
+            return bool(response.data)
+        except Exception as e:
+            logger.error(f"Error updating user: {str(e)}")
+            return False
+
+    def create_user_invite(self, organization_id: str, email: str, role: str = 'member',
+                           first_name: str = '', last_name: str = '') -> Dict:
+        """Create an invitation for a user to join the organization"""
+        try:
+            # Generate a secure invite token
+            invite_token = secrets.token_urlsafe(32)
+            expires_at = (datetime.datetime.now() + datetime.timedelta(days=7)).isoformat()
+
+            invite_data = {
+                "organization_id": organization_id,
+                "email": email,
+                "role": role,
+                "first_name": first_name,
+                "last_name": last_name,
+                "invite_token": invite_token,
+                "expires_at": expires_at,
+                "created_at": datetime.datetime.now().isoformat()
+            }
+
+            response = self.supabase.table("user_invites").insert(invite_data).execute()
+
+            if response.data:
+                # For the response, include the full invite URL that would be sent to the user
+                base_url = os.getenv("FRONTEND_URL", "http://localhost:3000")
+                invite_url = f"{base_url}/invite?token={invite_token}"
+                return {
+                    "id": response.data[0]["id"],
+                    "email": email,
+                    "invite_url": invite_url,
+                    "expires_at": expires_at
+                }
+            return {}
+        except Exception as e:
+            logger.error(f"Error creating user invite: {str(e)}")
+            raise
+
+    def remove_user_from_organization(self, user_id: str) -> bool:
+        """Remove a user from the organization"""
+        try:
+            # Instead of deleting the profile, set organization_id to null
+            response = self.supabase.table("profiles") \
+                .update({"organization_id": None}) \
+                .eq("id", user_id) \
+                .execute()
+
+            return bool(response.data)
+        except Exception as e:
+            logger.error(f"Error removing user from organization: {str(e)}")
+            return False
+
+    def get_organization_details(self, organization_id: str) -> Dict:
+        """Get detailed information about an organization"""
+        try:
+            response = self.supabase.table("organizations") \
+                .select("*") \
+                .eq("id", organization_id) \
+                .single() \
+                .execute()
+
+            return response.data or {}
+        except Exception as e:
+            logger.error(f"Error getting organization details: {str(e)}")
+            return {}
+
+    def update_organization(self, organization_id: str, update_data: Dict) -> bool:
+        """Update organization details"""
+        try:
+            # Only allow updating certain fields
+            allowed_fields = ['name', 'logo_url', 'settings']
+            update_dict = {k: v for k, v in update_data.items() if k in allowed_fields}
+
+            if not update_dict:
+                return False
+
+            # Add updated_at timestamp
+            update_dict['updated_at'] = datetime.datetime.now().isoformat()
+
+            response = self.supabase.table("organizations") \
+                .update(update_dict) \
+                .eq("id", organization_id) \
+                .execute()
+
+            return bool(response.data)
+        except Exception as e:
+            logger.error(f"Error updating organization: {str(e)}")
+            return False

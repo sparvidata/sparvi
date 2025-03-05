@@ -572,6 +572,170 @@ def setup_user():
         logger.error(traceback.format_exc())
         return jsonify({"error": str(e)}), 500
 
+
+# These routes will be added to your backend/app.py file
+
+@app.route("/api/admin/users", methods=["GET"])
+@token_required
+def get_users(current_user, organization_id):
+    """Get all users in the organization (admin only)"""
+    # Check if user is an admin
+    supabase_mgr = SupabaseManager()
+    user_role = supabase_mgr.get_user_role(current_user)
+
+    if user_role != 'admin':
+        logger.warning(f"Non-admin user {current_user} attempted to access admin endpoint")
+        return jsonify({"error": "Admin access required"}), 403
+
+    try:
+        users = supabase_mgr.get_organization_users(organization_id)
+        return jsonify({"users": users})
+    except Exception as e:
+        logger.error(f"Error getting users: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/admin/users/<user_id>", methods=["PUT"])
+@token_required
+def update_user(current_user, organization_id, user_id):
+    """Update a user's details (admin only)"""
+    # Check if user is an admin
+    supabase_mgr = SupabaseManager()
+    user_role = supabase_mgr.get_user_role(current_user)
+
+    if user_role != 'admin':
+        logger.warning(f"Non-admin user {current_user} attempted to access admin endpoint")
+        return jsonify({"error": "Admin access required"}), 403
+
+    # Get update data
+    data = request.get_json()
+    if not data:
+        return jsonify({"error": "No update data provided"}), 400
+
+    try:
+        # Ensure user belongs to the same organization
+        user_details = supabase_mgr.get_user_details(user_id)
+        if user_details.get('organization_id') != organization_id:
+            return jsonify({"error": "User not in your organization"}), 403
+
+        # Update the user
+        success = supabase_mgr.update_user(user_id, data)
+        if success:
+            return jsonify({"success": True})
+        else:
+            return jsonify({"error": "Failed to update user"}), 500
+    except Exception as e:
+        logger.error(f"Error updating user: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/admin/users", methods=["POST"])
+@token_required
+def invite_user(current_user, organization_id):
+    """Invite a new user to the organization (admin only)"""
+    # Check if user is an admin
+    supabase_mgr = SupabaseManager()
+    user_role = supabase_mgr.get_user_role(current_user)
+
+    if user_role != 'admin':
+        logger.warning(f"Non-admin user {current_user} attempted to access admin endpoint")
+        return jsonify({"error": "Admin access required"}), 403
+
+    # Get invite data
+    data = request.get_json()
+    if not data or 'email' not in data:
+        return jsonify({"error": "Email address is required"}), 400
+
+    try:
+        # Generate a unique invite link
+        invite_data = supabase_mgr.create_user_invite(organization_id, data['email'],
+                                                      data.get('role', 'member'),
+                                                      data.get('first_name', ''),
+                                                      data.get('last_name', ''))
+
+        # TODO: Send email with invite link (would typically use a service like SendGrid)
+        # For now, just return the invite data that would be included in the email
+
+        return jsonify({"success": True, "invite": invite_data})
+    except Exception as e:
+        logger.error(f"Error inviting user: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/admin/users/<user_id>", methods=["DELETE"])
+@token_required
+def remove_user(current_user, organization_id, user_id):
+    """Remove a user from the organization (admin only)"""
+    # Check if user is an admin
+    supabase_mgr = SupabaseManager()
+    user_role = supabase_mgr.get_user_role(current_user)
+
+    if user_role != 'admin':
+        logger.warning(f"Non-admin user {current_user} attempted to access admin endpoint")
+        return jsonify({"error": "Admin access required"}), 403
+
+    # Prevent users from removing themselves
+    if user_id == current_user:
+        return jsonify({"error": "Cannot remove yourself"}), 400
+
+    try:
+        # Ensure user belongs to the same organization
+        user_details = supabase_mgr.get_user_details(user_id)
+        if user_details.get('organization_id') != organization_id:
+            return jsonify({"error": "User not in your organization"}), 403
+
+        # Remove the user
+        success = supabase_mgr.remove_user_from_organization(user_id)
+        if success:
+            return jsonify({"success": True})
+        else:
+            return jsonify({"error": "Failed to remove user"}), 500
+    except Exception as e:
+        logger.error(f"Error removing user: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+
+# Organization management routes
+@app.route("/api/admin/organization", methods=["GET"])
+@token_required
+def get_organization(current_user, organization_id):
+    """Get organization details"""
+    try:
+        supabase_mgr = SupabaseManager()
+        org_details = supabase_mgr.get_organization_details(organization_id)
+        return jsonify({"organization": org_details})
+    except Exception as e:
+        logger.error(f"Error getting organization details: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/admin/organization", methods=["PUT"])
+@token_required
+def update_organization(current_user, organization_id):
+    """Update organization details (admin only)"""
+    # Check if user is an admin
+    supabase_mgr = SupabaseManager()
+    user_role = supabase_mgr.get_user_role(current_user)
+
+    if user_role != 'admin':
+        logger.warning(f"Non-admin user {current_user} attempted to access admin endpoint")
+        return jsonify({"error": "Admin access required"}), 403
+
+    # Get update data
+    data = request.get_json()
+    if not data:
+        return jsonify({"error": "No update data provided"}), 400
+
+    try:
+        success = supabase_mgr.update_organization(organization_id, data)
+        if success:
+            return jsonify({"success": True})
+        else:
+            return jsonify({"error": "Failed to update organization"}), 500
+    except Exception as e:
+        logger.error(f"Error updating organization: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
 if __name__ == "__main__":
     # In production, ensure you run with HTTPS (via a reverse proxy or WSGI server with SSL configured)
     app.run(debug=True)

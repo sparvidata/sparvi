@@ -1,4 +1,3 @@
-// frontend/core/api.js
 import axios from 'axios';
 import AuthHandler from './auth/AuthHandler';
 
@@ -170,6 +169,42 @@ export const updateValidationRule = async (table, ruleId, rule) => {
   return response.data;
 };
 
+// Get all users in the organization
+export const fetchAdminUsers = async () => {
+  const response = await apiClient.get('/api/admin/users');
+  return response.data.users;
+};
+
+// Update a user's profile
+export const updateAdminUser = async (userId, userData) => {
+  const response = await apiClient.put(`/api/admin/users/${userId}`, userData);
+  return response.data;
+};
+
+// Invite a new user to the organization
+export const inviteUser = async (inviteData) => {
+  const response = await apiClient.post('/api/admin/users', inviteData);
+  return response.data;
+};
+
+// Remove a user from the organization
+export const removeUser = async (userId) => {
+  const response = await apiClient.delete(`/api/admin/users/${userId}`);
+  return response.data;
+};
+
+// Get organization details
+export const fetchOrganization = async () => {
+  const response = await apiClient.get('/api/admin/organization');
+  return response.data.organization;
+};
+
+// Update organization details
+export const updateOrganization = async (orgData) => {
+  const response = await apiClient.put('/api/admin/organization', orgData);
+  return response.data;
+};
+
 // Export the default functions
 export default {
   fetchProfile,
@@ -183,5 +218,11 @@ export default {
   generateDefaultValidations,
   fetchProfileHistory,
   loginUser,
-  signOut
+  signOut,
+  fetchAdminUsers,
+  updateAdminUser,
+  inviteUser,
+  removeUser,
+  fetchOrganization,
+  updateOrganization
 };

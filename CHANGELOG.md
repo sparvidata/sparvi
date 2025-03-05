@@ -2,6 +2,17 @@
 
 All notable changes to Sparvi will be documented in this file.
 
+## [0.4.1] - 2025-03-06
+### Added
+- Admin dashboard
+- Users can now see their role and organization in the navigation bar
+
+### Changed
+- None
+
+### Fixed
+- None
+
 ## [0.4.0] - 2025-03-05
 ### Added
 - Added new components for login, signup, password change, password reset
