@@ -2,9 +2,9 @@ import React, { useState, useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import AuthHandler from './auth/AuthHandler';
 import Login from './components/auth/Login';
-// import SignupPage from './components/auth/SignupPage';
-// import ForgotPasswordPage from './components/auth/ForgotPasswordPage';
-// import ResetPasswordPage from './components/auth/ResetPasswordPage';
+import SignupPage from './components/auth/SignupPage';
+import ForgotPasswordPage from './components/auth/ForgotPassword';
+import ResetPasswordPage from './components/auth/ResetPassword';
 import Dashboard from './components/Dashboard';
 import Documentation from './components/Documentation';
 import Header from './components/Header';
@@ -95,6 +95,9 @@ function App() {
       <div className="container-fluid mt-3">
         <Routes>
           <Route path="/login" element={!session ? <Login /> : <Navigate to="/dashboard" />} />
+          <Route path="/signup" element={!session ? <SignupPage /> : <Navigate to="/dashboard" />} />
+          <Route path="/forgot-password" element={!session ? <ForgotPasswordPage /> : <Navigate to="/dashboard" />} />
+          <Route path="/reset-password" element={!session ? <ResetPasswordPage /> : <Navigate to="/dashboard" />} />
           <Route path="/dashboard" element={session ? <Dashboard /> : <Navigate to="/login" />} />
           <Route path="/test-connection" element={session ? <TestConnection /> : <Navigate to="/login" />} />
           <Route path="/docs/:page" element={<Documentation />} />

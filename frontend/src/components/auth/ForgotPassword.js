@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { supabase } from '../../lib/supabase';
+import AuthHandler from '../../auth/AuthHandler';
 import './AuthPages.css';
 
 function ForgotPasswordPage() {
@@ -23,9 +23,7 @@ function ForgotPasswordPage() {
     setIsSubmitting(true);
 
     try {
-      const { error } = await supabase.auth.resetPasswordForEmail(email, {
-        redirectTo: `${window.location.origin}/reset-password`,
-      });
+      const { data, error } = await AuthHandler.resetPassword(email);
 
       if (error) throw error;
 

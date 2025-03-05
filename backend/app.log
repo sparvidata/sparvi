@@ -1858,3 +1858,762 @@ AttributeError: 'SupabaseProfileHistoryManager' object has no attribute 'get_pro
 2025-03-05 11:29:18,658 - root - INFO - app.py:257 - Retrieved 13 validation rules
 2025-03-05 11:29:18,658 - root - DEBUG - app.py:258 - Rules content: [{'id': 'd62ba05c-31f7-49f9-8fb1-86cc59ff2d10', 'organization_id': '78d4fa8f-2652-45c8-ac8f-251cf8ffc98b', 'table_name': 'employees', 'rule_name': 'check_employees_not_empty', 'description': 'Ensure employees table has at least one row', 'query': 'SELECT COUNT(*) FROM employees', 'operator': 'greater_than', 'expected_value': 0, 'created_at': '2025-03-03T17:52:54.83168+00:00'}, {'id': 'fd9b0fdb-4fe1-4064-931c-9e04e49f803f', 'organization_id': '78d4fa8f-2652-45c8-ac8f-251cf8ffc98b', 'table_name': 'employees', 'rule_name': 'check_employees_row_growth', 'description': 'Detect unusual growth in employees row count (>20% change)', 'query': '\n            WITH current_count AS (\n                SELECT COUNT(*) as count FROM employees\n            ),\n            prev_count AS (\n                -- Replace with your historical count logic or reference table\n                SELECT \n                    CASE \n                        WHEN COUNT(*) = 0 THEN NULL \n                        ELSE COUNT(*) \n                    END as count \n                FROM employees\n            )\n            SELECT \n                CASE\n                    WHEN prev_count.count IS NULL THEN 0\n                    WHEN ABS(current_count.count - prev_count.count) > prev_count.count * 0.2 THEN 1\n                    ELSE 0\n                END\n            FROM current_count, prev_count\n        ', 'operator': 'equals', 'expected_value': 0, 'created_at': '2025-03-03T17:59:16.457964+00:00'}, {'id': 'd7dfcb26-80c0-4aa8-9da5-c93f5e5ec589', 'organization_id': '78d4fa8f-2652-45c8-ac8f-251cf8ffc98b', 'table_name': 'employees', 'rule_name': 'check_id_unique', 'description': 'Check that id values are unique', 'query': '\n                    SELECT COUNT(*) FROM (\n                        SELECT id, COUNT(*) as count \n                        FROM employees \n                        WHERE id IS NOT NULL\n                        GROUP BY id \n                        HAVING COUNT(*) > 1\n                    ) AS duplicates\n                ', 'operator': 'equals', 'expected_value': 0, 'created_at': '2025-03-03T17:59:16.550078+00:00'}, {'id': 'b37396e1-4806-4cc2-bbb8-66789b383f7b', 'organization_id': '78d4fa8f-2652-45c8-ac8f-251cf8ffc98b', 'table_name': 'employees', 'rule_name': 'check_id_positive', 'description': 'Ensure id has no negative values', 'query': 'SELECT COUNT(*) FROM employees WHERE id < 0', 'operator': 'equals', 'expected_value': 0, 'created_at': '2025-03-03T17:59:16.676877+00:00'}, {'id': '90d3a101-d07a-4818-b73d-e880b889eb4b', 'organization_id': '78d4fa8f-2652-45c8-ac8f-251cf8ffc98b', 'table_name': 'employees', 'rule_name': 'check_salary_positive', 'description': 'Ensure salary has no negative values', 'query': 'SELECT COUNT(*) FROM employees WHERE salary < 0', 'operator': 'equals', 'expected_value': 0, 'created_at': '2025-03-03T17:59:16.779642+00:00'}, {'id': 'f1fa2612-f11c-44dc-a0d2-92e99cb527d9', 'organization_id': '78d4fa8f-2652-45c8-ac8f-251cf8ffc98b', 'table_name': 'employees', 'rule_name': 'check_salary_not_zero', 'description': 'Ensure salary has no zero values', 'query': 'SELECT COUNT(*) FROM employees WHERE salary = 0', 'operator': 'equals', 'expected_value': 0, 'created_at': '2025-03-03T17:59:16.863703+00:00'}, {'id': '043839d3-6f15-4eec-9eb5-594168ed1592', 'organization_id': '78d4fa8f-2652-45c8-ac8f-251cf8ffc98b', 'table_name': 'employees', 'rule_name': 'check_hire_date_reasonable_past', 'description': 'Ensure hire_date contains no unreasonably old dates', 'query': "SELECT COUNT(*) FROM employees WHERE hire_date < '1970-01-01'", 'operator': 'equals', 'expected_value': 0, 'created_at': '2025-03-03T17:59:16.952874+00:00'}, {'id': '118a5eef-52b2-4fb4-8e01-20ec1d1d5a0a', 'organization_id': '78d4fa8f-2652-45c8-ac8f-251cf8ffc98b', 'table_name': 'employees', 'rule_name': 'check_email_valid_email', 'description': 'Ensure email contains valid email format', 'query': "\n                        SELECT COUNT(*) FROM employees \n                        WHERE email IS NOT NULL \n                        AND email NOT LIKE '%@%.%'\n                    ", 'operator': 'equals', 'expected_value': 0, 'created_at': '2025-03-03T17:59:17.041495+00:00'}, {'id': '7c88158a-f73a-4d2d-8415-36780b52adfd', 'organization_id': '78d4fa8f-2652-45c8-ac8f-251cf8ffc98b', 'table_name': 'employees', 'rule_name': 'check_id_outliers', 'description': 'Check for extreme outliers in id (> 3 std deviations)', 'query': '\n                    WITH stats AS (\n                        SELECT \n                            AVG(id) as avg_val,\n                            STDDEV(id) as stddev_val\n                        FROM employees\n                        WHERE id IS NOT NULL\n                    )\n                    SELECT COUNT(*) FROM employees, stats\n                    WHERE id > stats.avg_val + 3 * stats.stddev_val\n                    OR id < stats.avg_val - 3 * stats.stddev_val\n                ', 'operator': 'less_than', 'expected_value': 5, 'created_at': '2025-03-03T17:59:17.14637+00:00'}, {'id': 'a7fb7d39-9363-4a6f-a408-44d4860907ef', 'organization_id': '78d4fa8f-2652-45c8-ac8f-251cf8ffc98b', 'table_name': 'employees', 'rule_name': 'check_salary_outliers', 'description': 'Check for extreme outliers in salary (> 3 std deviations)', 'query': '\n                    WITH stats AS (\n                        SELECT \n                            AVG(salary) as avg_val,\n                            STDDEV(salary) as stddev_val\n                        FROM employees\n                        WHERE salary IS NOT NULL\n                    )\n                    SELECT COUNT(*) FROM employees, stats\n                    WHERE salary > stats.avg_val + 3 * stats.stddev_val\n                    OR salary < stats.avg_val - 3 * stats.stddev_val\n                ', 'operator': 'less_than', 'expected_value': 5, 'created_at': '2025-03-03T17:59:17.237429+00:00'}, {'id': '2e0774c0-d639-4261-93b2-cf4cf431375d', 'organization_id': '78d4fa8f-2652-45c8-ac8f-251cf8ffc98b', 'table_name': 'employees', 'rule_name': 'check_name_null_rate', 'description': 'Ensure name null rate is below acceptable threshold', 'query': '\n                    SELECT (COUNT(*) FILTER (WHERE name IS NULL) * 100.0 / NULLIF(COUNT(*), 0)) \n                    FROM employees\n                ', 'operator': 'less_than', 'expected_value': 25.0, 'created_at': '2025-03-03T17:59:17.347274+00:00'}, {'id': '629c51cc-a297-480a-8264-72cd811f2ce1', 'organization_id': '78d4fa8f-2652-45c8-ac8f-251cf8ffc98b', 'table_name': 'employees', 'rule_name': 'check_email_null_rate', 'description': 'Ensure email null rate is below acceptable threshold', 'query': '\n                    SELECT (COUNT(*) FILTER (WHERE email IS NULL) * 100.0 / NULLIF(COUNT(*), 0)) \n                    FROM employees\n                ', 'operator': 'less_than', 'expected_value': 25.0, 'created_at': '2025-03-03T17:59:17.454031+00:00'}, {'id': '97770b45-40ce-45ac-b98e-0b725f9db65a', 'organization_id': '78d4fa8f-2652-45c8-ac8f-251cf8ffc98b', 'table_name': 'employees', 'rule_name': 'distinct_salary', 'description': 'number of distinct salaries', 'query': 'select count(distinct salary) from employees', 'operator': 'greater_than', 'expected_value': 100, 'created_at': '2025-03-04T03:45:01.277238+00:00'}]
 2025-03-05 11:29:18,671 - werkzeug - INFO - _internal.py:224 - 127.0.0.1 - - [05/Mar/2025 11:29:18] "GET /api/validations?table=employees HTTP/1.1" 200 -
+2025-03-05 13:06:40,513 - supabase_manager - INFO - supabase_manager.py:33 - Supabase client initialized
+2025-03-05 13:06:40,516 - supabase_validation_manager - INFO - supabase_validation_manager.py:49 - Supabase Validation Manager initialized
+2025-03-05 13:06:40,546 - werkzeug - INFO - _internal.py:224 -  * Running on http://127.0.0.1:5000 (Press CTRL+C to quit)
+2025-03-05 13:06:40,550 - werkzeug - INFO - _internal.py:224 -  * Restarting with stat
+2025-03-05 13:06:43,690 - supabase_manager - INFO - supabase_manager.py:33 - Supabase client initialized
+2025-03-05 13:06:43,691 - supabase_validation_manager - INFO - supabase_validation_manager.py:49 - Supabase Validation Manager initialized
+2025-03-05 13:06:43,710 - werkzeug - WARNING - _internal.py:224 -  * Debugger is active!
+2025-03-05 13:06:43,717 - werkzeug - INFO - _internal.py:224 -  * Debugger PIN: 895-897-774
+2025-03-05 13:07:05,225 - werkzeug - INFO - _internal.py:224 - 127.0.0.1 - - [05/Mar/2025 13:07:05] "OPTIONS /api/profile-history?table=employees&limit=15 HTTP/1.1" 200 -
+2025-03-05 13:07:05,231 - werkzeug - INFO - _internal.py:224 - 127.0.0.1 - - [05/Mar/2025 13:07:05] "OPTIONS /api/profile-history?table=employees&limit=15 HTTP/1.1" 200 -
+2025-03-05 13:07:05,502 - root - DEBUG - app.py:114 - Supabase URL: https://aahlbynwdjqboucpjfoo.supabase.co
+2025-03-05 13:07:05,514 - root - DEBUG - app.py:115 - Supabase Service Key: True
+2025-03-05 13:07:08,767 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/auth/v1/user "HTTP/1.1 200 OK"
+2025-03-05 13:07:08,770 - root - INFO - app.py:127 - Token valid for user: b308be37-7569-42e1-9f0c-921f93f84915
+2025-03-05 13:07:11,492 - supabase_manager - INFO - supabase_manager.py:33 - Supabase client initialized
+2025-03-05 13:07:11,833 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/rest/v1/profiles?select=organization_id&id=eq.b308be37-7569-42e1-9f0c-921f93f84915 "HTTP/1.1 406 Not Acceptable"
+2025-03-05 13:07:11,841 - supabase_manager - ERROR - supabase_manager.py:41 - Error getting user organization: {'code': 'PGRST116', 'details': 'The result contains 0 rows', 'hint': None, 'message': 'JSON object requested, multiple (or no) rows returned'}
+2025-03-05 13:07:11,843 - root - ERROR - app.py:134 - No organization found for user: b308be37-7569-42e1-9f0c-921f93f84915
+2025-03-05 13:07:11,849 - werkzeug - INFO - _internal.py:224 - 127.0.0.1 - - [05/Mar/2025 13:07:11] "[31m[1mGET /api/profile-history?table=employees&limit=15 HTTP/1.1[0m" 403 -
+2025-03-05 13:07:11,872 - root - DEBUG - app.py:114 - Supabase URL: https://aahlbynwdjqboucpjfoo.supabase.co
+2025-03-05 13:07:11,872 - root - DEBUG - app.py:115 - Supabase Service Key: True
+2025-03-05 13:07:15,045 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/auth/v1/user "HTTP/1.1 200 OK"
+2025-03-05 13:07:15,051 - root - INFO - app.py:127 - Token valid for user: b308be37-7569-42e1-9f0c-921f93f84915
+2025-03-05 13:07:17,890 - supabase_manager - INFO - supabase_manager.py:33 - Supabase client initialized
+2025-03-05 13:07:18,157 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/rest/v1/profiles?select=organization_id&id=eq.b308be37-7569-42e1-9f0c-921f93f84915 "HTTP/1.1 406 Not Acceptable"
+2025-03-05 13:07:18,158 - supabase_manager - ERROR - supabase_manager.py:41 - Error getting user organization: {'code': 'PGRST116', 'details': 'The result contains 0 rows', 'hint': None, 'message': 'JSON object requested, multiple (or no) rows returned'}
+2025-03-05 13:07:18,158 - root - ERROR - app.py:134 - No organization found for user: b308be37-7569-42e1-9f0c-921f93f84915
+2025-03-05 13:07:18,166 - werkzeug - INFO - _internal.py:224 - 127.0.0.1 - - [05/Mar/2025 13:07:18] "[31m[1mGET /api/profile-history?table=employees&limit=15 HTTP/1.1[0m" 403 -
+2025-03-05 13:07:18,472 - root - DEBUG - app.py:114 - Supabase URL: https://aahlbynwdjqboucpjfoo.supabase.co
+2025-03-05 13:07:18,473 - root - DEBUG - app.py:115 - Supabase Service Key: True
+2025-03-05 13:07:20,429 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/auth/v1/user "HTTP/1.1 200 OK"
+2025-03-05 13:07:20,430 - root - INFO - app.py:127 - Token valid for user: b308be37-7569-42e1-9f0c-921f93f84915
+2025-03-05 13:07:22,341 - supabase_manager - INFO - supabase_manager.py:33 - Supabase client initialized
+2025-03-05 13:07:22,610 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/rest/v1/profiles?select=organization_id&id=eq.b308be37-7569-42e1-9f0c-921f93f84915 "HTTP/1.1 406 Not Acceptable"
+2025-03-05 13:07:22,611 - supabase_manager - ERROR - supabase_manager.py:41 - Error getting user organization: {'code': 'PGRST116', 'details': 'The result contains 0 rows', 'hint': None, 'message': 'JSON object requested, multiple (or no) rows returned'}
+2025-03-05 13:07:22,612 - root - ERROR - app.py:134 - No organization found for user: b308be37-7569-42e1-9f0c-921f93f84915
+2025-03-05 13:07:22,616 - werkzeug - INFO - _internal.py:224 - 127.0.0.1 - - [05/Mar/2025 13:07:22] "[31m[1mGET /api/profile-history?table=employees&limit=15 HTTP/1.1[0m" 403 -
+2025-03-05 13:07:22,619 - root - DEBUG - app.py:114 - Supabase URL: https://aahlbynwdjqboucpjfoo.supabase.co
+2025-03-05 13:07:22,620 - root - DEBUG - app.py:115 - Supabase Service Key: True
+2025-03-05 13:07:24,587 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/auth/v1/user "HTTP/1.1 200 OK"
+2025-03-05 13:07:24,588 - root - INFO - app.py:127 - Token valid for user: b308be37-7569-42e1-9f0c-921f93f84915
+2025-03-05 13:07:26,104 - supabase_manager - INFO - supabase_manager.py:33 - Supabase client initialized
+2025-03-05 13:07:26,360 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/rest/v1/profiles?select=organization_id&id=eq.b308be37-7569-42e1-9f0c-921f93f84915 "HTTP/1.1 406 Not Acceptable"
+2025-03-05 13:07:26,365 - supabase_manager - ERROR - supabase_manager.py:41 - Error getting user organization: {'code': 'PGRST116', 'details': 'The result contains 0 rows', 'hint': None, 'message': 'JSON object requested, multiple (or no) rows returned'}
+2025-03-05 13:07:26,367 - root - ERROR - app.py:134 - No organization found for user: b308be37-7569-42e1-9f0c-921f93f84915
+2025-03-05 13:07:26,371 - werkzeug - INFO - _internal.py:224 - 127.0.0.1 - - [05/Mar/2025 13:07:26] "[31m[1mGET /api/profile-history?table=employees&limit=15 HTTP/1.1[0m" 403 -
+2025-03-05 13:07:26,683 - root - DEBUG - app.py:114 - Supabase URL: https://aahlbynwdjqboucpjfoo.supabase.co
+2025-03-05 13:07:26,683 - root - DEBUG - app.py:115 - Supabase Service Key: True
+2025-03-05 13:07:28,230 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/auth/v1/user "HTTP/1.1 200 OK"
+2025-03-05 13:07:28,235 - root - INFO - app.py:127 - Token valid for user: b308be37-7569-42e1-9f0c-921f93f84915
+2025-03-05 13:07:28,519 - root - DEBUG - app.py:114 - Supabase URL: https://aahlbynwdjqboucpjfoo.supabase.co
+2025-03-05 13:07:28,519 - root - DEBUG - app.py:115 - Supabase Service Key: True
+2025-03-05 13:07:28,868 - root - DEBUG - app.py:114 - Supabase URL: https://aahlbynwdjqboucpjfoo.supabase.co
+2025-03-05 13:07:28,869 - root - DEBUG - app.py:115 - Supabase Service Key: True
+2025-03-05 13:07:28,870 - root - DEBUG - app.py:114 - Supabase URL: https://aahlbynwdjqboucpjfoo.supabase.co
+2025-03-05 13:07:28,870 - root - DEBUG - app.py:115 - Supabase Service Key: True
+2025-03-05 13:07:30,599 - supabase_manager - INFO - supabase_manager.py:33 - Supabase client initialized
+2025-03-05 13:07:30,877 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/rest/v1/profiles?select=organization_id&id=eq.b308be37-7569-42e1-9f0c-921f93f84915 "HTTP/1.1 406 Not Acceptable"
+2025-03-05 13:07:30,877 - supabase_manager - ERROR - supabase_manager.py:41 - Error getting user organization: {'code': 'PGRST116', 'details': 'The result contains 0 rows', 'hint': None, 'message': 'JSON object requested, multiple (or no) rows returned'}
+2025-03-05 13:07:30,888 - root - ERROR - app.py:134 - No organization found for user: b308be37-7569-42e1-9f0c-921f93f84915
+2025-03-05 13:07:30,895 - werkzeug - INFO - _internal.py:224 - 127.0.0.1 - - [05/Mar/2025 13:07:30] "[31m[1mGET /api/profile-history?table=employees&limit=15 HTTP/1.1[0m" 403 -
+2025-03-05 13:07:31,265 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/auth/v1/user "HTTP/1.1 200 OK"
+2025-03-05 13:07:31,266 - root - INFO - app.py:127 - Token valid for user: b308be37-7569-42e1-9f0c-921f93f84915
+2025-03-05 13:07:31,591 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/auth/v1/user "HTTP/1.1 200 OK"
+2025-03-05 13:07:31,592 - root - INFO - app.py:127 - Token valid for user: b308be37-7569-42e1-9f0c-921f93f84915
+2025-03-05 13:07:31,624 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/auth/v1/user "HTTP/1.1 200 OK"
+2025-03-05 13:07:31,630 - root - INFO - app.py:127 - Token valid for user: b308be37-7569-42e1-9f0c-921f93f84915
+2025-03-05 13:07:33,634 - supabase_manager - INFO - supabase_manager.py:33 - Supabase client initialized
+2025-03-05 13:07:33,824 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/rest/v1/profiles?select=organization_id&id=eq.b308be37-7569-42e1-9f0c-921f93f84915 "HTTP/1.1 406 Not Acceptable"
+2025-03-05 13:07:33,825 - supabase_manager - ERROR - supabase_manager.py:41 - Error getting user organization: {'code': 'PGRST116', 'details': 'The result contains 0 rows', 'hint': None, 'message': 'JSON object requested, multiple (or no) rows returned'}
+2025-03-05 13:07:33,825 - root - ERROR - app.py:134 - No organization found for user: b308be37-7569-42e1-9f0c-921f93f84915
+2025-03-05 13:07:33,831 - werkzeug - INFO - _internal.py:224 - 127.0.0.1 - - [05/Mar/2025 13:07:33] "[31m[1mGET /api/profile-history?table=employees&limit=15 HTTP/1.1[0m" 403 -
+2025-03-05 13:07:34,007 - supabase_manager - INFO - supabase_manager.py:33 - Supabase client initialized
+2025-03-05 13:07:34,015 - supabase_manager - INFO - supabase_manager.py:33 - Supabase client initialized
+2025-03-05 13:07:34,183 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/rest/v1/profiles?select=organization_id&id=eq.b308be37-7569-42e1-9f0c-921f93f84915 "HTTP/1.1 406 Not Acceptable"
+2025-03-05 13:07:34,184 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/rest/v1/profiles?select=organization_id&id=eq.b308be37-7569-42e1-9f0c-921f93f84915 "HTTP/1.1 406 Not Acceptable"
+2025-03-05 13:07:34,185 - supabase_manager - ERROR - supabase_manager.py:41 - Error getting user organization: {'code': 'PGRST116', 'details': 'The result contains 0 rows', 'hint': None, 'message': 'JSON object requested, multiple (or no) rows returned'}
+2025-03-05 13:07:34,185 - supabase_manager - ERROR - supabase_manager.py:41 - Error getting user organization: {'code': 'PGRST116', 'details': 'The result contains 0 rows', 'hint': None, 'message': 'JSON object requested, multiple (or no) rows returned'}
+2025-03-05 13:07:34,185 - root - ERROR - app.py:134 - No organization found for user: b308be37-7569-42e1-9f0c-921f93f84915
+2025-03-05 13:07:34,186 - root - ERROR - app.py:134 - No organization found for user: b308be37-7569-42e1-9f0c-921f93f84915
+2025-03-05 13:07:34,191 - werkzeug - INFO - _internal.py:224 - 127.0.0.1 - - [05/Mar/2025 13:07:34] "[31m[1mGET /api/profile-history?table=employees&limit=15 HTTP/1.1[0m" 403 -
+2025-03-05 13:07:34,195 - werkzeug - INFO - _internal.py:224 - 127.0.0.1 - - [05/Mar/2025 13:07:34] "[31m[1mGET /api/profile-history?table=employees&limit=15 HTTP/1.1[0m" 403 -
+2025-03-05 13:10:43,531 - werkzeug - INFO - _internal.py:224 - 127.0.0.1 - - [05/Mar/2025 13:10:43] "OPTIONS /api/profile?connection_string=duckdb:%2F%2F%2FC:%2FUsers%2Fmhard%2FPycharmProjects%2Fsparvidata%2Fbackend%2Fmy_database.duckdb&table=employees HTTP/1.1" 200 -
+2025-03-05 13:10:43,790 - root - DEBUG - app.py:114 - Supabase URL: https://aahlbynwdjqboucpjfoo.supabase.co
+2025-03-05 13:10:43,791 - root - DEBUG - app.py:115 - Supabase Service Key: True
+2025-03-05 13:10:45,747 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/auth/v1/user "HTTP/1.1 200 OK"
+2025-03-05 13:10:45,748 - root - INFO - app.py:127 - Token valid for user: b308be37-7569-42e1-9f0c-921f93f84915
+2025-03-05 13:10:47,368 - supabase_manager - INFO - supabase_manager.py:33 - Supabase client initialized
+2025-03-05 13:10:47,564 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/rest/v1/profiles?select=organization_id&id=eq.b308be37-7569-42e1-9f0c-921f93f84915 "HTTP/1.1 406 Not Acceptable"
+2025-03-05 13:10:47,565 - supabase_manager - ERROR - supabase_manager.py:41 - Error getting user organization: {'code': 'PGRST116', 'details': 'The result contains 0 rows', 'hint': None, 'message': 'JSON object requested, multiple (or no) rows returned'}
+2025-03-05 13:10:47,565 - root - ERROR - app.py:134 - No organization found for user: b308be37-7569-42e1-9f0c-921f93f84915
+2025-03-05 13:10:47,571 - werkzeug - INFO - _internal.py:224 - 127.0.0.1 - - [05/Mar/2025 13:10:47] "[31m[1mGET /api/profile?connection_string=duckdb:%2F%2F%2FC:%2FUsers%2Fmhard%2FPycharmProjects%2Fsparvidata%2Fbackend%2Fmy_database.duckdb&table=employees HTTP/1.1[0m" 403 -
+2025-03-05 13:24:02,455 - werkzeug - INFO - _internal.py:224 -  * Detected change in 'C:\\Users\\mhard\\PycharmProjects\\sparvi\\backend\\app.py', reloading
+2025-03-05 13:24:03,162 - werkzeug - INFO - _internal.py:224 -  * Restarting with stat
+2025-03-05 13:24:15,400 - supabase_manager - INFO - supabase_manager.py:33 - Supabase client initialized
+2025-03-05 13:24:15,401 - supabase_validation_manager - INFO - supabase_validation_manager.py:49 - Supabase Validation Manager initialized
+2025-03-05 13:24:15,419 - werkzeug - WARNING - _internal.py:224 -  * Debugger is active!
+2025-03-05 13:24:15,429 - werkzeug - INFO - _internal.py:224 -  * Debugger PIN: 895-897-774
+2025-03-05 13:28:56,380 - werkzeug - INFO - _internal.py:224 -  * Detected change in 'C:\\Users\\mhard\\PycharmProjects\\sparvi\\backend\\app.py', reloading
+2025-03-05 13:28:56,560 - werkzeug - INFO - _internal.py:224 -  * Restarting with stat
+2025-03-05 13:29:00,646 - supabase_manager - INFO - supabase_manager.py:33 - Supabase client initialized
+2025-03-05 13:29:00,647 - supabase_validation_manager - INFO - supabase_validation_manager.py:49 - Supabase Validation Manager initialized
+2025-03-05 13:29:00,667 - werkzeug - WARNING - _internal.py:224 -  * Debugger is active!
+2025-03-05 13:29:00,677 - werkzeug - INFO - _internal.py:224 -  * Debugger PIN: 895-897-774
+2025-03-05 13:30:24,511 - werkzeug - INFO - _internal.py:224 - 127.0.0.1 - - [05/Mar/2025 13:30:24] "OPTIONS /api/profile-history?table=employees&limit=15 HTTP/1.1" 200 -
+2025-03-05 13:30:24,515 - werkzeug - INFO - _internal.py:224 - 127.0.0.1 - - [05/Mar/2025 13:30:24] "OPTIONS /api/profile-history?table=employees&limit=15 HTTP/1.1" 200 -
+2025-03-05 13:30:24,516 - werkzeug - INFO - _internal.py:224 - 127.0.0.1 - - [05/Mar/2025 13:30:24] "OPTIONS /api/profile-history?table=employees&limit=15 HTTP/1.1" 200 -
+2025-03-05 13:30:24,520 - werkzeug - INFO - _internal.py:224 - 127.0.0.1 - - [05/Mar/2025 13:30:24] "OPTIONS /api/profile-history?table=employees&limit=15 HTTP/1.1" 200 -
+2025-03-05 13:30:24,526 - werkzeug - INFO - _internal.py:224 - 127.0.0.1 - - [05/Mar/2025 13:30:24] "OPTIONS /api/profile-history?table=employees&limit=15 HTTP/1.1" 200 -
+2025-03-05 13:30:24,543 - werkzeug - INFO - _internal.py:224 - 127.0.0.1 - - [05/Mar/2025 13:30:24] "OPTIONS /api/profile-history?table=employees&limit=15 HTTP/1.1" 200 -
+2025-03-05 13:30:24,827 - werkzeug - INFO - _internal.py:224 - 127.0.0.1 - - [05/Mar/2025 13:30:24] "OPTIONS /api/profile-history?table=employees&limit=15 HTTP/1.1" 200 -
+2025-03-05 13:30:24,830 - werkzeug - INFO - _internal.py:224 - 127.0.0.1 - - [05/Mar/2025 13:30:24] "OPTIONS /api/profile-history?table=employees&limit=15 HTTP/1.1" 200 -
+2025-03-05 13:30:24,832 - werkzeug - INFO - _internal.py:224 - 127.0.0.1 - - [05/Mar/2025 13:30:24] "OPTIONS /api/profile-history?table=employees&limit=15 HTTP/1.1" 200 -
+2025-03-05 13:30:24,833 - werkzeug - INFO - _internal.py:224 - 127.0.0.1 - - [05/Mar/2025 13:30:24] "OPTIONS /api/profile-history?table=employees&limit=15 HTTP/1.1" 200 -
+2025-03-05 13:30:24,835 - root - DEBUG - app.py:114 - Supabase URL: https://aahlbynwdjqboucpjfoo.supabase.co
+2025-03-05 13:30:24,836 - root - DEBUG - app.py:115 - Supabase Service Key: True
+2025-03-05 13:30:26,526 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/auth/v1/user "HTTP/1.1 200 OK"
+2025-03-05 13:30:26,527 - root - INFO - app.py:127 - Token valid for user: d7412d55-8be6-4a88-947c-261b8ce97cb7
+2025-03-05 13:30:27,593 - werkzeug - INFO - _internal.py:224 - 127.0.0.1 - - [05/Mar/2025 13:30:27] "OPTIONS /api/profile?connection_string=duckdb:%2F%2F%2FC:%2FUsers%2Fmhard%2FPycharmProjects%2Fsparvidata%2Fbackend%2Fmy_database.duckdb&table=employees HTTP/1.1" 200 -
+2025-03-05 13:30:27,908 - root - DEBUG - app.py:114 - Supabase URL: https://aahlbynwdjqboucpjfoo.supabase.co
+2025-03-05 13:30:27,909 - root - DEBUG - app.py:115 - Supabase Service Key: True
+2025-03-05 13:30:28,157 - supabase_manager - INFO - supabase_manager.py:33 - Supabase client initialized
+2025-03-05 13:30:28,364 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/rest/v1/profiles?select=organization_id&id=eq.d7412d55-8be6-4a88-947c-261b8ce97cb7 "HTTP/1.1 406 Not Acceptable"
+2025-03-05 13:30:28,365 - supabase_manager - ERROR - supabase_manager.py:41 - Error getting user organization: {'code': 'PGRST116', 'details': 'The result contains 0 rows', 'hint': None, 'message': 'JSON object requested, multiple (or no) rows returned'}
+2025-03-05 13:30:28,366 - root - ERROR - app.py:134 - No organization found for user: d7412d55-8be6-4a88-947c-261b8ce97cb7
+2025-03-05 13:30:28,373 - werkzeug - INFO - _internal.py:224 - 127.0.0.1 - - [05/Mar/2025 13:30:28] "[31m[1mGET /api/profile-history?table=employees&limit=15 HTTP/1.1[0m" 403 -
+2025-03-05 13:30:28,684 - root - DEBUG - app.py:114 - Supabase URL: https://aahlbynwdjqboucpjfoo.supabase.co
+2025-03-05 13:30:28,685 - root - DEBUG - app.py:115 - Supabase Service Key: True
+2025-03-05 13:30:29,953 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/auth/v1/user "HTTP/1.1 200 OK"
+2025-03-05 13:30:29,954 - root - INFO - app.py:127 - Token valid for user: d7412d55-8be6-4a88-947c-261b8ce97cb7
+2025-03-05 13:30:30,801 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/auth/v1/user "HTTP/1.1 200 OK"
+2025-03-05 13:30:30,806 - root - INFO - app.py:127 - Token valid for user: d7412d55-8be6-4a88-947c-261b8ce97cb7
+2025-03-05 13:30:32,168 - supabase_manager - INFO - supabase_manager.py:33 - Supabase client initialized
+2025-03-05 13:30:32,433 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/rest/v1/profiles?select=organization_id&id=eq.d7412d55-8be6-4a88-947c-261b8ce97cb7 "HTTP/1.1 406 Not Acceptable"
+2025-03-05 13:30:32,435 - supabase_manager - ERROR - supabase_manager.py:41 - Error getting user organization: {'code': 'PGRST116', 'details': 'The result contains 0 rows', 'hint': None, 'message': 'JSON object requested, multiple (or no) rows returned'}
+2025-03-05 13:30:32,436 - root - ERROR - app.py:134 - No organization found for user: d7412d55-8be6-4a88-947c-261b8ce97cb7
+2025-03-05 13:30:32,443 - werkzeug - INFO - _internal.py:224 - 127.0.0.1 - - [05/Mar/2025 13:30:32] "[31m[1mGET /api/profile?connection_string=duckdb:%2F%2F%2FC:%2FUsers%2Fmhard%2FPycharmProjects%2Fsparvidata%2Fbackend%2Fmy_database.duckdb&table=employees HTTP/1.1[0m" 403 -
+2025-03-05 13:30:32,955 - supabase_manager - INFO - supabase_manager.py:33 - Supabase client initialized
+2025-03-05 13:30:33,138 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/rest/v1/profiles?select=organization_id&id=eq.d7412d55-8be6-4a88-947c-261b8ce97cb7 "HTTP/1.1 406 Not Acceptable"
+2025-03-05 13:30:33,139 - supabase_manager - ERROR - supabase_manager.py:41 - Error getting user organization: {'code': 'PGRST116', 'details': 'The result contains 0 rows', 'hint': None, 'message': 'JSON object requested, multiple (or no) rows returned'}
+2025-03-05 13:30:33,139 - root - ERROR - app.py:134 - No organization found for user: d7412d55-8be6-4a88-947c-261b8ce97cb7
+2025-03-05 13:30:33,142 - werkzeug - INFO - _internal.py:224 - 127.0.0.1 - - [05/Mar/2025 13:30:33] "[31m[1mGET /api/profile-history?table=employees&limit=15 HTTP/1.1[0m" 403 -
+2025-03-05 13:30:33,465 - root - DEBUG - app.py:114 - Supabase URL: https://aahlbynwdjqboucpjfoo.supabase.co
+2025-03-05 13:30:33,465 - root - DEBUG - app.py:115 - Supabase Service Key: True
+2025-03-05 13:30:35,139 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/auth/v1/user "HTTP/1.1 200 OK"
+2025-03-05 13:30:35,140 - root - INFO - app.py:127 - Token valid for user: d7412d55-8be6-4a88-947c-261b8ce97cb7
+2025-03-05 13:30:36,749 - supabase_manager - INFO - supabase_manager.py:33 - Supabase client initialized
+2025-03-05 13:30:37,020 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/rest/v1/profiles?select=organization_id&id=eq.d7412d55-8be6-4a88-947c-261b8ce97cb7 "HTTP/1.1 406 Not Acceptable"
+2025-03-05 13:30:37,021 - supabase_manager - ERROR - supabase_manager.py:41 - Error getting user organization: {'code': 'PGRST116', 'details': 'The result contains 0 rows', 'hint': None, 'message': 'JSON object requested, multiple (or no) rows returned'}
+2025-03-05 13:30:37,022 - root - ERROR - app.py:134 - No organization found for user: d7412d55-8be6-4a88-947c-261b8ce97cb7
+2025-03-05 13:30:37,025 - werkzeug - INFO - _internal.py:224 - 127.0.0.1 - - [05/Mar/2025 13:30:37] "[31m[1mGET /api/profile-history?table=employees&limit=15 HTTP/1.1[0m" 403 -
+2025-03-05 13:30:37,028 - root - DEBUG - app.py:114 - Supabase URL: https://aahlbynwdjqboucpjfoo.supabase.co
+2025-03-05 13:30:37,029 - root - DEBUG - app.py:115 - Supabase Service Key: True
+2025-03-05 13:30:38,986 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/auth/v1/user "HTTP/1.1 200 OK"
+2025-03-05 13:30:38,991 - root - INFO - app.py:127 - Token valid for user: d7412d55-8be6-4a88-947c-261b8ce97cb7
+2025-03-05 13:30:40,565 - supabase_manager - INFO - supabase_manager.py:33 - Supabase client initialized
+2025-03-05 13:30:40,761 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/rest/v1/profiles?select=organization_id&id=eq.d7412d55-8be6-4a88-947c-261b8ce97cb7 "HTTP/1.1 406 Not Acceptable"
+2025-03-05 13:30:40,762 - supabase_manager - ERROR - supabase_manager.py:41 - Error getting user organization: {'code': 'PGRST116', 'details': 'The result contains 0 rows', 'hint': None, 'message': 'JSON object requested, multiple (or no) rows returned'}
+2025-03-05 13:30:40,763 - root - ERROR - app.py:134 - No organization found for user: d7412d55-8be6-4a88-947c-261b8ce97cb7
+2025-03-05 13:30:40,768 - werkzeug - INFO - _internal.py:224 - 127.0.0.1 - - [05/Mar/2025 13:30:40] "[31m[1mGET /api/profile-history?table=employees&limit=15 HTTP/1.1[0m" 403 -
+2025-03-05 13:30:41,086 - root - DEBUG - app.py:114 - Supabase URL: https://aahlbynwdjqboucpjfoo.supabase.co
+2025-03-05 13:30:41,087 - root - DEBUG - app.py:115 - Supabase Service Key: True
+2025-03-05 13:30:42,805 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/auth/v1/user "HTTP/1.1 200 OK"
+2025-03-05 13:30:42,806 - root - INFO - app.py:127 - Token valid for user: d7412d55-8be6-4a88-947c-261b8ce97cb7
+2025-03-05 13:30:44,546 - root - DEBUG - app.py:114 - Supabase URL: https://aahlbynwdjqboucpjfoo.supabase.co
+2025-03-05 13:30:44,546 - root - DEBUG - app.py:115 - Supabase Service Key: True
+2025-03-05 13:30:44,801 - supabase_manager - INFO - supabase_manager.py:33 - Supabase client initialized
+2025-03-05 13:30:45,063 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/rest/v1/profiles?select=organization_id&id=eq.d7412d55-8be6-4a88-947c-261b8ce97cb7 "HTTP/1.1 406 Not Acceptable"
+2025-03-05 13:30:45,066 - supabase_manager - ERROR - supabase_manager.py:41 - Error getting user organization: {'code': 'PGRST116', 'details': 'The result contains 0 rows', 'hint': None, 'message': 'JSON object requested, multiple (or no) rows returned'}
+2025-03-05 13:30:45,066 - root - ERROR - app.py:134 - No organization found for user: d7412d55-8be6-4a88-947c-261b8ce97cb7
+2025-03-05 13:30:45,103 - werkzeug - INFO - _internal.py:224 - 127.0.0.1 - - [05/Mar/2025 13:30:45] "[31m[1mGET /api/profile-history?table=employees&limit=15 HTTP/1.1[0m" 403 -
+2025-03-05 13:30:45,159 - root - DEBUG - app.py:114 - Supabase URL: https://aahlbynwdjqboucpjfoo.supabase.co
+2025-03-05 13:30:45,160 - root - DEBUG - app.py:114 - Supabase URL: https://aahlbynwdjqboucpjfoo.supabase.co
+2025-03-05 13:30:45,160 - root - DEBUG - app.py:115 - Supabase Service Key: True
+2025-03-05 13:30:45,161 - root - DEBUG - app.py:115 - Supabase Service Key: True
+2025-03-05 13:30:45,162 - root - DEBUG - app.py:114 - Supabase URL: https://aahlbynwdjqboucpjfoo.supabase.co
+2025-03-05 13:30:45,164 - root - DEBUG - app.py:114 - Supabase URL: https://aahlbynwdjqboucpjfoo.supabase.co
+2025-03-05 13:30:45,164 - root - DEBUG - app.py:115 - Supabase Service Key: True
+2025-03-05 13:30:45,164 - root - DEBUG - app.py:115 - Supabase Service Key: True
+2025-03-05 13:30:48,112 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/auth/v1/user "HTTP/1.1 200 OK"
+2025-03-05 13:30:48,143 - root - INFO - app.py:127 - Token valid for user: d7412d55-8be6-4a88-947c-261b8ce97cb7
+2025-03-05 13:30:48,866 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/auth/v1/user "HTTP/1.1 200 OK"
+2025-03-05 13:30:48,867 - root - INFO - app.py:127 - Token valid for user: d7412d55-8be6-4a88-947c-261b8ce97cb7
+2025-03-05 13:30:48,909 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/auth/v1/user "HTTP/1.1 200 OK"
+2025-03-05 13:30:48,911 - root - INFO - app.py:127 - Token valid for user: d7412d55-8be6-4a88-947c-261b8ce97cb7
+2025-03-05 13:30:48,946 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/auth/v1/user "HTTP/1.1 200 OK"
+2025-03-05 13:30:48,974 - root - INFO - app.py:127 - Token valid for user: d7412d55-8be6-4a88-947c-261b8ce97cb7
+2025-03-05 13:30:49,013 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/auth/v1/user "HTTP/1.1 200 OK"
+2025-03-05 13:30:49,017 - root - INFO - app.py:127 - Token valid for user: d7412d55-8be6-4a88-947c-261b8ce97cb7
+2025-03-05 13:30:51,978 - supabase_manager - INFO - supabase_manager.py:33 - Supabase client initialized
+2025-03-05 13:30:52,195 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/rest/v1/profiles?select=organization_id&id=eq.d7412d55-8be6-4a88-947c-261b8ce97cb7 "HTTP/1.1 406 Not Acceptable"
+2025-03-05 13:30:52,208 - supabase_manager - ERROR - supabase_manager.py:41 - Error getting user organization: {'code': 'PGRST116', 'details': 'The result contains 0 rows', 'hint': None, 'message': 'JSON object requested, multiple (or no) rows returned'}
+2025-03-05 13:30:52,218 - root - ERROR - app.py:134 - No organization found for user: d7412d55-8be6-4a88-947c-261b8ce97cb7
+2025-03-05 13:30:52,233 - werkzeug - INFO - _internal.py:224 - 127.0.0.1 - - [05/Mar/2025 13:30:52] "[31m[1mGET /api/profile-history?table=employees&limit=15 HTTP/1.1[0m" 403 -
+2025-03-05 13:30:52,668 - supabase_manager - INFO - supabase_manager.py:33 - Supabase client initialized
+2025-03-05 13:30:52,729 - supabase_manager - INFO - supabase_manager.py:33 - Supabase client initialized
+2025-03-05 13:30:52,776 - supabase_manager - INFO - supabase_manager.py:33 - Supabase client initialized
+2025-03-05 13:30:52,785 - supabase_manager - INFO - supabase_manager.py:33 - Supabase client initialized
+2025-03-05 13:30:52,930 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/rest/v1/profiles?select=organization_id&id=eq.d7412d55-8be6-4a88-947c-261b8ce97cb7 "HTTP/1.1 406 Not Acceptable"
+2025-03-05 13:30:52,931 - supabase_manager - ERROR - supabase_manager.py:41 - Error getting user organization: {'code': 'PGRST116', 'details': 'The result contains 0 rows', 'hint': None, 'message': 'JSON object requested, multiple (or no) rows returned'}
+2025-03-05 13:30:52,931 - root - ERROR - app.py:134 - No organization found for user: d7412d55-8be6-4a88-947c-261b8ce97cb7
+2025-03-05 13:30:52,935 - werkzeug - INFO - _internal.py:224 - 127.0.0.1 - - [05/Mar/2025 13:30:52] "[31m[1mGET /api/profile-history?table=employees&limit=15 HTTP/1.1[0m" 403 -
+2025-03-05 13:30:52,971 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/rest/v1/profiles?select=organization_id&id=eq.d7412d55-8be6-4a88-947c-261b8ce97cb7 "HTTP/1.1 406 Not Acceptable"
+2025-03-05 13:30:52,972 - supabase_manager - ERROR - supabase_manager.py:41 - Error getting user organization: {'code': 'PGRST116', 'details': 'The result contains 0 rows', 'hint': None, 'message': 'JSON object requested, multiple (or no) rows returned'}
+2025-03-05 13:30:52,972 - root - ERROR - app.py:134 - No organization found for user: d7412d55-8be6-4a88-947c-261b8ce97cb7
+2025-03-05 13:30:52,978 - werkzeug - INFO - _internal.py:224 - 127.0.0.1 - - [05/Mar/2025 13:30:52] "[31m[1mGET /api/profile-history?table=employees&limit=15 HTTP/1.1[0m" 403 -
+2025-03-05 13:30:52,985 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/rest/v1/profiles?select=organization_id&id=eq.d7412d55-8be6-4a88-947c-261b8ce97cb7 "HTTP/1.1 406 Not Acceptable"
+2025-03-05 13:30:52,986 - supabase_manager - ERROR - supabase_manager.py:41 - Error getting user organization: {'code': 'PGRST116', 'details': 'The result contains 0 rows', 'hint': None, 'message': 'JSON object requested, multiple (or no) rows returned'}
+2025-03-05 13:30:52,986 - root - ERROR - app.py:134 - No organization found for user: d7412d55-8be6-4a88-947c-261b8ce97cb7
+2025-03-05 13:30:52,992 - werkzeug - INFO - _internal.py:224 - 127.0.0.1 - - [05/Mar/2025 13:30:52] "[31m[1mGET /api/profile-history?table=employees&limit=15 HTTP/1.1[0m" 403 -
+2025-03-05 13:30:52,993 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/rest/v1/profiles?select=organization_id&id=eq.d7412d55-8be6-4a88-947c-261b8ce97cb7 "HTTP/1.1 406 Not Acceptable"
+2025-03-05 13:30:52,998 - supabase_manager - ERROR - supabase_manager.py:41 - Error getting user organization: {'code': 'PGRST116', 'details': 'The result contains 0 rows', 'hint': None, 'message': 'JSON object requested, multiple (or no) rows returned'}
+2025-03-05 13:30:53,000 - root - ERROR - app.py:134 - No organization found for user: d7412d55-8be6-4a88-947c-261b8ce97cb7
+2025-03-05 13:30:53,007 - werkzeug - INFO - _internal.py:224 - 127.0.0.1 - - [05/Mar/2025 13:30:53] "[31m[1mGET /api/profile-history?table=employees&limit=15 HTTP/1.1[0m" 403 -
+2025-03-05 13:32:52,357 - werkzeug - INFO - _internal.py:224 -  * Detected change in 'C:\\Users\\mhard\\PycharmProjects\\sparvi\\backend\\app.py', reloading
+2025-03-05 13:32:52,658 - werkzeug - INFO - _internal.py:224 -  * Restarting with stat
+2025-03-05 13:32:56,458 - supabase_manager - INFO - supabase_manager.py:33 - Supabase client initialized
+2025-03-05 13:32:56,458 - supabase_validation_manager - INFO - supabase_validation_manager.py:49 - Supabase Validation Manager initialized
+2025-03-05 13:32:56,475 - werkzeug - WARNING - _internal.py:224 -  * Debugger is active!
+2025-03-05 13:32:56,483 - werkzeug - INFO - _internal.py:224 -  * Debugger PIN: 895-897-774
+2025-03-05 13:34:03,723 - werkzeug - INFO - _internal.py:224 -  * Detected change in 'C:\\Users\\mhard\\PycharmProjects\\sparvi\\backend\\test_signup.py', reloading
+2025-03-05 13:34:04,118 - werkzeug - INFO - _internal.py:224 -  * Restarting with stat
+2025-03-05 13:34:07,745 - supabase_manager - INFO - supabase_manager.py:33 - Supabase client initialized
+2025-03-05 13:34:07,746 - supabase_validation_manager - INFO - supabase_validation_manager.py:49 - Supabase Validation Manager initialized
+2025-03-05 13:34:07,760 - werkzeug - WARNING - _internal.py:224 -  * Debugger is active!
+2025-03-05 13:34:07,768 - werkzeug - INFO - _internal.py:224 -  * Debugger PIN: 895-897-774
+2025-03-05 13:40:00,717 - supabase_manager - INFO - supabase_manager.py:33 - Supabase client initialized
+2025-03-05 13:40:00,718 - supabase_validation_manager - INFO - supabase_validation_manager.py:49 - Supabase Validation Manager initialized
+2025-03-05 13:40:00,744 - werkzeug - INFO - _internal.py:224 -  * Running on http://127.0.0.1:5000 (Press CTRL+C to quit)
+2025-03-05 13:40:00,747 - werkzeug - INFO - _internal.py:224 -  * Restarting with stat
+2025-03-05 13:40:08,020 - supabase_manager - INFO - supabase_manager.py:33 - Supabase client initialized
+2025-03-05 13:40:08,021 - supabase_validation_manager - INFO - supabase_validation_manager.py:49 - Supabase Validation Manager initialized
+2025-03-05 13:40:08,053 - werkzeug - WARNING - _internal.py:224 -  * Debugger is active!
+2025-03-05 13:40:08,068 - werkzeug - INFO - _internal.py:224 -  * Debugger PIN: 895-897-774
+2025-03-05 13:42:09,499 - werkzeug - INFO - _internal.py:224 -  * Detected change in 'C:\\Users\\mhard\\PycharmProjects\\sparvi\\backend\\app.py', reloading
+2025-03-05 13:42:09,690 - werkzeug - INFO - _internal.py:224 -  * Restarting with stat
+2025-03-05 13:42:13,242 - supabase_manager - INFO - supabase_manager.py:33 - Supabase client initialized
+2025-03-05 13:42:13,242 - supabase_validation_manager - INFO - supabase_validation_manager.py:49 - Supabase Validation Manager initialized
+2025-03-05 13:42:13,259 - werkzeug - WARNING - _internal.py:224 -  * Debugger is active!
+2025-03-05 13:42:13,266 - werkzeug - INFO - _internal.py:224 -  * Debugger PIN: 895-897-774
+2025-03-05 13:44:31,444 - werkzeug - INFO - _internal.py:224 -  * Detected change in 'C:\\Users\\mhard\\PycharmProjects\\sparvi\\backend\\test_signup.py', reloading
+2025-03-05 13:49:16,890 - supabase_manager - INFO - supabase_manager.py:33 - Supabase client initialized
+2025-03-05 13:49:16,890 - supabase_validation_manager - INFO - supabase_validation_manager.py:49 - Supabase Validation Manager initialized
+2025-03-05 13:49:16,925 - werkzeug - INFO - _internal.py:224 -  * Running on http://127.0.0.1:5000 (Press CTRL+C to quit)
+2025-03-05 13:49:16,928 - werkzeug - INFO - _internal.py:224 -  * Restarting with stat
+2025-03-05 13:49:21,049 - supabase_manager - INFO - supabase_manager.py:33 - Supabase client initialized
+2025-03-05 13:49:21,050 - supabase_validation_manager - INFO - supabase_validation_manager.py:49 - Supabase Validation Manager initialized
+2025-03-05 13:49:21,066 - werkzeug - WARNING - _internal.py:224 -  * Debugger is active!
+2025-03-05 13:49:21,075 - werkzeug - INFO - _internal.py:224 -  * Debugger PIN: 895-897-774
+2025-03-05 13:50:44,238 - werkzeug - INFO - _internal.py:224 - 127.0.0.1 - - [05/Mar/2025 13:50:44] "OPTIONS /api/profile-history?table=employees&limit=15 HTTP/1.1" 200 -
+2025-03-05 13:50:44,240 - werkzeug - INFO - _internal.py:224 - 127.0.0.1 - - [05/Mar/2025 13:50:44] "OPTIONS /api/profile-history?table=employees&limit=15 HTTP/1.1" 200 -
+2025-03-05 13:50:44,328 - werkzeug - INFO - _internal.py:224 - 127.0.0.1 - - [05/Mar/2025 13:50:44] "OPTIONS /api/profile-history?table=employees&limit=15 HTTP/1.1" 200 -
+2025-03-05 13:50:44,363 - werkzeug - INFO - _internal.py:224 - 127.0.0.1 - - [05/Mar/2025 13:50:44] "OPTIONS /api/profile-history?table=employees&limit=15 HTTP/1.1" 200 -
+2025-03-05 13:50:44,365 - werkzeug - INFO - _internal.py:224 - 127.0.0.1 - - [05/Mar/2025 13:50:44] "OPTIONS /api/profile-history?table=employees&limit=15 HTTP/1.1" 200 -
+2025-03-05 13:50:44,368 - werkzeug - INFO - _internal.py:224 - 127.0.0.1 - - [05/Mar/2025 13:50:44] "OPTIONS /api/profile-history?table=employees&limit=15 HTTP/1.1" 200 -
+2025-03-05 13:50:44,547 - werkzeug - INFO - _internal.py:224 - 127.0.0.1 - - [05/Mar/2025 13:50:44] "OPTIONS /api/profile-history?table=employees&limit=15 HTTP/1.1" 200 -
+2025-03-05 13:50:44,548 - werkzeug - INFO - _internal.py:224 - 127.0.0.1 - - [05/Mar/2025 13:50:44] "OPTIONS /api/profile-history?table=employees&limit=15 HTTP/1.1" 200 -
+2025-03-05 13:50:44,640 - werkzeug - INFO - _internal.py:224 - 127.0.0.1 - - [05/Mar/2025 13:50:44] "OPTIONS /api/profile-history?table=employees&limit=15 HTTP/1.1" 200 -
+2025-03-05 13:50:44,674 - werkzeug - INFO - _internal.py:224 - 127.0.0.1 - - [05/Mar/2025 13:50:44] "OPTIONS /api/profile-history?table=employees&limit=15 HTTP/1.1" 200 -
+2025-03-05 13:50:44,675 - werkzeug - INFO - _internal.py:224 - 127.0.0.1 - - [05/Mar/2025 13:50:44] "OPTIONS /api/profile-history?table=employees&limit=15 HTTP/1.1" 200 -
+2025-03-05 13:50:44,677 - werkzeug - INFO - _internal.py:224 - 127.0.0.1 - - [05/Mar/2025 13:50:44] "OPTIONS /api/profile-history?table=employees&limit=15 HTTP/1.1" 200 -
+2025-03-05 13:50:44,858 - root - DEBUG - app.py:114 - Supabase URL: https://aahlbynwdjqboucpjfoo.supabase.co
+2025-03-05 13:50:44,859 - root - DEBUG - app.py:115 - Supabase Service Key: True
+2025-03-05 13:50:46,592 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/auth/v1/user "HTTP/1.1 200 OK"
+2025-03-05 13:50:46,593 - root - INFO - app.py:127 - Token valid for user: 9ad78389-643e-4cec-96b6-be0475f0ede8
+2025-03-05 13:50:48,044 - supabase_manager - INFO - supabase_manager.py:33 - Supabase client initialized
+2025-03-05 13:50:48,234 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/rest/v1/profiles?select=organization_id&id=eq.9ad78389-643e-4cec-96b6-be0475f0ede8 "HTTP/1.1 406 Not Acceptable"
+2025-03-05 13:50:48,235 - supabase_manager - ERROR - supabase_manager.py:41 - Error getting user organization: {'code': 'PGRST116', 'details': 'The result contains 0 rows', 'hint': None, 'message': 'JSON object requested, multiple (or no) rows returned'}
+2025-03-05 13:50:48,236 - root - ERROR - app.py:134 - No organization found for user: 9ad78389-643e-4cec-96b6-be0475f0ede8
+2025-03-05 13:50:48,240 - werkzeug - INFO - _internal.py:224 - 127.0.0.1 - - [05/Mar/2025 13:50:48] "[31m[1mGET /api/profile-history?table=employees&limit=15 HTTP/1.1[0m" 403 -
+2025-03-05 13:50:48,243 - root - DEBUG - app.py:114 - Supabase URL: https://aahlbynwdjqboucpjfoo.supabase.co
+2025-03-05 13:50:48,243 - root - DEBUG - app.py:115 - Supabase Service Key: True
+2025-03-05 13:50:49,880 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/auth/v1/user "HTTP/1.1 200 OK"
+2025-03-05 13:50:49,881 - root - INFO - app.py:127 - Token valid for user: 9ad78389-643e-4cec-96b6-be0475f0ede8
+2025-03-05 13:50:51,313 - supabase_manager - INFO - supabase_manager.py:33 - Supabase client initialized
+2025-03-05 13:50:51,579 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/rest/v1/profiles?select=organization_id&id=eq.9ad78389-643e-4cec-96b6-be0475f0ede8 "HTTP/1.1 406 Not Acceptable"
+2025-03-05 13:50:51,580 - supabase_manager - ERROR - supabase_manager.py:41 - Error getting user organization: {'code': 'PGRST116', 'details': 'The result contains 0 rows', 'hint': None, 'message': 'JSON object requested, multiple (or no) rows returned'}
+2025-03-05 13:50:51,581 - root - ERROR - app.py:134 - No organization found for user: 9ad78389-643e-4cec-96b6-be0475f0ede8
+2025-03-05 13:50:51,584 - werkzeug - INFO - _internal.py:224 - 127.0.0.1 - - [05/Mar/2025 13:50:51] "[31m[1mGET /api/profile-history?table=employees&limit=15 HTTP/1.1[0m" 403 -
+2025-03-05 13:50:51,893 - root - DEBUG - app.py:114 - Supabase URL: https://aahlbynwdjqboucpjfoo.supabase.co
+2025-03-05 13:50:51,894 - root - DEBUG - app.py:115 - Supabase Service Key: True
+2025-03-05 13:50:53,449 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/auth/v1/user "HTTP/1.1 200 OK"
+2025-03-05 13:50:53,450 - root - INFO - app.py:127 - Token valid for user: 9ad78389-643e-4cec-96b6-be0475f0ede8
+2025-03-05 13:50:54,980 - supabase_manager - INFO - supabase_manager.py:33 - Supabase client initialized
+2025-03-05 13:50:55,141 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/rest/v1/profiles?select=organization_id&id=eq.9ad78389-643e-4cec-96b6-be0475f0ede8 "HTTP/1.1 406 Not Acceptable"
+2025-03-05 13:50:55,142 - supabase_manager - ERROR - supabase_manager.py:41 - Error getting user organization: {'code': 'PGRST116', 'details': 'The result contains 0 rows', 'hint': None, 'message': 'JSON object requested, multiple (or no) rows returned'}
+2025-03-05 13:50:55,142 - root - ERROR - app.py:134 - No organization found for user: 9ad78389-643e-4cec-96b6-be0475f0ede8
+2025-03-05 13:50:55,146 - werkzeug - INFO - _internal.py:224 - 127.0.0.1 - - [05/Mar/2025 13:50:55] "[31m[1mGET /api/profile-history?table=employees&limit=15 HTTP/1.1[0m" 403 -
+2025-03-05 13:50:55,148 - root - DEBUG - app.py:114 - Supabase URL: https://aahlbynwdjqboucpjfoo.supabase.co
+2025-03-05 13:50:55,149 - root - DEBUG - app.py:115 - Supabase Service Key: True
+2025-03-05 13:50:56,809 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/auth/v1/user "HTTP/1.1 200 OK"
+2025-03-05 13:50:56,809 - root - INFO - app.py:127 - Token valid for user: 9ad78389-643e-4cec-96b6-be0475f0ede8
+2025-03-05 13:50:58,273 - supabase_manager - INFO - supabase_manager.py:33 - Supabase client initialized
+2025-03-05 13:50:58,484 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/rest/v1/profiles?select=organization_id&id=eq.9ad78389-643e-4cec-96b6-be0475f0ede8 "HTTP/1.1 406 Not Acceptable"
+2025-03-05 13:50:58,485 - supabase_manager - ERROR - supabase_manager.py:41 - Error getting user organization: {'code': 'PGRST116', 'details': 'The result contains 0 rows', 'hint': None, 'message': 'JSON object requested, multiple (or no) rows returned'}
+2025-03-05 13:50:58,486 - root - ERROR - app.py:134 - No organization found for user: 9ad78389-643e-4cec-96b6-be0475f0ede8
+2025-03-05 13:50:58,489 - werkzeug - INFO - _internal.py:224 - 127.0.0.1 - - [05/Mar/2025 13:50:58] "[31m[1mGET /api/profile-history?table=employees&limit=15 HTTP/1.1[0m" 403 -
+2025-03-05 13:50:58,803 - root - DEBUG - app.py:114 - Supabase URL: https://aahlbynwdjqboucpjfoo.supabase.co
+2025-03-05 13:50:58,804 - root - DEBUG - app.py:115 - Supabase Service Key: True
+2025-03-05 13:51:00,812 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/auth/v1/user "HTTP/1.1 200 OK"
+2025-03-05 13:51:00,813 - root - INFO - app.py:127 - Token valid for user: 9ad78389-643e-4cec-96b6-be0475f0ede8
+2025-03-05 13:51:02,240 - supabase_manager - INFO - supabase_manager.py:33 - Supabase client initialized
+2025-03-05 13:51:02,464 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/rest/v1/profiles?select=organization_id&id=eq.9ad78389-643e-4cec-96b6-be0475f0ede8 "HTTP/1.1 406 Not Acceptable"
+2025-03-05 13:51:02,465 - supabase_manager - ERROR - supabase_manager.py:41 - Error getting user organization: {'code': 'PGRST116', 'details': 'The result contains 0 rows', 'hint': None, 'message': 'JSON object requested, multiple (or no) rows returned'}
+2025-03-05 13:51:02,466 - root - ERROR - app.py:134 - No organization found for user: 9ad78389-643e-4cec-96b6-be0475f0ede8
+2025-03-05 13:51:02,469 - werkzeug - INFO - _internal.py:224 - 127.0.0.1 - - [05/Mar/2025 13:51:02] "[31m[1mGET /api/profile-history?table=employees&limit=15 HTTP/1.1[0m" 403 -
+2025-03-05 13:51:02,472 - root - DEBUG - app.py:114 - Supabase URL: https://aahlbynwdjqboucpjfoo.supabase.co
+2025-03-05 13:51:02,473 - root - DEBUG - app.py:115 - Supabase Service Key: True
+2025-03-05 13:51:04,053 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/auth/v1/user "HTTP/1.1 200 OK"
+2025-03-05 13:51:04,054 - root - INFO - app.py:127 - Token valid for user: 9ad78389-643e-4cec-96b6-be0475f0ede8
+2025-03-05 13:51:04,879 - root - DEBUG - app.py:114 - Supabase URL: https://aahlbynwdjqboucpjfoo.supabase.co
+2025-03-05 13:51:04,880 - root - DEBUG - app.py:115 - Supabase Service Key: True
+2025-03-05 13:51:04,880 - root - DEBUG - app.py:114 - Supabase URL: https://aahlbynwdjqboucpjfoo.supabase.co
+2025-03-05 13:51:04,881 - root - DEBUG - app.py:115 - Supabase Service Key: True
+2025-03-05 13:51:04,986 - root - DEBUG - app.py:114 - Supabase URL: https://aahlbynwdjqboucpjfoo.supabase.co
+2025-03-05 13:51:04,993 - root - DEBUG - app.py:115 - Supabase Service Key: True
+2025-03-05 13:51:05,061 - root - DEBUG - app.py:114 - Supabase URL: https://aahlbynwdjqboucpjfoo.supabase.co
+2025-03-05 13:51:05,086 - root - DEBUG - app.py:115 - Supabase Service Key: True
+2025-03-05 13:51:05,093 - root - DEBUG - app.py:114 - Supabase URL: https://aahlbynwdjqboucpjfoo.supabase.co
+2025-03-05 13:51:05,102 - root - DEBUG - app.py:115 - Supabase Service Key: True
+2025-03-05 13:51:06,497 - supabase_manager - INFO - supabase_manager.py:33 - Supabase client initialized
+2025-03-05 13:51:06,836 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/rest/v1/profiles?select=organization_id&id=eq.9ad78389-643e-4cec-96b6-be0475f0ede8 "HTTP/1.1 406 Not Acceptable"
+2025-03-05 13:51:06,845 - supabase_manager - ERROR - supabase_manager.py:41 - Error getting user organization: {'code': 'PGRST116', 'details': 'The result contains 0 rows', 'hint': None, 'message': 'JSON object requested, multiple (or no) rows returned'}
+2025-03-05 13:51:06,846 - root - ERROR - app.py:134 - No organization found for user: 9ad78389-643e-4cec-96b6-be0475f0ede8
+2025-03-05 13:51:06,853 - werkzeug - INFO - _internal.py:224 - 127.0.0.1 - - [05/Mar/2025 13:51:06] "[31m[1mGET /api/profile-history?table=employees&limit=15 HTTP/1.1[0m" 403 -
+2025-03-05 13:51:07,278 - root - DEBUG - app.py:114 - Supabase URL: https://aahlbynwdjqboucpjfoo.supabase.co
+2025-03-05 13:51:07,313 - root - DEBUG - app.py:115 - Supabase Service Key: True
+2025-03-05 13:51:08,836 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/auth/v1/user "HTTP/1.1 200 OK"
+2025-03-05 13:51:08,847 - root - INFO - app.py:127 - Token valid for user: 9ad78389-643e-4cec-96b6-be0475f0ede8
+2025-03-05 13:51:08,929 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/auth/v1/user "HTTP/1.1 200 OK"
+2025-03-05 13:51:08,950 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/auth/v1/user "HTTP/1.1 200 OK"
+2025-03-05 13:51:08,951 - root - INFO - app.py:127 - Token valid for user: 9ad78389-643e-4cec-96b6-be0475f0ede8
+2025-03-05 13:51:08,961 - root - INFO - app.py:127 - Token valid for user: 9ad78389-643e-4cec-96b6-be0475f0ede8
+2025-03-05 13:51:09,107 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/auth/v1/user "HTTP/1.1 200 OK"
+2025-03-05 13:51:09,123 - root - INFO - app.py:127 - Token valid for user: 9ad78389-643e-4cec-96b6-be0475f0ede8
+2025-03-05 13:51:09,225 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/auth/v1/user "HTTP/1.1 200 OK"
+2025-03-05 13:51:09,231 - root - INFO - app.py:127 - Token valid for user: 9ad78389-643e-4cec-96b6-be0475f0ede8
+2025-03-05 13:51:11,630 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/auth/v1/user "HTTP/1.1 200 OK"
+2025-03-05 13:51:11,637 - root - INFO - app.py:127 - Token valid for user: 9ad78389-643e-4cec-96b6-be0475f0ede8
+2025-03-05 13:51:12,753 - supabase_manager - INFO - supabase_manager.py:33 - Supabase client initialized
+2025-03-05 13:51:13,035 - supabase_manager - INFO - supabase_manager.py:33 - Supabase client initialized
+2025-03-05 13:51:13,047 - supabase_manager - INFO - supabase_manager.py:33 - Supabase client initialized
+2025-03-05 13:51:13,059 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/rest/v1/profiles?select=organization_id&id=eq.9ad78389-643e-4cec-96b6-be0475f0ede8 "HTTP/1.1 406 Not Acceptable"
+2025-03-05 13:51:13,061 - supabase_manager - ERROR - supabase_manager.py:41 - Error getting user organization: {'code': 'PGRST116', 'details': 'The result contains 0 rows', 'hint': None, 'message': 'JSON object requested, multiple (or no) rows returned'}
+2025-03-05 13:51:13,061 - root - ERROR - app.py:134 - No organization found for user: 9ad78389-643e-4cec-96b6-be0475f0ede8
+2025-03-05 13:51:13,069 - werkzeug - INFO - _internal.py:224 - 127.0.0.1 - - [05/Mar/2025 13:51:13] "[31m[1mGET /api/profile-history?table=employees&limit=15 HTTP/1.1[0m" 403 -
+2025-03-05 13:51:13,070 - supabase_manager - INFO - supabase_manager.py:33 - Supabase client initialized
+2025-03-05 13:51:13,088 - supabase_manager - INFO - supabase_manager.py:33 - Supabase client initialized
+2025-03-05 13:51:13,220 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/rest/v1/profiles?select=organization_id&id=eq.9ad78389-643e-4cec-96b6-be0475f0ede8 "HTTP/1.1 406 Not Acceptable"
+2025-03-05 13:51:13,221 - supabase_manager - ERROR - supabase_manager.py:41 - Error getting user organization: {'code': 'PGRST116', 'details': 'The result contains 0 rows', 'hint': None, 'message': 'JSON object requested, multiple (or no) rows returned'}
+2025-03-05 13:51:13,221 - root - ERROR - app.py:134 - No organization found for user: 9ad78389-643e-4cec-96b6-be0475f0ede8
+2025-03-05 13:51:13,228 - werkzeug - INFO - _internal.py:224 - 127.0.0.1 - - [05/Mar/2025 13:51:13] "[31m[1mGET /api/profile-history?table=employees&limit=15 HTTP/1.1[0m" 403 -
+2025-03-05 13:51:13,260 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/rest/v1/profiles?select=organization_id&id=eq.9ad78389-643e-4cec-96b6-be0475f0ede8 "HTTP/1.1 406 Not Acceptable"
+2025-03-05 13:51:13,261 - supabase_manager - ERROR - supabase_manager.py:41 - Error getting user organization: {'code': 'PGRST116', 'details': 'The result contains 0 rows', 'hint': None, 'message': 'JSON object requested, multiple (or no) rows returned'}
+2025-03-05 13:51:13,261 - root - ERROR - app.py:134 - No organization found for user: 9ad78389-643e-4cec-96b6-be0475f0ede8
+2025-03-05 13:51:13,269 - werkzeug - INFO - _internal.py:224 - 127.0.0.1 - - [05/Mar/2025 13:51:13] "[31m[1mGET /api/profile-history?table=employees&limit=15 HTTP/1.1[0m" 403 -
+2025-03-05 13:51:13,269 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/rest/v1/profiles?select=organization_id&id=eq.9ad78389-643e-4cec-96b6-be0475f0ede8 "HTTP/1.1 406 Not Acceptable"
+2025-03-05 13:51:13,270 - supabase_manager - ERROR - supabase_manager.py:41 - Error getting user organization: {'code': 'PGRST116', 'details': 'The result contains 0 rows', 'hint': None, 'message': 'JSON object requested, multiple (or no) rows returned'}
+2025-03-05 13:51:13,271 - root - ERROR - app.py:134 - No organization found for user: 9ad78389-643e-4cec-96b6-be0475f0ede8
+2025-03-05 13:51:13,278 - werkzeug - INFO - _internal.py:224 - 127.0.0.1 - - [05/Mar/2025 13:51:13] "[31m[1mGET /api/profile-history?table=employees&limit=15 HTTP/1.1[0m" 403 -
+2025-03-05 13:51:13,371 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/rest/v1/profiles?select=organization_id&id=eq.9ad78389-643e-4cec-96b6-be0475f0ede8 "HTTP/1.1 406 Not Acceptable"
+2025-03-05 13:51:13,372 - supabase_manager - ERROR - supabase_manager.py:41 - Error getting user organization: {'code': 'PGRST116', 'details': 'The result contains 0 rows', 'hint': None, 'message': 'JSON object requested, multiple (or no) rows returned'}
+2025-03-05 13:51:13,373 - root - ERROR - app.py:134 - No organization found for user: 9ad78389-643e-4cec-96b6-be0475f0ede8
+2025-03-05 13:51:13,380 - werkzeug - INFO - _internal.py:224 - 127.0.0.1 - - [05/Mar/2025 13:51:13] "[31m[1mGET /api/profile-history?table=employees&limit=15 HTTP/1.1[0m" 403 -
+2025-03-05 13:51:14,039 - supabase_manager - INFO - supabase_manager.py:33 - Supabase client initialized
+2025-03-05 13:51:14,237 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/rest/v1/profiles?select=organization_id&id=eq.9ad78389-643e-4cec-96b6-be0475f0ede8 "HTTP/1.1 406 Not Acceptable"
+2025-03-05 13:51:14,238 - supabase_manager - ERROR - supabase_manager.py:41 - Error getting user organization: {'code': 'PGRST116', 'details': 'The result contains 0 rows', 'hint': None, 'message': 'JSON object requested, multiple (or no) rows returned'}
+2025-03-05 13:51:14,238 - root - ERROR - app.py:134 - No organization found for user: 9ad78389-643e-4cec-96b6-be0475f0ede8
+2025-03-05 13:51:14,242 - werkzeug - INFO - _internal.py:224 - 127.0.0.1 - - [05/Mar/2025 13:51:14] "[31m[1mGET /api/profile-history?table=employees&limit=15 HTTP/1.1[0m" 403 -
+2025-03-05 14:00:21,434 - werkzeug - INFO - _internal.py:224 - 127.0.0.1 - - [05/Mar/2025 14:00:21] "OPTIONS /api/setup-user HTTP/1.1" 200 -
+2025-03-05 14:00:23,530 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/rest/v1/profiles?select=%2A&id=eq.0939eb20-ed96-4e40-816e-5546107b81af "HTTP/1.1 200 OK"
+2025-03-05 14:00:23,532 - root - INFO - app.py:517 - Creating organization: Sparvi
+2025-03-05 14:00:23,631 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: POST https://aahlbynwdjqboucpjfoo.supabase.co/rest/v1/organizations "HTTP/1.1 201 Created"
+2025-03-05 14:00:23,632 - root - INFO - app.py:528 - Created organization with ID: 7fe1961b-8ac6-4cbb-89b3-187f36f489bd
+2025-03-05 14:00:23,633 - root - INFO - app.py:539 - Creating new profile for user: 0939eb20-ed96-4e40-816e-5546107b81af
+2025-03-05 14:00:23,742 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: POST https://aahlbynwdjqboucpjfoo.supabase.co/rest/v1/profiles "HTTP/1.1 201 Created"
+2025-03-05 14:00:23,743 - root - INFO - app.py:554 - Profile operation successful: {'id': '0939eb20-ed96-4e40-816e-5546107b81af', 'email': 'mhardman100@gmail.com', 'first_name': 'Matt', 'last_name': 'Hardman', 'organization_id': '7fe1961b-8ac6-4cbb-89b3-187f36f489bd', 'role': 'admin', 'created_at': '2025-03-05T20:00:24.68932+00:00', 'updated_at': '2025-03-05T20:00:24.68932+00:00'}
+2025-03-05 14:00:23,867 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/rest/v1/profiles?select=%2A&id=eq.0939eb20-ed96-4e40-816e-5546107b81af "HTTP/1.1 200 OK"
+2025-03-05 14:00:23,869 - root - INFO - app.py:559 - Verification successful - user now has profile with organization: {'id': '0939eb20-ed96-4e40-816e-5546107b81af', 'email': 'mhardman100@gmail.com', 'first_name': 'Matt', 'last_name': 'Hardman', 'organization_id': '7fe1961b-8ac6-4cbb-89b3-187f36f489bd', 'role': 'admin', 'created_at': '2025-03-05T20:00:24.68932+00:00', 'updated_at': '2025-03-05T20:00:24.68932+00:00'}
+2025-03-05 14:00:23,871 - werkzeug - INFO - _internal.py:224 - 127.0.0.1 - - [05/Mar/2025 14:00:23] "POST /api/setup-user HTTP/1.1" 200 -
+2025-03-05 14:02:26,857 - werkzeug - INFO - _internal.py:224 - 127.0.0.1 - - [05/Mar/2025 14:02:26] "OPTIONS /api/profile-history?table=employees&limit=15 HTTP/1.1" 200 -
+2025-03-05 14:02:26,858 - werkzeug - INFO - _internal.py:224 - 127.0.0.1 - - [05/Mar/2025 14:02:26] "OPTIONS /api/profile-history?table=employees&limit=15 HTTP/1.1" 200 -
+2025-03-05 14:02:26,965 - werkzeug - INFO - _internal.py:224 - 127.0.0.1 - - [05/Mar/2025 14:02:26] "OPTIONS /api/profile-history?table=employees&limit=15 HTTP/1.1" 200 -
+2025-03-05 14:02:27,012 - werkzeug - INFO - _internal.py:224 - 127.0.0.1 - - [05/Mar/2025 14:02:27] "OPTIONS /api/profile-history?table=employees&limit=15 HTTP/1.1" 200 -
+2025-03-05 14:02:27,014 - werkzeug - INFO - _internal.py:224 - 127.0.0.1 - - [05/Mar/2025 14:02:27] "OPTIONS /api/profile-history?table=employees&limit=15 HTTP/1.1" 200 -
+2025-03-05 14:02:27,016 - werkzeug - INFO - _internal.py:224 - 127.0.0.1 - - [05/Mar/2025 14:02:27] "OPTIONS /api/profile-history?table=employees&limit=15 HTTP/1.1" 200 -
+2025-03-05 14:02:27,166 - werkzeug - INFO - _internal.py:224 - 127.0.0.1 - - [05/Mar/2025 14:02:27] "OPTIONS /api/profile-history?table=employees&limit=15 HTTP/1.1" 200 -
+2025-03-05 14:02:27,167 - werkzeug - INFO - _internal.py:224 - 127.0.0.1 - - [05/Mar/2025 14:02:27] "OPTIONS /api/profile-history?table=employees&limit=15 HTTP/1.1" 200 -
+2025-03-05 14:02:27,275 - werkzeug - INFO - _internal.py:224 - 127.0.0.1 - - [05/Mar/2025 14:02:27] "OPTIONS /api/profile-history?table=employees&limit=15 HTTP/1.1" 200 -
+2025-03-05 14:02:27,322 - werkzeug - INFO - _internal.py:224 - 127.0.0.1 - - [05/Mar/2025 14:02:27] "OPTIONS /api/profile-history?table=employees&limit=15 HTTP/1.1" 200 -
+2025-03-05 14:02:27,323 - werkzeug - INFO - _internal.py:224 - 127.0.0.1 - - [05/Mar/2025 14:02:27] "OPTIONS /api/profile-history?table=employees&limit=15 HTTP/1.1" 200 -
+2025-03-05 14:02:27,324 - werkzeug - INFO - _internal.py:224 - 127.0.0.1 - - [05/Mar/2025 14:02:27] "OPTIONS /api/profile-history?table=employees&limit=15 HTTP/1.1" 200 -
+2025-03-05 14:02:27,477 - werkzeug - INFO - _internal.py:224 - 127.0.0.1 - - [05/Mar/2025 14:02:27] "OPTIONS /api/profile-history?table=employees&limit=15 HTTP/1.1" 200 -
+2025-03-05 14:02:27,478 - werkzeug - INFO - _internal.py:224 - 127.0.0.1 - - [05/Mar/2025 14:02:27] "OPTIONS /api/profile-history?table=employees&limit=15 HTTP/1.1" 200 -
+2025-03-05 14:02:27,587 - root - DEBUG - app.py:114 - Supabase URL: https://aahlbynwdjqboucpjfoo.supabase.co
+2025-03-05 14:02:27,587 - root - DEBUG - app.py:115 - Supabase Service Key: True
+2025-03-05 14:02:29,429 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/auth/v1/user "HTTP/1.1 200 OK"
+2025-03-05 14:02:29,429 - root - INFO - app.py:127 - Token valid for user: 0939eb20-ed96-4e40-816e-5546107b81af
+2025-03-05 14:02:31,024 - supabase_manager - INFO - supabase_manager.py:33 - Supabase client initialized
+2025-03-05 14:02:31,236 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/rest/v1/profiles?select=organization_id&id=eq.0939eb20-ed96-4e40-816e-5546107b81af "HTTP/1.1 200 OK"
+2025-03-05 14:02:31,237 - root - INFO - app.py:429 - Getting profile history for table employees, limit 15
+2025-03-05 14:02:31,646 - werkzeug - INFO - _internal.py:224 - 127.0.0.1 - - [05/Mar/2025 14:02:31] "OPTIONS /api/profile?connection_string=duckdb:%2F%2F%2FC:%2FUsers%2Fmhard%2FPycharmProjects%2Fsparvidata%2Fbackend%2Fmy_database.duckdb&table=employees HTTP/1.1" 200 -
+2025-03-05 14:02:31,953 - root - DEBUG - app.py:114 - Supabase URL: https://aahlbynwdjqboucpjfoo.supabase.co
+2025-03-05 14:02:31,953 - root - DEBUG - app.py:115 - Supabase Service Key: True
+2025-03-05 14:02:33,066 - supabase_manager - INFO - supabase_manager.py:33 - Supabase client initialized
+2025-03-05 14:02:33,067 - supabase_profile_history - INFO - supabase_profile_history.py:49 - Supabase Profile History Manager initialized
+2025-03-05 14:02:34,209 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/auth/v1/user "HTTP/1.1 200 OK"
+2025-03-05 14:02:34,210 - root - INFO - app.py:127 - Token valid for user: 0939eb20-ed96-4e40-816e-5546107b81af
+2025-03-05 14:02:35,825 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/rest/v1/profiling_history?select=%2A&organization_id=eq.7fe1961b-8ac6-4cbb-89b3-187f36f489bd&table_name=eq.employees&order=collected_at.desc&limit=15 "HTTP/1.1 200 OK"
+2025-03-05 14:02:35,833 - werkzeug - INFO - _internal.py:224 - 127.0.0.1 - - [05/Mar/2025 14:02:35] "GET /api/profile-history?table=employees&limit=15 HTTP/1.1" 200 -
+2025-03-05 14:02:36,146 - root - DEBUG - app.py:114 - Supabase URL: https://aahlbynwdjqboucpjfoo.supabase.co
+2025-03-05 14:02:36,146 - root - DEBUG - app.py:115 - Supabase Service Key: True
+2025-03-05 14:02:36,484 - supabase_manager - INFO - supabase_manager.py:33 - Supabase client initialized
+2025-03-05 14:02:36,671 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/rest/v1/profiles?select=organization_id&id=eq.0939eb20-ed96-4e40-816e-5546107b81af "HTTP/1.1 200 OK"
+2025-03-05 14:02:36,674 - root - INFO - app.py:209 - ========== PROFILING STARTED ==========
+2025-03-05 14:02:36,674 - root - INFO - app.py:210 - Profiling table employees with connection duckdb:///C:/Users/mhard/PycharmProjects/sparvidata/backend/my_database.duckdb
+2025-03-05 14:02:36,675 - root - INFO - app.py:211 - User ID: 0939eb20-ed96-4e40-816e-5546107b81af, Organization ID: 7fe1961b-8ac6-4cbb-89b3-187f36f489bd
+2025-03-05 14:02:38,664 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/auth/v1/user "HTTP/1.1 200 OK"
+2025-03-05 14:02:38,666 - root - INFO - app.py:127 - Token valid for user: 0939eb20-ed96-4e40-816e-5546107b81af
+2025-03-05 14:02:38,990 - supabase_manager - INFO - supabase_manager.py:33 - Supabase client initialized
+2025-03-05 14:02:38,990 - supabase_profile_history - INFO - supabase_profile_history.py:49 - Supabase Profile History Manager initialized
+2025-03-05 14:02:38,990 - root - INFO - app.py:215 - Created SupabaseProfileHistoryManager
+2025-03-05 14:02:41,193 - supabase_manager - INFO - supabase_manager.py:33 - Supabase client initialized
+2025-03-05 14:02:41,481 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/rest/v1/profiles?select=organization_id&id=eq.0939eb20-ed96-4e40-816e-5546107b81af "HTTP/1.1 200 OK"
+2025-03-05 14:02:41,483 - root - INFO - app.py:429 - Getting profile history for table employees, limit 15
+2025-03-05 14:02:41,858 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/rest/v1/profiling_history?select=data&organization_id=eq.7fe1961b-8ac6-4cbb-89b3-187f36f489bd&table_name=eq.employees&order=collected_at.desc&limit=1 "HTTP/1.1 200 OK"
+2025-03-05 14:02:41,860 - root - INFO - app.py:219 - Previous profile found: False
+2025-03-05 14:02:42,518 - root - INFO - app.py:224 - Profile completed with 15 keys
+2025-03-05 14:02:42,518 - root - INFO - app.py:227 - About to save profile to Supabase
+2025-03-05 14:02:42,518 - supabase_profile_history - INFO - supabase_profile_history.py:57 - Attempting to save profile for table employees to Supabase
+2025-03-05 14:02:43,591 - supabase_manager - INFO - supabase_manager.py:33 - Supabase client initialized
+2025-03-05 14:02:43,591 - supabase_profile_history - INFO - supabase_profile_history.py:49 - Supabase Profile History Manager initialized
+2025-03-05 14:02:44,846 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: POST https://aahlbynwdjqboucpjfoo.supabase.co/rest/v1/profiling_history "HTTP/1.1 201 Created"
+2025-03-05 14:02:44,848 - supabase_profile_history - INFO - supabase_profile_history.py:95 - Successfully saved profile with ID 904e2797-d40e-4cbc-b330-ea8cb59b5a1b
+2025-03-05 14:02:44,850 - root - INFO - app.py:229 - Profile save result: 904e2797-d40e-4cbc-b330-ea8cb59b5a1b
+2025-03-05 14:02:45,648 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/rest/v1/profiling_history?select=%2A&organization_id=eq.7fe1961b-8ac6-4cbb-89b3-187f36f489bd&table_name=eq.employees&order=collected_at.desc&limit=15 "HTTP/1.1 200 OK"
+2025-03-05 14:02:45,669 - werkzeug - INFO - _internal.py:224 - 127.0.0.1 - - [05/Mar/2025 14:02:45] "GET /api/profile-history?table=employees&limit=15 HTTP/1.1" 200 -
+2025-03-05 14:02:45,977 - root - DEBUG - app.py:114 - Supabase URL: https://aahlbynwdjqboucpjfoo.supabase.co
+2025-03-05 14:02:45,978 - root - DEBUG - app.py:115 - Supabase Service Key: True
+2025-03-05 14:02:46,797 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/rest/v1/profiling_history?select=collected_at%2C+data&organization_id=eq.7fe1961b-8ac6-4cbb-89b3-187f36f489bd&table_name=eq.employees&order=collected_at.desc&limit=10 "HTTP/1.1 200 OK"
+2025-03-05 14:02:46,799 - supabase_profile_history - INFO - supabase_profile_history.py:290 - Retrieved trend data with 1 data points for 6 columns
+2025-03-05 14:02:46,800 - root - INFO - app.py:235 - Added trends data with 1 points
+2025-03-05 14:02:46,812 - werkzeug - INFO - _internal.py:224 - 127.0.0.1 - - [05/Mar/2025 14:02:46] "GET /api/profile?connection_string=duckdb:%2F%2F%2FC:%2FUsers%2Fmhard%2FPycharmProjects%2Fsparvidata%2Fbackend%2Fmy_database.duckdb&table=employees HTTP/1.1" 200 -
+2025-03-05 14:02:47,134 - werkzeug - INFO - _internal.py:224 - 127.0.0.1 - - [05/Mar/2025 14:02:47] "OPTIONS /api/profile-history?table=employees&limit=15 HTTP/1.1" 200 -
+2025-03-05 14:02:47,338 - root - DEBUG - app.py:114 - Supabase URL: https://aahlbynwdjqboucpjfoo.supabase.co
+2025-03-05 14:02:47,339 - root - DEBUG - app.py:115 - Supabase Service Key: True
+2025-03-05 14:02:47,340 - root - DEBUG - app.py:114 - Supabase URL: https://aahlbynwdjqboucpjfoo.supabase.co
+2025-03-05 14:02:47,342 - root - DEBUG - app.py:114 - Supabase URL: https://aahlbynwdjqboucpjfoo.supabase.co
+2025-03-05 14:02:47,342 - root - DEBUG - app.py:115 - Supabase Service Key: True
+2025-03-05 14:02:47,342 - root - DEBUG - app.py:115 - Supabase Service Key: True
+2025-03-05 14:02:47,514 - root - DEBUG - app.py:114 - Supabase URL: https://aahlbynwdjqboucpjfoo.supabase.co
+2025-03-05 14:02:47,542 - root - DEBUG - app.py:115 - Supabase Service Key: True
+2025-03-05 14:02:47,547 - root - DEBUG - app.py:114 - Supabase URL: https://aahlbynwdjqboucpjfoo.supabase.co
+2025-03-05 14:02:47,550 - root - DEBUG - app.py:115 - Supabase Service Key: True
+2025-03-05 14:02:48,196 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/auth/v1/user "HTTP/1.1 200 OK"
+2025-03-05 14:02:48,218 - root - INFO - app.py:127 - Token valid for user: 0939eb20-ed96-4e40-816e-5546107b81af
+2025-03-05 14:02:52,303 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/auth/v1/user "HTTP/1.1 200 OK"
+2025-03-05 14:02:52,303 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/auth/v1/user "HTTP/1.1 200 OK"
+2025-03-05 14:02:52,304 - root - INFO - app.py:127 - Token valid for user: 0939eb20-ed96-4e40-816e-5546107b81af
+2025-03-05 14:02:52,305 - root - INFO - app.py:127 - Token valid for user: 0939eb20-ed96-4e40-816e-5546107b81af
+2025-03-05 14:02:52,322 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/auth/v1/user "HTTP/1.1 200 OK"
+2025-03-05 14:02:52,339 - root - INFO - app.py:127 - Token valid for user: 0939eb20-ed96-4e40-816e-5546107b81af
+2025-03-05 14:02:52,401 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/auth/v1/user "HTTP/1.1 200 OK"
+2025-03-05 14:02:52,414 - root - INFO - app.py:127 - Token valid for user: 0939eb20-ed96-4e40-816e-5546107b81af
+2025-03-05 14:02:52,626 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/auth/v1/user "HTTP/1.1 200 OK"
+2025-03-05 14:02:52,657 - root - INFO - app.py:127 - Token valid for user: 0939eb20-ed96-4e40-816e-5546107b81af
+2025-03-05 14:02:52,818 - supabase_manager - INFO - supabase_manager.py:33 - Supabase client initialized
+2025-03-05 14:02:53,048 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/rest/v1/profiles?select=organization_id&id=eq.0939eb20-ed96-4e40-816e-5546107b81af "HTTP/1.1 200 OK"
+2025-03-05 14:02:53,052 - root - INFO - app.py:429 - Getting profile history for table employees, limit 15
+2025-03-05 14:02:56,194 - supabase_manager - INFO - supabase_manager.py:33 - Supabase client initialized
+2025-03-05 14:02:56,270 - supabase_manager - INFO - supabase_manager.py:33 - Supabase client initialized
+2025-03-05 14:02:56,467 - supabase_manager - INFO - supabase_manager.py:33 - Supabase client initialized
+2025-03-05 14:02:56,470 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/rest/v1/profiles?select=organization_id&id=eq.0939eb20-ed96-4e40-816e-5546107b81af "HTTP/1.1 200 OK"
+2025-03-05 14:02:56,472 - root - INFO - app.py:429 - Getting profile history for table employees, limit 15
+2025-03-05 14:02:56,491 - supabase_manager - INFO - supabase_manager.py:33 - Supabase client initialized
+2025-03-05 14:02:56,555 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/rest/v1/profiles?select=organization_id&id=eq.0939eb20-ed96-4e40-816e-5546107b81af "HTTP/1.1 200 OK"
+2025-03-05 14:02:56,558 - root - INFO - app.py:429 - Getting profile history for table employees, limit 15
+2025-03-05 14:02:56,651 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/rest/v1/profiles?select=organization_id&id=eq.0939eb20-ed96-4e40-816e-5546107b81af "HTTP/1.1 200 OK"
+2025-03-05 14:02:56,657 - root - INFO - app.py:429 - Getting profile history for table employees, limit 15
+2025-03-05 14:02:56,702 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/rest/v1/profiles?select=organization_id&id=eq.0939eb20-ed96-4e40-816e-5546107b81af "HTTP/1.1 200 OK"
+2025-03-05 14:02:56,714 - root - INFO - app.py:429 - Getting profile history for table employees, limit 15
+2025-03-05 14:02:56,726 - supabase_manager - INFO - supabase_manager.py:33 - Supabase client initialized
+2025-03-05 14:02:56,964 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/rest/v1/profiles?select=organization_id&id=eq.0939eb20-ed96-4e40-816e-5546107b81af "HTTP/1.1 200 OK"
+2025-03-05 14:02:56,973 - root - INFO - app.py:429 - Getting profile history for table employees, limit 15
+2025-03-05 14:02:57,078 - supabase_manager - INFO - supabase_manager.py:33 - Supabase client initialized
+2025-03-05 14:02:57,163 - supabase_profile_history - INFO - supabase_profile_history.py:49 - Supabase Profile History Manager initialized
+2025-03-05 14:03:00,701 - supabase_manager - INFO - supabase_manager.py:33 - Supabase client initialized
+2025-03-05 14:03:00,736 - supabase_profile_history - INFO - supabase_profile_history.py:49 - Supabase Profile History Manager initialized
+2025-03-05 14:03:01,122 - supabase_manager - INFO - supabase_manager.py:33 - Supabase client initialized
+2025-03-05 14:03:01,145 - supabase_profile_history - INFO - supabase_profile_history.py:49 - Supabase Profile History Manager initialized
+2025-03-05 14:03:01,168 - supabase_manager - INFO - supabase_manager.py:33 - Supabase client initialized
+2025-03-05 14:03:01,199 - supabase_profile_history - INFO - supabase_profile_history.py:49 - Supabase Profile History Manager initialized
+2025-03-05 14:03:01,212 - supabase_manager - INFO - supabase_manager.py:33 - Supabase client initialized
+2025-03-05 14:03:01,219 - supabase_profile_history - INFO - supabase_profile_history.py:49 - Supabase Profile History Manager initialized
+2025-03-05 14:03:01,459 - supabase_manager - INFO - supabase_manager.py:33 - Supabase client initialized
+2025-03-05 14:03:01,477 - supabase_profile_history - INFO - supabase_profile_history.py:49 - Supabase Profile History Manager initialized
+2025-03-05 14:03:01,715 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/rest/v1/profiling_history?select=%2A&organization_id=eq.7fe1961b-8ac6-4cbb-89b3-187f36f489bd&table_name=eq.employees&order=collected_at.desc&limit=15 "HTTP/1.1 200 OK"
+2025-03-05 14:03:01,742 - werkzeug - INFO - _internal.py:224 - 127.0.0.1 - - [05/Mar/2025 14:03:01] "GET /api/profile-history?table=employees&limit=15 HTTP/1.1" 200 -
+2025-03-05 14:03:02,292 - root - DEBUG - app.py:114 - Supabase URL: https://aahlbynwdjqboucpjfoo.supabase.co
+2025-03-05 14:03:02,330 - root - DEBUG - app.py:115 - Supabase Service Key: True
+2025-03-05 14:03:04,912 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/rest/v1/profiling_history?select=%2A&organization_id=eq.7fe1961b-8ac6-4cbb-89b3-187f36f489bd&table_name=eq.employees&order=collected_at.desc&limit=15 "HTTP/1.1 200 OK"
+2025-03-05 14:03:04,959 - werkzeug - INFO - _internal.py:224 - 127.0.0.1 - - [05/Mar/2025 14:03:04] "GET /api/profile-history?table=employees&limit=15 HTTP/1.1" 200 -
+2025-03-05 14:03:05,215 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/rest/v1/profiling_history?select=%2A&organization_id=eq.7fe1961b-8ac6-4cbb-89b3-187f36f489bd&table_name=eq.employees&order=collected_at.desc&limit=15 "HTTP/1.1 200 OK"
+2025-03-05 14:03:05,239 - werkzeug - INFO - _internal.py:224 - 127.0.0.1 - - [05/Mar/2025 14:03:05] "GET /api/profile-history?table=employees&limit=15 HTTP/1.1" 200 -
+2025-03-05 14:03:05,293 - root - DEBUG - app.py:114 - Supabase URL: https://aahlbynwdjqboucpjfoo.supabase.co
+2025-03-05 14:03:05,293 - root - DEBUG - app.py:115 - Supabase Service Key: True
+2025-03-05 14:03:05,298 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/rest/v1/profiling_history?select=%2A&organization_id=eq.7fe1961b-8ac6-4cbb-89b3-187f36f489bd&table_name=eq.employees&order=collected_at.desc&limit=15 "HTTP/1.1 200 OK"
+2025-03-05 14:03:05,323 - werkzeug - INFO - _internal.py:224 - 127.0.0.1 - - [05/Mar/2025 14:03:05] "GET /api/profile-history?table=employees&limit=15 HTTP/1.1" 200 -
+2025-03-05 14:03:05,421 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/rest/v1/profiling_history?select=%2A&organization_id=eq.7fe1961b-8ac6-4cbb-89b3-187f36f489bd&table_name=eq.employees&order=collected_at.desc&limit=15 "HTTP/1.1 200 OK"
+2025-03-05 14:03:05,448 - werkzeug - INFO - _internal.py:224 - 127.0.0.1 - - [05/Mar/2025 14:03:05] "GET /api/profile-history?table=employees&limit=15 HTTP/1.1" 200 -
+2025-03-05 14:03:05,529 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/rest/v1/profiling_history?select=%2A&organization_id=eq.7fe1961b-8ac6-4cbb-89b3-187f36f489bd&table_name=eq.employees&order=collected_at.desc&limit=15 "HTTP/1.1 200 OK"
+2025-03-05 14:03:05,549 - werkzeug - INFO - _internal.py:224 - 127.0.0.1 - - [05/Mar/2025 14:03:05] "GET /api/profile-history?table=employees&limit=15 HTTP/1.1" 200 -
+2025-03-05 14:03:05,577 - root - DEBUG - app.py:114 - Supabase URL: https://aahlbynwdjqboucpjfoo.supabase.co
+2025-03-05 14:03:05,582 - root - DEBUG - app.py:115 - Supabase Service Key: True
+2025-03-05 14:03:05,649 - root - DEBUG - app.py:114 - Supabase URL: https://aahlbynwdjqboucpjfoo.supabase.co
+2025-03-05 14:03:05,650 - root - DEBUG - app.py:115 - Supabase Service Key: True
+2025-03-05 14:03:05,797 - root - DEBUG - app.py:114 - Supabase URL: https://aahlbynwdjqboucpjfoo.supabase.co
+2025-03-05 14:03:05,830 - root - DEBUG - app.py:115 - Supabase Service Key: True
+2025-03-05 14:03:05,928 - root - DEBUG - app.py:114 - Supabase URL: https://aahlbynwdjqboucpjfoo.supabase.co
+2025-03-05 14:03:05,961 - root - DEBUG - app.py:115 - Supabase Service Key: True
+2025-03-05 14:03:06,188 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/auth/v1/user "HTTP/1.1 200 OK"
+2025-03-05 14:03:06,199 - root - INFO - app.py:127 - Token valid for user: 0939eb20-ed96-4e40-816e-5546107b81af
+2025-03-05 14:03:09,397 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/auth/v1/user "HTTP/1.1 200 OK"
+2025-03-05 14:03:09,422 - root - INFO - app.py:127 - Token valid for user: 0939eb20-ed96-4e40-816e-5546107b81af
+2025-03-05 14:03:09,572 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/auth/v1/user "HTTP/1.1 200 OK"
+2025-03-05 14:03:09,605 - root - INFO - app.py:127 - Token valid for user: 0939eb20-ed96-4e40-816e-5546107b81af
+2025-03-05 14:03:09,722 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/auth/v1/user "HTTP/1.1 200 OK"
+2025-03-05 14:03:09,756 - root - INFO - app.py:127 - Token valid for user: 0939eb20-ed96-4e40-816e-5546107b81af
+2025-03-05 14:03:10,155 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/auth/v1/user "HTTP/1.1 200 OK"
+2025-03-05 14:03:10,159 - root - INFO - app.py:127 - Token valid for user: 0939eb20-ed96-4e40-816e-5546107b81af
+2025-03-05 14:03:10,257 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/auth/v1/user "HTTP/1.1 200 OK"
+2025-03-05 14:03:10,277 - root - INFO - app.py:127 - Token valid for user: 0939eb20-ed96-4e40-816e-5546107b81af
+2025-03-05 14:03:10,884 - supabase_manager - INFO - supabase_manager.py:33 - Supabase client initialized
+2025-03-05 14:03:11,079 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/rest/v1/profiles?select=organization_id&id=eq.0939eb20-ed96-4e40-816e-5546107b81af "HTTP/1.1 200 OK"
+2025-03-05 14:03:11,097 - root - INFO - app.py:429 - Getting profile history for table employees, limit 15
+2025-03-05 14:03:13,995 - supabase_manager - INFO - supabase_manager.py:33 - Supabase client initialized
+2025-03-05 14:03:14,255 - supabase_manager - INFO - supabase_manager.py:33 - Supabase client initialized
+2025-03-05 14:03:14,355 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/rest/v1/profiles?select=organization_id&id=eq.0939eb20-ed96-4e40-816e-5546107b81af "HTTP/1.1 200 OK"
+2025-03-05 14:03:14,365 - root - INFO - app.py:429 - Getting profile history for table employees, limit 15
+2025-03-05 14:03:14,373 - supabase_manager - INFO - supabase_manager.py:33 - Supabase client initialized
+2025-03-05 14:03:14,462 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/rest/v1/profiles?select=organization_id&id=eq.0939eb20-ed96-4e40-816e-5546107b81af "HTTP/1.1 200 OK"
+2025-03-05 14:03:14,474 - root - INFO - app.py:429 - Getting profile history for table employees, limit 15
+2025-03-05 14:03:14,580 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/rest/v1/profiles?select=organization_id&id=eq.0939eb20-ed96-4e40-816e-5546107b81af "HTTP/1.1 200 OK"
+2025-03-05 14:03:14,618 - root - INFO - app.py:429 - Getting profile history for table employees, limit 15
+2025-03-05 14:03:14,721 - supabase_manager - INFO - supabase_manager.py:33 - Supabase client initialized
+2025-03-05 14:03:14,746 - supabase_manager - INFO - supabase_manager.py:33 - Supabase client initialized
+2025-03-05 14:03:14,962 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/rest/v1/profiles?select=organization_id&id=eq.0939eb20-ed96-4e40-816e-5546107b81af "HTTP/1.1 200 OK"
+2025-03-05 14:03:14,966 - root - INFO - app.py:429 - Getting profile history for table employees, limit 15
+2025-03-05 14:03:14,969 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/rest/v1/profiles?select=organization_id&id=eq.0939eb20-ed96-4e40-816e-5546107b81af "HTTP/1.1 200 OK"
+2025-03-05 14:03:14,986 - root - INFO - app.py:429 - Getting profile history for table employees, limit 15
+2025-03-05 14:03:15,323 - supabase_manager - INFO - supabase_manager.py:33 - Supabase client initialized
+2025-03-05 14:03:15,341 - supabase_profile_history - INFO - supabase_profile_history.py:49 - Supabase Profile History Manager initialized
+2025-03-05 14:03:18,925 - supabase_manager - INFO - supabase_manager.py:33 - Supabase client initialized
+2025-03-05 14:03:18,992 - supabase_profile_history - INFO - supabase_profile_history.py:49 - Supabase Profile History Manager initialized
+2025-03-05 14:03:19,052 - supabase_manager - INFO - supabase_manager.py:33 - Supabase client initialized
+2025-03-05 14:03:19,058 - supabase_manager - INFO - supabase_manager.py:33 - Supabase client initialized
+2025-03-05 14:03:19,081 - supabase_profile_history - INFO - supabase_profile_history.py:49 - Supabase Profile History Manager initialized
+2025-03-05 14:03:19,087 - supabase_profile_history - INFO - supabase_profile_history.py:49 - Supabase Profile History Manager initialized
+2025-03-05 14:03:19,558 - supabase_manager - INFO - supabase_manager.py:33 - Supabase client initialized
+2025-03-05 14:03:19,614 - supabase_profile_history - INFO - supabase_profile_history.py:49 - Supabase Profile History Manager initialized
+2025-03-05 14:03:20,307 - supabase_manager - INFO - supabase_manager.py:33 - Supabase client initialized
+2025-03-05 14:03:20,355 - supabase_profile_history - INFO - supabase_profile_history.py:49 - Supabase Profile History Manager initialized
+2025-03-05 14:03:20,681 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/rest/v1/profiling_history?select=%2A&organization_id=eq.7fe1961b-8ac6-4cbb-89b3-187f36f489bd&table_name=eq.employees&order=collected_at.desc&limit=15 "HTTP/1.1 200 OK"
+2025-03-05 14:03:20,712 - werkzeug - INFO - _internal.py:224 - 127.0.0.1 - - [05/Mar/2025 14:03:20] "GET /api/profile-history?table=employees&limit=15 HTTP/1.1" 200 -
+2025-03-05 14:03:21,149 - root - DEBUG - app.py:114 - Supabase URL: https://aahlbynwdjqboucpjfoo.supabase.co
+2025-03-05 14:03:21,181 - root - DEBUG - app.py:115 - Supabase Service Key: True
+2025-03-05 14:03:25,455 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/rest/v1/profiling_history?select=%2A&organization_id=eq.7fe1961b-8ac6-4cbb-89b3-187f36f489bd&table_name=eq.employees&order=collected_at.desc&limit=15 "HTTP/1.1 200 OK"
+2025-03-05 14:03:25,489 - werkzeug - INFO - _internal.py:224 - 127.0.0.1 - - [05/Mar/2025 14:03:25] "GET /api/profile-history?table=employees&limit=15 HTTP/1.1" 200 -
+2025-03-05 14:03:25,720 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/rest/v1/profiling_history?select=%2A&organization_id=eq.7fe1961b-8ac6-4cbb-89b3-187f36f489bd&table_name=eq.employees&order=collected_at.desc&limit=15 "HTTP/1.1 200 OK"
+2025-03-05 14:03:25,744 - werkzeug - INFO - _internal.py:224 - 127.0.0.1 - - [05/Mar/2025 14:03:25] "GET /api/profile-history?table=employees&limit=15 HTTP/1.1" 200 -
+2025-03-05 14:03:25,746 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/rest/v1/profiling_history?select=%2A&organization_id=eq.7fe1961b-8ac6-4cbb-89b3-187f36f489bd&table_name=eq.employees&order=collected_at.desc&limit=15 "HTTP/1.1 200 OK"
+2025-03-05 14:03:25,791 - werkzeug - INFO - _internal.py:224 - 127.0.0.1 - - [05/Mar/2025 14:03:25] "GET /api/profile-history?table=employees&limit=15 HTTP/1.1" 200 -
+2025-03-05 14:03:25,816 - werkzeug - INFO - _internal.py:224 - 127.0.0.1 - - [05/Mar/2025 14:03:25] "OPTIONS /api/validations?table=employees HTTP/1.1" 200 -
+2025-03-05 14:03:25,995 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/rest/v1/profiling_history?select=%2A&organization_id=eq.7fe1961b-8ac6-4cbb-89b3-187f36f489bd&table_name=eq.employees&order=collected_at.desc&limit=15 "HTTP/1.1 200 OK"
+2025-03-05 14:03:26,024 - werkzeug - INFO - _internal.py:224 - 127.0.0.1 - - [05/Mar/2025 14:03:26] "GET /api/profile-history?table=employees&limit=15 HTTP/1.1" 200 -
+2025-03-05 14:03:26,091 - werkzeug - INFO - _internal.py:224 - 127.0.0.1 - - [05/Mar/2025 14:03:26] "OPTIONS /api/validations?table=employees HTTP/1.1" 200 -
+2025-03-05 14:03:26,154 - werkzeug - INFO - _internal.py:224 - 127.0.0.1 - - [05/Mar/2025 14:03:26] "OPTIONS /api/validations?table=employees HTTP/1.1" 200 -
+2025-03-05 14:03:26,173 - werkzeug - INFO - _internal.py:224 - 127.0.0.1 - - [05/Mar/2025 14:03:26] "OPTIONS /api/validations?table=employees HTTP/1.1" 200 -
+2025-03-05 14:03:26,350 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/rest/v1/profiling_history?select=%2A&organization_id=eq.7fe1961b-8ac6-4cbb-89b3-187f36f489bd&table_name=eq.employees&order=collected_at.desc&limit=15 "HTTP/1.1 200 OK"
+2025-03-05 14:03:26,372 - root - DEBUG - app.py:114 - Supabase URL: https://aahlbynwdjqboucpjfoo.supabase.co
+2025-03-05 14:03:26,378 - werkzeug - INFO - _internal.py:224 - 127.0.0.1 - - [05/Mar/2025 14:03:26] "GET /api/profile-history?table=employees&limit=15 HTTP/1.1" 200 -
+2025-03-05 14:03:26,379 - root - DEBUG - app.py:115 - Supabase Service Key: True
+2025-03-05 14:03:26,977 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/auth/v1/user "HTTP/1.1 200 OK"
+2025-03-05 14:03:26,982 - root - INFO - app.py:127 - Token valid for user: 0939eb20-ed96-4e40-816e-5546107b81af
+2025-03-05 14:03:29,418 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/auth/v1/user "HTTP/1.1 200 OK"
+2025-03-05 14:03:29,419 - root - INFO - app.py:127 - Token valid for user: 0939eb20-ed96-4e40-816e-5546107b81af
+2025-03-05 14:03:29,773 - supabase_manager - INFO - supabase_manager.py:33 - Supabase client initialized
+2025-03-05 14:03:29,970 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/rest/v1/profiles?select=organization_id&id=eq.0939eb20-ed96-4e40-816e-5546107b81af "HTTP/1.1 200 OK"
+2025-03-05 14:03:29,971 - root - INFO - app.py:429 - Getting profile history for table employees, limit 15
+2025-03-05 14:03:31,661 - supabase_manager - INFO - supabase_manager.py:33 - Supabase client initialized
+2025-03-05 14:03:31,918 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/rest/v1/profiles?select=organization_id&id=eq.0939eb20-ed96-4e40-816e-5546107b81af "HTTP/1.1 200 OK"
+2025-03-05 14:03:31,919 - root - INFO - app.py:255 - Getting validation rules for organization: 7fe1961b-8ac6-4cbb-89b3-187f36f489bd, table: employees
+2025-03-05 14:03:31,919 - root - INFO - supabase_validation_manager.py:54 - Getting validation rules for org 7fe1961b-8ac6-4cbb-89b3-187f36f489bd, table employees
+2025-03-05 14:03:32,135 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/rest/v1/validation_rules?select=%2A&organization_id=eq.7fe1961b-8ac6-4cbb-89b3-187f36f489bd&table_name=eq.employees "HTTP/1.1 200 OK"
+2025-03-05 14:03:32,136 - root - INFO - app.py:257 - Retrieved 0 validation rules
+2025-03-05 14:03:32,137 - root - DEBUG - app.py:258 - Rules content: []
+2025-03-05 14:03:32,143 - werkzeug - INFO - _internal.py:224 - 127.0.0.1 - - [05/Mar/2025 14:03:32] "GET /api/validations?table=employees HTTP/1.1" 200 -
+2025-03-05 14:03:32,162 - supabase_manager - INFO - supabase_manager.py:33 - Supabase client initialized
+2025-03-05 14:03:32,162 - supabase_profile_history - INFO - supabase_profile_history.py:49 - Supabase Profile History Manager initialized
+2025-03-05 14:03:32,461 - root - DEBUG - app.py:114 - Supabase URL: https://aahlbynwdjqboucpjfoo.supabase.co
+2025-03-05 14:03:32,461 - root - DEBUG - app.py:115 - Supabase Service Key: True
+2025-03-05 14:03:34,446 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/rest/v1/profiling_history?select=%2A&organization_id=eq.7fe1961b-8ac6-4cbb-89b3-187f36f489bd&table_name=eq.employees&order=collected_at.desc&limit=15 "HTTP/1.1 200 OK"
+2025-03-05 14:03:34,461 - werkzeug - INFO - _internal.py:224 - 127.0.0.1 - - [05/Mar/2025 14:03:34] "GET /api/profile-history?table=employees&limit=15 HTTP/1.1" 200 -
+2025-03-05 14:03:34,740 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/auth/v1/user "HTTP/1.1 200 OK"
+2025-03-05 14:03:34,741 - root - INFO - app.py:127 - Token valid for user: 0939eb20-ed96-4e40-816e-5546107b81af
+2025-03-05 14:03:34,857 - werkzeug - INFO - _internal.py:224 - 127.0.0.1 - - [05/Mar/2025 14:03:34] "OPTIONS /api/validations?table=employees HTTP/1.1" 200 -
+2025-03-05 14:03:34,858 - werkzeug - INFO - _internal.py:224 - 127.0.0.1 - - [05/Mar/2025 14:03:34] "OPTIONS /api/validations?table=employees HTTP/1.1" 200 -
+2025-03-05 14:03:36,258 - supabase_manager - INFO - supabase_manager.py:33 - Supabase client initialized
+2025-03-05 14:03:36,435 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/rest/v1/profiles?select=organization_id&id=eq.0939eb20-ed96-4e40-816e-5546107b81af "HTTP/1.1 200 OK"
+2025-03-05 14:03:36,435 - root - INFO - app.py:255 - Getting validation rules for organization: 7fe1961b-8ac6-4cbb-89b3-187f36f489bd, table: employees
+2025-03-05 14:03:36,436 - root - INFO - supabase_validation_manager.py:54 - Getting validation rules for org 7fe1961b-8ac6-4cbb-89b3-187f36f489bd, table employees
+2025-03-05 14:03:36,563 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/rest/v1/validation_rules?select=%2A&organization_id=eq.7fe1961b-8ac6-4cbb-89b3-187f36f489bd&table_name=eq.employees "HTTP/1.1 200 OK"
+2025-03-05 14:03:36,564 - root - INFO - app.py:257 - Retrieved 0 validation rules
+2025-03-05 14:03:36,565 - root - DEBUG - app.py:258 - Rules content: []
+2025-03-05 14:03:36,570 - werkzeug - INFO - _internal.py:224 - 127.0.0.1 - - [05/Mar/2025 14:03:36] "GET /api/validations?table=employees HTTP/1.1" 200 -
+2025-03-05 14:03:36,881 - root - DEBUG - app.py:114 - Supabase URL: https://aahlbynwdjqboucpjfoo.supabase.co
+2025-03-05 14:03:36,881 - root - DEBUG - app.py:115 - Supabase Service Key: True
+2025-03-05 14:03:38,505 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/auth/v1/user "HTTP/1.1 200 OK"
+2025-03-05 14:03:38,506 - root - INFO - app.py:127 - Token valid for user: 0939eb20-ed96-4e40-816e-5546107b81af
+2025-03-05 14:03:39,990 - supabase_manager - INFO - supabase_manager.py:33 - Supabase client initialized
+2025-03-05 14:03:40,151 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/rest/v1/profiles?select=organization_id&id=eq.0939eb20-ed96-4e40-816e-5546107b81af "HTTP/1.1 200 OK"
+2025-03-05 14:03:40,152 - root - INFO - app.py:255 - Getting validation rules for organization: 7fe1961b-8ac6-4cbb-89b3-187f36f489bd, table: employees
+2025-03-05 14:03:40,153 - root - INFO - supabase_validation_manager.py:54 - Getting validation rules for org 7fe1961b-8ac6-4cbb-89b3-187f36f489bd, table employees
+2025-03-05 14:03:40,258 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/rest/v1/validation_rules?select=%2A&organization_id=eq.7fe1961b-8ac6-4cbb-89b3-187f36f489bd&table_name=eq.employees "HTTP/1.1 200 OK"
+2025-03-05 14:03:40,259 - root - INFO - app.py:257 - Retrieved 0 validation rules
+2025-03-05 14:03:40,259 - root - DEBUG - app.py:258 - Rules content: []
+2025-03-05 14:03:40,262 - werkzeug - INFO - _internal.py:224 - 127.0.0.1 - - [05/Mar/2025 14:03:40] "GET /api/validations?table=employees HTTP/1.1" 200 -
+2025-03-05 14:03:40,265 - root - DEBUG - app.py:114 - Supabase URL: https://aahlbynwdjqboucpjfoo.supabase.co
+2025-03-05 14:03:40,266 - root - DEBUG - app.py:115 - Supabase Service Key: True
+2025-03-05 14:03:41,899 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/auth/v1/user "HTTP/1.1 200 OK"
+2025-03-05 14:03:41,900 - root - INFO - app.py:127 - Token valid for user: 0939eb20-ed96-4e40-816e-5546107b81af
+2025-03-05 14:03:43,419 - supabase_manager - INFO - supabase_manager.py:33 - Supabase client initialized
+2025-03-05 14:03:43,708 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/rest/v1/profiles?select=organization_id&id=eq.0939eb20-ed96-4e40-816e-5546107b81af "HTTP/1.1 200 OK"
+2025-03-05 14:03:43,709 - root - INFO - app.py:255 - Getting validation rules for organization: 7fe1961b-8ac6-4cbb-89b3-187f36f489bd, table: employees
+2025-03-05 14:03:43,710 - root - INFO - supabase_validation_manager.py:54 - Getting validation rules for org 7fe1961b-8ac6-4cbb-89b3-187f36f489bd, table employees
+2025-03-05 14:03:43,810 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/rest/v1/validation_rules?select=%2A&organization_id=eq.7fe1961b-8ac6-4cbb-89b3-187f36f489bd&table_name=eq.employees "HTTP/1.1 200 OK"
+2025-03-05 14:03:43,811 - root - INFO - app.py:257 - Retrieved 0 validation rules
+2025-03-05 14:03:43,812 - root - DEBUG - app.py:258 - Rules content: []
+2025-03-05 14:03:43,816 - werkzeug - INFO - _internal.py:224 - 127.0.0.1 - - [05/Mar/2025 14:03:43] "GET /api/validations?table=employees HTTP/1.1" 200 -
+2025-03-05 14:03:44,123 - root - DEBUG - app.py:114 - Supabase URL: https://aahlbynwdjqboucpjfoo.supabase.co
+2025-03-05 14:03:44,123 - root - DEBUG - app.py:115 - Supabase Service Key: True
+2025-03-05 14:03:45,816 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/auth/v1/user "HTTP/1.1 200 OK"
+2025-03-05 14:03:45,816 - root - INFO - app.py:127 - Token valid for user: 0939eb20-ed96-4e40-816e-5546107b81af
+2025-03-05 14:03:46,429 - root - DEBUG - app.py:114 - Supabase URL: https://aahlbynwdjqboucpjfoo.supabase.co
+2025-03-05 14:03:46,430 - root - DEBUG - app.py:115 - Supabase Service Key: True
+2025-03-05 14:03:47,277 - root - DEBUG - app.py:114 - Supabase URL: https://aahlbynwdjqboucpjfoo.supabase.co
+2025-03-05 14:03:47,278 - root - DEBUG - app.py:115 - Supabase Service Key: True
+2025-03-05 14:03:47,280 - root - DEBUG - app.py:114 - Supabase URL: https://aahlbynwdjqboucpjfoo.supabase.co
+2025-03-05 14:03:47,281 - root - DEBUG - app.py:115 - Supabase Service Key: True
+2025-03-05 14:03:47,989 - root - DEBUG - app.py:114 - Supabase URL: https://aahlbynwdjqboucpjfoo.supabase.co
+2025-03-05 14:03:48,009 - root - DEBUG - app.py:114 - Supabase URL: https://aahlbynwdjqboucpjfoo.supabase.co
+2025-03-05 14:03:48,009 - root - DEBUG - app.py:115 - Supabase Service Key: True
+2025-03-05 14:03:48,019 - root - DEBUG - app.py:115 - Supabase Service Key: True
+2025-03-05 14:03:48,323 - supabase_manager - INFO - supabase_manager.py:33 - Supabase client initialized
+2025-03-05 14:03:48,641 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/rest/v1/profiles?select=organization_id&id=eq.0939eb20-ed96-4e40-816e-5546107b81af "HTTP/1.1 200 OK"
+2025-03-05 14:03:48,653 - root - INFO - app.py:255 - Getting validation rules for organization: 7fe1961b-8ac6-4cbb-89b3-187f36f489bd, table: employees
+2025-03-05 14:03:48,681 - root - INFO - supabase_validation_manager.py:54 - Getting validation rules for org 7fe1961b-8ac6-4cbb-89b3-187f36f489bd, table employees
+2025-03-05 14:03:48,830 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/rest/v1/validation_rules?select=%2A&organization_id=eq.7fe1961b-8ac6-4cbb-89b3-187f36f489bd&table_name=eq.employees "HTTP/1.1 200 OK"
+2025-03-05 14:03:48,848 - root - INFO - app.py:257 - Retrieved 0 validation rules
+2025-03-05 14:03:48,849 - root - DEBUG - app.py:258 - Rules content: []
+2025-03-05 14:03:48,866 - werkzeug - INFO - _internal.py:224 - 127.0.0.1 - - [05/Mar/2025 14:03:48] "GET /api/validations?table=employees HTTP/1.1" 200 -
+2025-03-05 14:03:49,443 - root - DEBUG - app.py:114 - Supabase URL: https://aahlbynwdjqboucpjfoo.supabase.co
+2025-03-05 14:03:49,453 - root - DEBUG - app.py:115 - Supabase Service Key: True
+2025-03-05 14:03:49,861 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/auth/v1/user "HTTP/1.1 200 OK"
+2025-03-05 14:03:49,875 - root - INFO - app.py:127 - Token valid for user: 0939eb20-ed96-4e40-816e-5546107b81af
+2025-03-05 14:03:52,011 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/auth/v1/user "HTTP/1.1 200 OK"
+2025-03-05 14:03:52,015 - root - INFO - app.py:127 - Token valid for user: 0939eb20-ed96-4e40-816e-5546107b81af
+2025-03-05 14:03:52,120 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/auth/v1/user "HTTP/1.1 200 OK"
+2025-03-05 14:03:52,137 - root - INFO - app.py:127 - Token valid for user: 0939eb20-ed96-4e40-816e-5546107b81af
+2025-03-05 14:03:52,868 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/auth/v1/user "HTTP/1.1 200 OK"
+2025-03-05 14:03:52,899 - root - INFO - app.py:127 - Token valid for user: 0939eb20-ed96-4e40-816e-5546107b81af
+2025-03-05 14:03:53,147 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/auth/v1/user "HTTP/1.1 200 OK"
+2025-03-05 14:03:53,166 - root - INFO - app.py:127 - Token valid for user: 0939eb20-ed96-4e40-816e-5546107b81af
+2025-03-05 14:03:54,968 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/auth/v1/user "HTTP/1.1 200 OK"
+2025-03-05 14:03:54,976 - root - INFO - app.py:127 - Token valid for user: 0939eb20-ed96-4e40-816e-5546107b81af
+2025-03-05 14:03:55,396 - supabase_manager - INFO - supabase_manager.py:33 - Supabase client initialized
+2025-03-05 14:03:55,668 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/rest/v1/profiles?select=organization_id&id=eq.0939eb20-ed96-4e40-816e-5546107b81af "HTTP/1.1 200 OK"
+2025-03-05 14:03:55,691 - root - INFO - app.py:255 - Getting validation rules for organization: 7fe1961b-8ac6-4cbb-89b3-187f36f489bd, table: employees
+2025-03-05 14:03:55,709 - root - INFO - supabase_validation_manager.py:54 - Getting validation rules for org 7fe1961b-8ac6-4cbb-89b3-187f36f489bd, table employees
+2025-03-05 14:03:55,886 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/rest/v1/validation_rules?select=%2A&organization_id=eq.7fe1961b-8ac6-4cbb-89b3-187f36f489bd&table_name=eq.employees "HTTP/1.1 200 OK"
+2025-03-05 14:03:55,927 - root - INFO - app.py:257 - Retrieved 0 validation rules
+2025-03-05 14:03:55,929 - root - DEBUG - app.py:258 - Rules content: []
+2025-03-05 14:03:55,982 - werkzeug - INFO - _internal.py:224 - 127.0.0.1 - - [05/Mar/2025 14:03:55] "GET /api/validations?table=employees HTTP/1.1" 200 -
+2025-03-05 14:03:56,477 - root - DEBUG - app.py:114 - Supabase URL: https://aahlbynwdjqboucpjfoo.supabase.co
+2025-03-05 14:03:56,508 - root - DEBUG - app.py:115 - Supabase Service Key: True
+2025-03-05 14:03:58,421 - supabase_manager - INFO - supabase_manager.py:33 - Supabase client initialized
+2025-03-05 14:03:58,727 - supabase_manager - INFO - supabase_manager.py:33 - Supabase client initialized
+2025-03-05 14:03:59,070 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/rest/v1/profiles?select=organization_id&id=eq.0939eb20-ed96-4e40-816e-5546107b81af "HTTP/1.1 200 OK"
+2025-03-05 14:03:59,085 - root - INFO - app.py:255 - Getting validation rules for organization: 7fe1961b-8ac6-4cbb-89b3-187f36f489bd, table: employees
+2025-03-05 14:03:59,101 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/rest/v1/profiles?select=organization_id&id=eq.0939eb20-ed96-4e40-816e-5546107b81af "HTTP/1.1 200 OK"
+2025-03-05 14:03:59,102 - root - INFO - supabase_validation_manager.py:54 - Getting validation rules for org 7fe1961b-8ac6-4cbb-89b3-187f36f489bd, table employees
+2025-03-05 14:03:59,105 - root - INFO - app.py:255 - Getting validation rules for organization: 7fe1961b-8ac6-4cbb-89b3-187f36f489bd, table: employees
+2025-03-05 14:03:59,154 - root - INFO - supabase_validation_manager.py:54 - Getting validation rules for org 7fe1961b-8ac6-4cbb-89b3-187f36f489bd, table employees
+2025-03-05 14:03:59,270 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/rest/v1/validation_rules?select=%2A&organization_id=eq.7fe1961b-8ac6-4cbb-89b3-187f36f489bd&table_name=eq.employees "HTTP/1.1 200 OK"
+2025-03-05 14:03:59,279 - root - INFO - app.py:257 - Retrieved 0 validation rules
+2025-03-05 14:03:59,289 - root - DEBUG - app.py:258 - Rules content: []
+2025-03-05 14:03:59,300 - werkzeug - INFO - _internal.py:224 - 127.0.0.1 - - [05/Mar/2025 14:03:59] "GET /api/validations?table=employees HTTP/1.1" 200 -
+2025-03-05 14:03:59,347 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/rest/v1/validation_rules?select=%2A&organization_id=eq.7fe1961b-8ac6-4cbb-89b3-187f36f489bd&table_name=eq.employees "HTTP/1.1 200 OK"
+2025-03-05 14:03:59,389 - root - INFO - app.py:257 - Retrieved 0 validation rules
+2025-03-05 14:03:59,405 - root - DEBUG - app.py:258 - Rules content: []
+2025-03-05 14:03:59,434 - werkzeug - INFO - _internal.py:224 - 127.0.0.1 - - [05/Mar/2025 14:03:59] "GET /api/validations?table=employees HTTP/1.1" 200 -
+2025-03-05 14:03:59,704 - root - DEBUG - app.py:114 - Supabase URL: https://aahlbynwdjqboucpjfoo.supabase.co
+2025-03-05 14:03:59,721 - root - DEBUG - app.py:115 - Supabase Service Key: True
+2025-03-05 14:03:59,909 - root - DEBUG - app.py:114 - Supabase URL: https://aahlbynwdjqboucpjfoo.supabase.co
+2025-03-05 14:03:59,930 - root - DEBUG - app.py:115 - Supabase Service Key: True
+2025-03-05 14:03:59,933 - supabase_manager - INFO - supabase_manager.py:33 - Supabase client initialized
+2025-03-05 14:04:00,257 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/rest/v1/profiles?select=organization_id&id=eq.0939eb20-ed96-4e40-816e-5546107b81af "HTTP/1.1 200 OK"
+2025-03-05 14:04:00,268 - root - INFO - app.py:255 - Getting validation rules for organization: 7fe1961b-8ac6-4cbb-89b3-187f36f489bd, table: employees
+2025-03-05 14:04:00,285 - root - INFO - supabase_validation_manager.py:54 - Getting validation rules for org 7fe1961b-8ac6-4cbb-89b3-187f36f489bd, table employees
+2025-03-05 14:04:00,364 - supabase_manager - INFO - supabase_manager.py:33 - Supabase client initialized
+2025-03-05 14:04:00,436 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/rest/v1/validation_rules?select=%2A&organization_id=eq.7fe1961b-8ac6-4cbb-89b3-187f36f489bd&table_name=eq.employees "HTTP/1.1 200 OK"
+2025-03-05 14:04:00,461 - root - INFO - app.py:257 - Retrieved 0 validation rules
+2025-03-05 14:04:00,462 - root - DEBUG - app.py:258 - Rules content: []
+2025-03-05 14:04:00,489 - werkzeug - INFO - _internal.py:224 - 127.0.0.1 - - [05/Mar/2025 14:04:00] "GET /api/validations?table=employees HTTP/1.1" 200 -
+2025-03-05 14:04:00,583 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/rest/v1/profiles?select=organization_id&id=eq.0939eb20-ed96-4e40-816e-5546107b81af "HTTP/1.1 200 OK"
+2025-03-05 14:04:00,598 - root - INFO - app.py:255 - Getting validation rules for organization: 7fe1961b-8ac6-4cbb-89b3-187f36f489bd, table: employees
+2025-03-05 14:04:00,620 - root - INFO - supabase_validation_manager.py:54 - Getting validation rules for org 7fe1961b-8ac6-4cbb-89b3-187f36f489bd, table employees
+2025-03-05 14:04:00,749 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/rest/v1/validation_rules?select=%2A&organization_id=eq.7fe1961b-8ac6-4cbb-89b3-187f36f489bd&table_name=eq.employees "HTTP/1.1 200 OK"
+2025-03-05 14:04:00,779 - root - INFO - app.py:257 - Retrieved 0 validation rules
+2025-03-05 14:04:00,888 - root - DEBUG - app.py:258 - Rules content: []
+2025-03-05 14:04:00,926 - werkzeug - INFO - _internal.py:224 - 127.0.0.1 - - [05/Mar/2025 14:04:00] "GET /api/validations?table=employees HTTP/1.1" 200 -
+2025-03-05 14:04:01,875 - supabase_manager - INFO - supabase_manager.py:33 - Supabase client initialized
+2025-03-05 14:04:02,112 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/rest/v1/profiles?select=organization_id&id=eq.0939eb20-ed96-4e40-816e-5546107b81af "HTTP/1.1 200 OK"
+2025-03-05 14:04:02,124 - root - INFO - app.py:255 - Getting validation rules for organization: 7fe1961b-8ac6-4cbb-89b3-187f36f489bd, table: employees
+2025-03-05 14:04:02,156 - root - INFO - supabase_validation_manager.py:54 - Getting validation rules for org 7fe1961b-8ac6-4cbb-89b3-187f36f489bd, table employees
+2025-03-05 14:04:02,282 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/rest/v1/validation_rules?select=%2A&organization_id=eq.7fe1961b-8ac6-4cbb-89b3-187f36f489bd&table_name=eq.employees "HTTP/1.1 200 OK"
+2025-03-05 14:04:02,333 - root - INFO - app.py:257 - Retrieved 0 validation rules
+2025-03-05 14:04:02,409 - root - DEBUG - app.py:258 - Rules content: []
+2025-03-05 14:04:02,486 - werkzeug - INFO - _internal.py:224 - 127.0.0.1 - - [05/Mar/2025 14:04:02] "GET /api/validations?table=employees HTTP/1.1" 200 -
+2025-03-05 14:04:02,938 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/auth/v1/user "HTTP/1.1 200 OK"
+2025-03-05 14:04:02,953 - root - INFO - app.py:127 - Token valid for user: 0939eb20-ed96-4e40-816e-5546107b81af
+2025-03-05 14:04:04,393 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/auth/v1/user "HTTP/1.1 200 OK"
+2025-03-05 14:04:04,398 - root - INFO - app.py:127 - Token valid for user: 0939eb20-ed96-4e40-816e-5546107b81af
+2025-03-05 14:04:04,662 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/auth/v1/user "HTTP/1.1 200 OK"
+2025-03-05 14:04:04,663 - root - INFO - app.py:127 - Token valid for user: 0939eb20-ed96-4e40-816e-5546107b81af
+2025-03-05 14:04:07,059 - supabase_manager - INFO - supabase_manager.py:33 - Supabase client initialized
+2025-03-05 14:04:07,254 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/rest/v1/profiles?select=organization_id&id=eq.0939eb20-ed96-4e40-816e-5546107b81af "HTTP/1.1 200 OK"
+2025-03-05 14:04:07,255 - root - INFO - app.py:255 - Getting validation rules for organization: 7fe1961b-8ac6-4cbb-89b3-187f36f489bd, table: employees
+2025-03-05 14:04:07,255 - root - INFO - supabase_validation_manager.py:54 - Getting validation rules for org 7fe1961b-8ac6-4cbb-89b3-187f36f489bd, table employees
+2025-03-05 14:04:07,358 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/rest/v1/validation_rules?select=%2A&organization_id=eq.7fe1961b-8ac6-4cbb-89b3-187f36f489bd&table_name=eq.employees "HTTP/1.1 200 OK"
+2025-03-05 14:04:07,360 - root - INFO - app.py:257 - Retrieved 0 validation rules
+2025-03-05 14:04:07,361 - root - DEBUG - app.py:258 - Rules content: []
+2025-03-05 14:04:07,369 - werkzeug - INFO - _internal.py:224 - 127.0.0.1 - - [05/Mar/2025 14:04:07] "GET /api/validations?table=employees HTTP/1.1" 200 -
+2025-03-05 14:04:08,357 - supabase_manager - INFO - supabase_manager.py:33 - Supabase client initialized
+2025-03-05 14:04:08,550 - supabase_manager - INFO - supabase_manager.py:33 - Supabase client initialized
+2025-03-05 14:04:08,552 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/rest/v1/profiles?select=organization_id&id=eq.0939eb20-ed96-4e40-816e-5546107b81af "HTTP/1.1 200 OK"
+2025-03-05 14:04:08,553 - root - INFO - app.py:255 - Getting validation rules for organization: 7fe1961b-8ac6-4cbb-89b3-187f36f489bd, table: employees
+2025-03-05 14:04:08,554 - root - INFO - supabase_validation_manager.py:54 - Getting validation rules for org 7fe1961b-8ac6-4cbb-89b3-187f36f489bd, table employees
+2025-03-05 14:04:08,651 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/rest/v1/validation_rules?select=%2A&organization_id=eq.7fe1961b-8ac6-4cbb-89b3-187f36f489bd&table_name=eq.employees "HTTP/1.1 200 OK"
+2025-03-05 14:04:08,652 - root - INFO - app.py:257 - Retrieved 0 validation rules
+2025-03-05 14:04:08,653 - root - DEBUG - app.py:258 - Rules content: []
+2025-03-05 14:04:08,659 - werkzeug - INFO - _internal.py:224 - 127.0.0.1 - - [05/Mar/2025 14:04:08] "GET /api/validations?table=employees HTTP/1.1" 200 -
+2025-03-05 14:04:08,737 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/rest/v1/profiles?select=organization_id&id=eq.0939eb20-ed96-4e40-816e-5546107b81af "HTTP/1.1 200 OK"
+2025-03-05 14:04:08,739 - root - INFO - app.py:255 - Getting validation rules for organization: 7fe1961b-8ac6-4cbb-89b3-187f36f489bd, table: employees
+2025-03-05 14:04:08,740 - root - INFO - supabase_validation_manager.py:54 - Getting validation rules for org 7fe1961b-8ac6-4cbb-89b3-187f36f489bd, table employees
+2025-03-05 14:04:08,840 - httpx._client - DEBUG - _client.py:1022 - HTTP Request: GET https://aahlbynwdjqboucpjfoo.supabase.co/rest/v1/validation_rules?select=%2A&organization_id=eq.7fe1961b-8ac6-4cbb-89b3-187f36f489bd&table_name=eq.employees "HTTP/1.1 200 OK"
+2025-03-05 14:04:08,841 - root - INFO - app.py:257 - Retrieved 0 validation rules
+2025-03-05 14:04:08,842 - root - DEBUG - app.py:258 - Rules content: []
+2025-03-05 14:04:08,848 - werkzeug - INFO - _internal.py:224 - 127.0.0.1 - - [05/Mar/2025 14:04:08] "GET /api/validations?table=employees HTTP/1.1" 200 -

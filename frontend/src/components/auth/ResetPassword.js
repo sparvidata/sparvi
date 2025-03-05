@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
-import { supabase } from '../../lib/supabase';
+import AuthHandler from '../../auth/AuthHandler';
 import './AuthPages.css';
 
 function ResetPasswordPage() {
@@ -76,10 +76,8 @@ function ResetPasswordPage() {
     setIsSubmitting(true);
 
     try {
-      // Use the access token from the URL to update the password
-      const { error } = await supabase.auth.updateUser({
-        password: password
-      });
+      // Use the AuthHandler to update the password
+      const { data, error } = await AuthHandler.updatePassword(password);
 
       if (error) throw error;
 

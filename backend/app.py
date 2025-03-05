@@ -470,6 +470,108 @@ def update_validation(current_user, organization_id, rule_id):
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
+
+@app.route("/api/setup-user", methods=["POST"])
+def setup_user():
+    data = request.get_json()
+
+    user_id = data.get("user_id")
+    email = data.get("email")
+    first_name = data.get("first_name", "")
+    last_name = data.get("last_name", "")
+    org_name = data.get("organization_name") or f"{first_name or email.split('@')[0]}'s Organization"
+
+    if not user_id or not email:
+        logger.error(f"Missing required fields for setup_user: user_id={user_id}, email={email}")
+        return jsonify({"error": "Missing required fields"}), 400
+
+    try:
+        # Use service role key for admin privileges
+        url = os.getenv("SUPABASE_URL")
+        key = os.getenv("SUPABASE_SERVICE_KEY")
+
+        if not url or not key:
+            logger.error("Missing Supabase configuration")
+            return jsonify({"error": "Server configuration error"}), 500
+
+        supabase_client = create_client(url, key)
+
+        # Check if profile exists
+        profile_check = supabase_client.table("profiles").select("*").eq("id", user_id).execute()
+
+        if profile_check.data and len(profile_check.data) > 0:
+            logger.info(f"User already has a profile: {profile_check.data[0]}")
+
+            # Check if organization exists
+            if profile_check.data[0].get("organization_id"):
+                org_id = profile_check.data[0].get("organization_id")
+                org_check = supabase_client.table("organizations").select("*").eq("id", org_id).execute()
+
+                if org_check.data and len(org_check.data) > 0:
+                    logger.info(f"User has an organization: {org_check.data[0]}")
+                    return jsonify({"success": True, "message": "User already set up"})
+
+                logger.info(f"Organization {org_id} referenced by profile doesn't exist. Creating new organization...")
+
+        # Create organization
+        logger.info(f"Creating organization: {org_name}")
+
+        try:
+            org_response = supabase_client.table("organizations").insert({"name": org_name}).execute()
+
+            if not org_response.data or len(org_response.data) == 0:
+                logger.error("Failed to create organization: No data returned")
+                logger.error(f"Response: {org_response}")
+                return jsonify({"error": "Failed to create organization"}), 500
+
+            org_id = org_response.data[0]["id"]
+            logger.info(f"Created organization with ID: {org_id}")
+
+            # Create or update profile
+            if profile_check.data and len(profile_check.data) > 0:
+                logger.info(f"Updating existing profile with org_id: {org_id}")
+                profile_response = supabase_client.table("profiles").update({
+                    "organization_id": org_id,
+                    "first_name": first_name,
+                    "last_name": last_name
+                }).eq("id", user_id).execute()
+            else:
+                logger.info(f"Creating new profile for user: {user_id}")
+                profile_response = supabase_client.table("profiles").insert({
+                    "id": user_id,
+                    "email": email,
+                    "first_name": first_name,
+                    "last_name": last_name,
+                    "organization_id": org_id,
+                    "role": "admin"
+                }).execute()
+
+            if not profile_response.data or len(profile_response.data) == 0:
+                logger.error("Failed to create/update profile: No data returned")
+                logger.error(f"Response: {profile_response}")
+                return jsonify({"error": "Failed to create/update profile"}), 500
+
+            logger.info(f"Profile operation successful: {profile_response.data[0]}")
+
+            # Verify success
+            verification_profile = supabase_client.table("profiles").select("*").eq("id", user_id).execute()
+            if verification_profile.data and len(verification_profile.data) > 0:
+                logger.info(
+                    f"Verification successful - user now has profile with organization: {verification_profile.data[0]}")
+            else:
+                logger.warning("Verification failed - profile still not visible")
+
+            return jsonify({"success": True})
+
+        except Exception as e:
+            logger.error(f"Error in organization/profile operation: {str(e)}")
+            return jsonify({"error": str(e)}), 500
+
+    except Exception as e:
+        logger.error(f"Error in setup-user: {str(e)}")
+        logger.error(traceback.format_exc())
+        return jsonify({"error": str(e)}), 500
+
 if __name__ == "__main__":
     # In production, ensure you run with HTTPS (via a reverse proxy or WSGI server with SSL configured)
     app.run(debug=True)

@@ -6,6 +6,7 @@ import { supabase } from '../lib/supabase';
 class AuthHandler {
   constructor() {
     this.supabase = supabase;
+    this.refreshInterval = null;
   }
 
   /**
@@ -51,11 +52,106 @@ class AuthHandler {
   }
 
   /**
+   * Sign up a new user with email and password
+   * @param {string} email - User email
+   * @param {string} password - User password
+   * @param {object} metadata - Additional user metadata
+   * @returns {Promise<Object>} Result object with data and/or error
+   */
+  async signUp(email, password, metadata = {}) {
+    const { data, error } = await this.supabase.auth.signUp({
+      email,
+      password,
+      options: { data: metadata }
+    });
+
+    return { data, error };
+  }
+
+  /**
+   * Send a password reset email
+   * @param {string} email - User email
+   * @returns {Promise<Object>} Result object with data and/or error
+   */
+  async resetPassword(email) {
+    const { data, error } = await this.supabase.auth.resetPasswordForEmail(email, {
+      redirectTo: `${window.location.origin}/reset-password`,
+    });
+
+    return { data, error };
+  }
+
+  /**
+   * Update user's password
+   * @param {string} password - New password
+   * @returns {Promise<Object>} Result object with data and/or error
+   */
+  async updatePassword(password) {
+    const { data, error } = await this.supabase.auth.updateUser({
+      password
+    });
+
+    return { data, error };
+  }
+
+  /**
+   * Update user profile
+   * @param {object} updates - Profile updates
+   * @returns {Promise<Object>} Result object with data and/or error
+   */
+  async updateProfile(updates) {
+    const { data: userData, error: userError } = await this.supabase.auth.updateUser({
+      data: updates
+    });
+
+    if (userError) return { data: null, error: userError };
+
+    const user = userData.user;
+
+    // Also update the profiles table
+    const { data, error } = await this.supabase
+      .from('profiles')
+      .update(updates)
+      .eq('id', user.id);
+
+    return { data: data || userData, error };
+  }
+
+  /**
+   * Create a new organization and associate it with the user
+   * @param {string} userId - User ID
+   * @param {string} name - Organization name
+   * @returns {Promise<Object>} Result object with data and/or error
+   */
+  async createOrganization(userId, name) {
+    // Create organization
+    const { data: orgData, error: orgError } = await this.supabase
+      .from('organizations')
+      .insert([{ name }])
+      .select();
+
+    if (orgError) return { data: null, error: orgError };
+
+    if (!orgData || orgData.length === 0) {
+      return { data: null, error: { message: 'Failed to create organization' } };
+    }
+
+    // Update user profile with organization ID
+    const { data, error } = await this.supabase
+      .from('profiles')
+      .update({ organization_id: orgData[0].id })
+      .eq('id', userId);
+
+    return { data: orgData[0], error };
+  }
+
+  /**
    * Sign out the current user
    * @returns {Promise<void>}
    */
   async signOut() {
     await this.supabase.auth.signOut();
+    this.clearSessionRefresh();
   }
 
   /**
@@ -72,6 +168,9 @@ class AuthHandler {
    * This will refresh the session before it expires
    */
   setupSessionRefresh() {
+    // Clear any existing interval first
+    this.clearSessionRefresh();
+
     // Check every minute if the token needs to be refreshed
     this.refreshInterval = setInterval(async () => {
       const session = await this.getSession();
