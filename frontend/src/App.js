@@ -1,12 +1,16 @@
 import React, { useState, useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import AuthHandler from './auth/AuthHandler';
-import Login from './components/Login';
+import Login from './components/auth/Login';
+// import SignupPage from './components/auth/SignupPage';
+// import ForgotPasswordPage from './components/auth/ForgotPasswordPage';
+// import ResetPasswordPage from './components/auth/ResetPasswordPage';
 import Dashboard from './components/Dashboard';
 import Documentation from './components/Documentation';
 import Header from './components/Header';
 import TestConnection from './components/TestConnection';
 import './colors.css';
+import './components/auth/AuthPages.css'
 
 function App() {
   const [session, setSession] = useState(null);
