@@ -7,7 +7,7 @@ import sys
 from functools import wraps
 from dotenv import load_dotenv
 from flask_cors import CORS
-from sqlalchemy import inspect, create_engine
+from sqlalchemy import inspect, create_engine, text
 from supabase import create_client, Client
 from sparvi.profiler.profile_engine import profile_table
 from sparvi.validations.default_validations import get_default_validations
@@ -205,6 +205,10 @@ def login():
 def get_profile(current_user, organization_id):
     connection_string = request.args.get("connection_string", os.getenv("DEFAULT_CONNECTION_STRING"))
     table_name = request.args.get("table", "employees")
+
+    # Explicitly set include_samples to false - no row data in profiles
+    include_samples = False  # Override to always be false regardless of request
+
     try:
         logger.info(f"========== PROFILING STARTED ==========")
         logger.info(f"Profiling table {table_name} with connection {connection_string}")
@@ -218,8 +222,8 @@ def get_profile(current_user, organization_id):
         previous_profile = profile_history.get_latest_profile(organization_id, table_name)
         logger.info(f"Previous profile found: {previous_profile is not None}")
 
-        # Run the profiler using the sparvi-core package
-        result = profile_table(connection_string, table_name, previous_profile)
+        # Run the profiler using the sparvi-core package - with no samples
+        result = profile_table(connection_string, table_name, previous_profile, include_samples=include_samples)
         result["timestamp"] = datetime.datetime.now().isoformat()
         logger.info(f"Profile completed with {len(result)} keys")
 
@@ -735,6 +739,81 @@ def update_organization(current_user, organization_id):
     except Exception as e:
         logger.error(f"Error updating organization: {str(e)}")
         return jsonify({"error": str(e)}), 500
+
+
+# Add this new endpoint for data preview
+@app.route("/api/preview", methods=["GET"])
+@token_required
+def get_data_preview(current_user, organization_id):
+    """Get a preview of data without storing it"""
+    connection_string = request.args.get("connection_string", os.getenv("DEFAULT_CONNECTION_STRING"))
+    table_name = request.args.get("table")
+
+    if not connection_string or not table_name:
+        return jsonify({"error": "Connection string and table name are required"}), 400
+
+    # Get preview settings
+    supabase_mgr = SupabaseManager()
+    org_settings = supabase_mgr.get_organization_settings(organization_id)
+    preview_settings = org_settings.get("preview_settings", {})
+
+    # Check if previews are enabled
+    if not preview_settings.get("enable_previews", True):
+        return jsonify({"error": "Data previews are disabled for your organization"}), 403
+
+    # Get maximum allowed rows (system limit and org-specific limit)
+    system_max_rows = int(os.getenv("MAX_PREVIEW_ROWS", 50))
+    org_max_rows = int(preview_settings.get("max_preview_rows", system_max_rows))
+    max_rows = min(
+        int(request.args.get("max_rows", org_max_rows)),
+        org_max_rows,
+        system_max_rows
+    )
+
+    # Get restricted columns for this table
+    restricted_columns = preview_settings.get("restricted_preview_columns", {}).get(table_name, [])
+
+    try:
+        # Create engine
+        engine = create_engine(connection_string)
+        inspector = inspect(engine)
+
+        # Get table columns
+        table_columns = [col['name'] for col in inspector.get_columns(table_name)]
+
+        # Filter restricted columns
+        allowed_columns = [col for col in table_columns if col not in restricted_columns]
+
+        if not allowed_columns:
+            return jsonify({"error": "No viewable columns available for this table"}), 403
+
+        # Log access (without storing the actual data)
+        sanitized_conn = supabase_mgr._sanitize_connection_string(connection_string)
+        supabase_mgr.log_preview_access(current_user, organization_id, table_name, sanitized_conn)
+
+        # Construct and execute the query
+        query = f"SELECT {', '.join(allowed_columns)} FROM {table_name} LIMIT {max_rows}"
+
+        with engine.connect() as conn:
+            result = conn.execute(text(query))
+            preview_data = [dict(zip(result.keys(), row)) for row in result.fetchall()]
+
+        logger.info(f"Preview data fetched for {table_name}, returned {len(preview_data)} rows")
+
+        # Return the data directly (not stored)
+        return jsonify({
+            "preview_data": preview_data,
+            "row_count": len(preview_data),
+            "preview_max": max_rows,
+            "restricted_columns": restricted_columns if restricted_columns else [],
+            "all_columns": table_columns
+        })
+
+    except Exception as e:
+        logger.error(f"Error generating data preview: {str(e)}")
+        logger.error(traceback.format_exc())
+        return jsonify({"error": f"Failed to generate preview: {str(e)}"}), 500
+
 
 if __name__ == "__main__":
     # In production, ensure you run with HTTPS (via a reverse proxy or WSGI server with SSL configured)

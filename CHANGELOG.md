@@ -2,6 +2,16 @@
 
 All notable changes to Sparvi will be documented in this file.
 
+## [0.4.2] - 2025-03-07
+### Added
+- None
+
+### Changed
+- Updating backend to not store data previews in supabase
+
+### Fixed
+- None
+
 ## [0.4.1] - 2025-03-06
 ### Added
 - Admin dashboard

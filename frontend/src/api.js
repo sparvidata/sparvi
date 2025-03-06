@@ -205,6 +205,47 @@ export const updateOrganization = async (orgData) => {
   return response.data;
 };
 
+export const fetchDataPreview = async (connectionString, tableName, maxRows = 50) => {
+  console.log('Fetching data preview for:', { connectionString, tableName, maxRows });
+
+  try {
+    const response = await apiClient.get('/api/preview', {
+      params: {
+        connection_string: connectionString,
+        table: tableName,
+        max_rows: maxRows
+      }
+    });
+
+    console.log('Preview data response:', response.data);
+    return response.data;
+  } catch (error) {
+    console.error('Error fetching preview data:', error);
+    if (error.response) {
+      console.error('Error details:', error.response.data);
+    }
+    throw error;
+  }
+};
+
+// Update the organization settings function
+export const updateOrganizationSettings = async (orgData) => {
+  const response = await apiClient.put('/api/admin/organization', orgData);
+  return response.data;
+};
+
+// Add a function to get preview settings
+export const getPreviewSettings = async () => {
+  const response = await apiClient.get('/api/admin/organization/preview-settings');
+  return response.data;
+};
+
+// Add a function to update preview settings
+export const updatePreviewSettings = async (previewSettings) => {
+  const response = await apiClient.put('/api/admin/organization/preview-settings', previewSettings);
+  return response.data;
+};
+
 // Export the default functions
 export default {
   fetchProfile,
@@ -224,5 +265,9 @@ export default {
   inviteUser,
   removeUser,
   fetchOrganization,
-  updateOrganization
+  updateOrganization,
+  fetchDataPreview,
+  updateOrganizationSettings,
+  getPreviewSettings,
+  updatePreviewSettings
 };

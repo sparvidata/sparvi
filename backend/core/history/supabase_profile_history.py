@@ -48,18 +48,30 @@ class SupabaseProfileHistoryManager:
         self.supabase = SupabaseManager()
         logger.info("Supabase Profile History Manager initialized")
 
+    # Update the save_profile method to ensure no sample data is stored
     def save_profile(self, user_id: str, organization_id: str, profile: Dict, connection_string: str) -> int:
         """
-        Save a profile to Supabase and manage history retention
-        Returns the run_id of the saved profile
+        Save a profile to Supabase and manage history retention - without row-level data
         """
         try:
             logger.info(f"Attempting to save profile for table {profile['table']} to Supabase")
 
-            # Convert datetime objects to ISO strings in the profile
-            import json
-            import datetime
+            # Create a sanitized copy of the profile without any row-level data
+            sanitized_profile = profile.copy()
 
+            # Explicitly remove any sample data if present
+            if "samples" in sanitized_profile:
+                logger.info("Removing sample data before storage")
+                del sanitized_profile["samples"]
+
+            # Also remove any other potential row-level data
+            for key in list(sanitized_profile.keys()):
+                # Look for keys that might contain row data
+                if key in ['sample_data', 'rows', 'data_examples', 'raw_data', 'source_rows']:
+                    logger.info(f"Removing potential row data field: {key}")
+                    del sanitized_profile[key]
+
+            # Convert datetime objects to ISO strings in the profile
             class DateTimeEncoder(json.JSONEncoder):
                 def default(self, obj):
                     if isinstance(obj, (datetime.datetime, datetime.date)):
@@ -67,15 +79,18 @@ class SupabaseProfileHistoryManager:
                     return super().default(obj)
 
             # Create a JSON-safe copy of the profile
-            serialized_profile = json.loads(json.dumps(profile, cls=DateTimeEncoder))
+            serialized_profile = json.loads(json.dumps(sanitized_profile, cls=DateTimeEncoder))
+
+            # Sanitize connection string to remove credentials
+            sanitized_connection = self.supabase._sanitize_connection_string(connection_string)
 
             # Prepare data for saving
             data = {
                 "organization_id": organization_id,
                 "profile_id": user_id,
-                "connection_string": connection_string,
-                "table_name": profile['table'],
-                "data": serialized_profile  # Use the serialized version
+                "connection_string": sanitized_connection,
+                "table_name": sanitized_profile['table'],
+                "data": serialized_profile  # Use the sanitized version
             }
 
             # Create a direct Supabase client

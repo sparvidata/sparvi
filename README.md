@@ -242,10 +242,6 @@ Request body:
 GET /api/history?table=employees&periods=10
 ```
 
-## Contributing
-
-We welcome contributions! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for details on how to submit pull requests, report issues, and suggest enhancements.
-
 ## License
 
 The Community Edition of Sparvi is licensed under the Apache License 2.0 - see the [LICENSE](LICENSE) file for details.

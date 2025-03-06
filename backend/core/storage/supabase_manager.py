@@ -1,4 +1,6 @@
+import datetime
 import os
+import secrets
 from typing import Dict, List, Any, Optional, Union
 import json
 from dotenv import load_dotenv
@@ -512,4 +514,47 @@ class SupabaseManager:
             return bool(response.data)
         except Exception as e:
             logger.error(f"Error updating organization: {str(e)}")
+            return False
+
+    def log_preview_access(self, user_id: str, organization_id: str, table_name: str,
+                           connection_string: str = None):
+        """Log preview access metadata without storing the actual data"""
+        try:
+            preview_log = {
+                "user_id": user_id,
+                "organization_id": organization_id,
+                "table_name": table_name,
+                "connection_string": connection_string,  # Already sanitized
+                "timestamp": datetime.datetime.now().isoformat()
+            }
+
+            # Insert access log
+            response = self.supabase.table("preview_access_logs").insert(preview_log).execute()
+            return response.data[0]["id"] if response.data and len(response.data) > 0 else None
+        except Exception as e:
+            logger.error(f"Error logging preview access: {str(e)}")
+            return None
+
+    def get_organization_settings(self, organization_id: str) -> Dict:
+        """Get organization settings including preview restrictions"""
+        try:
+            response = self.supabase.table("organizations").select("settings").eq("id",
+                                                                                  organization_id).single().execute()
+
+            if response.data and "settings" in response.data:
+                return response.data["settings"] or {}
+
+            return {}
+        except Exception as e:
+            logger.error(f"Error getting organization settings: {str(e)}")
+            return {}
+
+    def update_organization_settings(self, organization_id: str, settings: Dict) -> bool:
+        """Update organization settings"""
+        try:
+            response = self.supabase.table("organizations").update({"settings": settings}).eq("id",
+                                                                                              organization_id).execute()
+            return bool(response.data)
+        except Exception as e:
+            logger.error(f"Error updating organization settings: {str(e)}")
             return False

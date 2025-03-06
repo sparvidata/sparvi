@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { directFetchProfile } from '../profile-api';
 import { fetchProfileHistory } from '../api';
 import TrendChart from './TrendChart';
@@ -9,6 +9,8 @@ import AlertsPanel from './AlertsPanel';
 import ConnectionForm from './ConnectionForm';
 import HistoryTab from './HistoryTab';
 import { Tabs, Tab } from 'react-bootstrap';
+import { fetchDataPreview } from '../api';
+
 
 function Dashboard({ onStoreRefreshHandler }) {
   const [profileData, setProfileData] = useState(null);
@@ -23,6 +25,14 @@ function Dashboard({ onStoreRefreshHandler }) {
   );
   const [tableName, setTableName] = useState(localStorage.getItem('tableName') || "employees");
   const [activeTab, setActiveTab] = useState('overview');
+  const [sampleData, setSampleData] = useState([]);
+  const [loadingSamples, setLoadingSamples] = useState(false);
+  const [previewError, setPreviewError] = useState(null);
+  const initialLoadComplete = useRef(false);
+  const [previewSettings, setPreviewSettings] = useState({
+    maxRows: 50,
+    restrictedColumns: []
+  });
 
   console.log("Dashboard rendered with:", { connectionString, tableName });
 
@@ -33,9 +43,43 @@ function Dashboard({ onStoreRefreshHandler }) {
     setSelectedProfileData(profileHistory[index]);
   };
 
+  // Function to fetch sample data on-demand
+  const fetchSampleData = async () => {
+    if (!connectionString || !tableName) {
+      setPreviewError("Connection string and table name are required");
+      return;
+    }
+
+    try {
+      setLoadingSamples(true);
+      setPreviewError(null);
+
+      const response = await fetchDataPreview(
+        connectionString,
+        tableName,
+        previewSettings.maxRows
+      );
+
+      setSampleData(response.preview_data || []);
+
+      // Update preview settings
+      setPreviewSettings({
+        maxRows: response.preview_max || 50,
+        restrictedColumns: response.restricted_columns || [],
+        allColumns: response.all_columns || []
+      });
+    } catch (error) {
+      console.error("Error fetching sample data:", error);
+      setPreviewError(error.response?.data?.error || "Failed to load data preview");
+      setSampleData([]);
+    } finally {
+      setLoadingSamples(false);
+    }
+  };
+
   // Define the profile data handler
-  const handleProfileData = async () => {
-    console.log("Profile Data button clicked");
+  const handleProfileData = useCallback(async () => {
+    console.log("Profile Data function called");
     if (connectionString && tableName) {
       console.log("Profiling data for:", { connectionString, tableName });
       setProfileData(null);
@@ -63,7 +107,44 @@ function Dashboard({ onStoreRefreshHandler }) {
       console.log("Cannot profile: missing connection string or table name");
       setError("Connection string and table name are required to profile data");
     }
-  };
+  }, [connectionString, tableName]); // Dependencies
+
+  // Initial load - automatically load profile data
+  useEffect(() => {
+    // Get connection info from localStorage
+    const storedConnString = localStorage.getItem('connectionString');
+    const storedTable = localStorage.getItem('tableName');
+
+    if (storedConnString && storedTable) {
+      setConnectionString(storedConnString);
+      setTableName(storedTable);
+
+      // Only load on first render to prevent loading twice in strict mode
+      if (!initialLoadComplete.current) {
+        console.log("Initial load - automatically loading profile data");
+        initialLoadComplete.current = true;
+
+        // Small delay to ensure state is updated
+        setTimeout(() => {
+          handleProfileData();
+        }, 100);
+      }
+    } else {
+      setLoading(false);
+    }
+
+    // Still load profile history if available
+    if (storedTable) {
+      loadProfileHistory(storedTable);
+    }
+  }, []); // Empty dependencies array - run once on mount
+
+  // Share the profile handler with the parent component if needed
+  useEffect(() => {
+    if (onStoreRefreshHandler) {
+      onStoreRefreshHandler(handleProfileData);
+    }
+  }, [onStoreRefreshHandler, handleProfileData]);
 
   // Function to load profile history
   const loadProfileHistory = async (table) => {
@@ -709,36 +790,96 @@ function Dashboard({ onStoreRefreshHandler }) {
             </Tab>
 
             <Tab eventKey="samples" title="Sample Data">
-              {/* Sample Data */}
-              {displayData.samples && displayData.samples.length > 0 && (
-                <div className="card mb-4 shadow-sm">
-                  <div className="card-header">
-                    <h5 className="mb-0">Sample Data (Top 100)</h5>
-                  </div>
-                  <div className="card-body">
-                    <div className="table-responsive">
-                      <table className="table table-striped table-sm table-hover">
-                        <thead>
-                          <tr>
-                            {Object.keys(displayData.samples[0]).map((key) => (
-                              <th key={key}>{key}</th>
-                            ))}
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {displayData.samples.map((row, idx) => (
-                            <tr key={idx}>
-                              {Object.values(row).map((value, index) => (
-                                <td key={index}>{value !== null ? value.toString() : 'NULL'}</td>
-                              ))}
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
+              <div className="card mb-4 shadow-sm">
+                <div className="card-header d-flex justify-content-between align-items-center">
+                  <h5 className="mb-0">Sample Data Preview</h5>
+                  <div>
+                    <select
+                      className="form-select form-select-sm me-2 d-inline-block"
+                      style={{ width: 'auto' }}
+                      value={previewSettings.maxRows}
+                      onChange={(e) => setPreviewSettings({...previewSettings, maxRows: parseInt(e.target.value)})}
+                    >
+                      <option value="10">10 rows</option>
+                      <option value="25">25 rows</option>
+                      <option value="50">50 rows</option>
+                    </select>
+                    <button
+                      className="btn btn-sm btn-primary"
+                      onClick={fetchSampleData}
+                      disabled={loadingSamples}
+                    >
+                      {loadingSamples ? (
+                        <>
+                          <span className="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
+                          Loading...
+                        </>
+                      ) : (
+                        <>
+                          <i className="bi bi-eye me-1"></i> Load Preview
+                        </>
+                      )}
+                    </button>
                   </div>
                 </div>
-              )}
+                <div className="card-body">
+                  {previewError && (
+                    <div className="alert alert-danger">
+                      <i className="bi bi-exclamation-triangle-fill me-2"></i>
+                      {previewError}
+                    </div>
+                  )}
+
+                  {previewSettings.restrictedColumns && previewSettings.restrictedColumns.length > 0 && (
+                    <div className="alert alert-warning">
+                      <i className="bi bi-shield-exclamation me-2"></i>
+                      <strong>Restricted columns:</strong> Some columns are restricted from preview by your organization settings.
+                      <div className="mt-1">
+                        <span className="badge bg-secondary me-1">
+                          {previewSettings.restrictedColumns.join('</span> <span className="badge bg-secondary me-1">')}
+                        </span>
+                      </div>
+                    </div>
+                  )}
+
+                  {!sampleData.length && !loadingSamples && !previewError ? (
+                    <div className="alert alert-info">
+                      <i className="bi bi-info-circle me-2"></i>
+                      Click "Load Preview" to see sample data. Data previews are not stored and are generated on-demand.
+                    </div>
+                  ) : (
+                    <div className="table-responsive">
+                      {sampleData.length > 0 && (
+                        <table className="table table-striped table-sm table-hover">
+                          <thead>
+                            <tr>
+                              {Object.keys(sampleData[0]).map((key) => (
+                                <th key={key}>{key}</th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {sampleData.map((row, idx) => (
+                              <tr key={idx}>
+                                {Object.values(row).map((value, index) => (
+                                  <td key={index}>{value !== null ? String(value) : 'NULL'}</td>
+                                ))}
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      )}
+                    </div>
+                  )}
+
+                  <div className="mt-3 small text-muted">
+                    <i className="bi bi-shield-lock me-1"></i>
+                    <strong>Privacy Notice:</strong> Data previews are generated on-demand and never stored in our system.
+                    Maximum {previewSettings.maxRows} rows are displayed for privacy and performance. Preview access is logged
+                    for audit purposes, but the actual data viewed is not recorded.
+                  </div>
+                </div>
+              </div>
             </Tab>
           </Tabs>
         </>
