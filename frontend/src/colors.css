@@ -1,20 +1,39 @@
-/* Custom CSS variables for your color scheme */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap');
+
+body {
+  font-family: 'Inter', system-ui, sans-serif;
+}
+
 :root {
-  --primary-blue: #0051ba;
-  --primary-blue-dark: #004097;
-  --primary-blue-light: #3378d1;
-  --secondary-crimson: #e8000d;
-  --secondary-crimson-dark: #c2000b;
-  --secondary-crimson-light: #ff3341;
+  --primary-blue: #4851f4;
+  --primary-blue-dark: #3a41d6;
+  --primary-blue-light: #5a62f5;
+  --secondary-crimson: #7c3aed;
+  --secondary-crimson-dark: #6527da;
+  --secondary-crimson-light: #8f58f4;
+  --brand-tertiary: #f36c3d;
   --background-white: #ffffff;
   --background-light: #f8f9fa;
   --text-dark: #212529;
   --text-light: #f8f9fa;
   --border-light: #dee2e6;
+  --dark-bg: #0f172a;
+  --dark-surface: #1e293b;
+}
+
+/* Dark mode colors - can be enabled later */
+[data-theme='dark'] {
+  --foreground-rgb: 255, 255, 255;
+  --background-start-rgb: 15, 23, 42;
+  --background-end-rgb: 30, 41, 59;
 }
 
 /* Override Bootstrap primary color */
 .bg-primary {
+  background-color: var(--primary-blue) !important;
+}
+
+nav.bg-primary {
   background-color: var(--primary-blue) !important;
 }
 
@@ -64,57 +83,3 @@
   color: white;
 }
 
-/* Badge styles */
-.badge.bg-secondary-crimson {
-  background-color: var(--secondary-crimson) !important;
-}
-
-/* Card accents */
-.card .card-header.bg-secondary-crimson {
-  background-color: var(--secondary-crimson);
-  color: white;
-}
-
-.border-secondary-crimson {
-  border-color: var(--secondary-crimson) !important;
-}
-
-/* Alert styling */
-.alert-secondary-crimson {
-  background-color: rgba(232, 0, 13, 0.1);
-  border-color: rgba(232, 0, 13, 0.2);
-  color: var(--secondary-crimson);
-}
-
-/* Tab styling */
-.nav-tabs .nav-link.active.crimson-tab {
-  color: var(--secondary-crimson);
-  border-color: var(--border-light) var(--border-light) var(--secondary-crimson);
-  border-bottom-width: 3px;
-}
-
-/* Links */
-a.text-secondary-crimson {
-  color: var(--secondary-crimson);
-  text-decoration: none;
-}
-
-a.text-secondary-crimson:hover {
-  color: var(--secondary-crimson-dark);
-  text-decoration: underline;
-}
-
-/* Table highlights */
-.table .crimson-highlight {
-  background-color: rgba(232, 0, 13, 0.05);
-}
-
-/* Progress bars */
-.progress .progress-bar-crimson {
-  background-color: var(--secondary-crimson);
-}
-
-/* Spinners */
-.spinner-crimson {
-  color: var(--secondary-crimson);
-}
