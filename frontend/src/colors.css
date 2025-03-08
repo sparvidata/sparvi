@@ -42,19 +42,19 @@ nav.bg-primary {
 }
 
 .btn-primary {
-  background-color: var(--primary-blue);
-  border-color: var(--primary-blue-dark);
+  background-color: var(--primary-blue) !important;
+  border-color: var(--primary-blue-dark) !important;
 }
 
 .btn-primary:hover, .btn-primary:focus {
-  background-color: var(--primary-blue-dark);
-  border-color: var(--primary-blue-dark);
+  background-color: var(--primary-blue-dark) !important;
+  border-color: var(--primary-blue-dark) !important;
 }
 
 /* Add secondary crimson elements */
 .bg-secondary-crimson {
   background-color: var(--secondary-crimson) !important;
-  color: white;
+  color: white !important;
 }
 
 .text-secondary-crimson {
@@ -62,24 +62,116 @@ nav.bg-primary {
 }
 
 .btn-secondary-crimson {
-  background-color: var(--secondary-crimson);
-  border-color: var(--secondary-crimson-dark);
-  color: white;
+  background-color: var(--secondary-crimson) !important;
+  border-color: var(--secondary-crimson-dark) !important;
+  color: white !important;
 }
 
 .btn-secondary-crimson:hover, .btn-secondary-crimson:focus {
-  background-color: var(--secondary-crimson-dark);
-  border-color: var(--secondary-crimson-dark);
-  color: white;
+  background-color: var(--secondary-crimson-dark) !important;
+  border-color: var(--secondary-crimson-dark) !important;
+  color: white !important;
 }
 
 .btn-outline-secondary-crimson {
-  color: var(--secondary-crimson);
-  border-color: var(--secondary-crimson);
+  color: var(--secondary-crimson) !important;
+  border-color: var(--secondary-crimson) !important;
 }
 
 .btn-outline-secondary-crimson:hover, .btn-outline-secondary-crimson:focus {
-  background-color: var(--secondary-crimson);
-  color: white;
+  background-color: var(--secondary-crimson) !important;
+  color: white !important;
 }
 
+.btn-outline-primary {
+  color: var(--primary-blue) !important;
+  border-color: var(--primary-blue) !important;
+  background-color: transparent !important;
+}
+
+.btn-outline-primary:hover, .btn-outline-primary:focus {
+  color: white !important;
+  background-color: var(--primary-blue) !important;
+  border-color: var(--primary-blue) !important;
+}
+
+.card .card-header.bg-primary {
+  background-color: var(--primary-blue) !important;
+}
+
+/* Style for the tabs navigation */
+.nav-tabs {
+  border-bottom: 1px solid var(--border-light);
+}
+
+.nav-tabs .nav-link {
+  color: var(--text-dark);
+  border: none;
+  padding: 0.75rem 1rem;
+  margin-right: 0.5rem;
+  border-radius: 0;
+  transition: all 0.2s ease;
+}
+
+.nav-tabs .nav-link:hover {
+  color: var(--primary-blue);
+  border-bottom: 2px solid rgba(72, 81, 244, 0.3);
+}
+
+.nav-tabs .nav-link.active {
+  color: var(--primary-blue) !important;
+  font-weight: 500;
+  background-color: transparent !important;
+  border-top: none;
+  border-left: none;
+  border-right: none;
+  border-bottom: 2px solid var(--primary-blue) !important;
+}
+
+/* For tab content area */
+.tab-content {
+  padding-top: 1.5rem;
+}
+
+/* For card headers inside tabs */
+.tab-content .card-header {
+  background-color: #f8f9fa;
+  border-bottom: 1px solid var(--border-light);
+}
+
+.tab-content .card-header h5 {
+  color: var(--text-dark);
+  font-weight: 500;
+}
+
+/* Make sidebar background white instead of light gray */
+.sidebar.bg-light {
+  background-color: #ffffff !important;
+}
+
+/* Make Documentation heading black instead of muted */
+.sidebar-heading.text-muted {
+  color: #000000 !important;
+  font-weight: 500;
+  padding-left: 1rem !important; /* Consistent padding for header */
+}
+
+/* Make all documentation nav links black and indented */
+.sidebar .nav-link {
+  color: #000000 !important;
+  padding-left: 2rem !important; /* Indent the links */
+}
+
+/* Keep active link styled with a highlight similar to your example */
+.sidebar .nav-link.active {
+  color: var(--primary-blue) !important; /* Use your primary blue variable instead of black */
+  font-weight: 500;
+  background-color: rgba(72, 81, 244, 0.1) !important; /* Light blue background for active item */
+  border-radius: 0.375rem; /* Rounded corners (equivalent to rounded-md) */
+}
+
+/* Hover effect while keeping text black */
+.sidebar .nav-link:hover {
+  background-color: rgba(0, 0, 0, 0.03);
+  color: #000000;
+}

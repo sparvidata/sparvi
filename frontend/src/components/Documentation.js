@@ -57,7 +57,6 @@ function Documentation() {
                     to={`/docs/${key}`}
                     className={`nav-link ${page === key ? 'active' : ''}`}
                   >
-                    <i className={`bi ${pages[key].icon} me-2`}></i>
                     {pages[key].title}
                   </Link>
                 </li>
