@@ -229,7 +229,7 @@ function Dashboard({ onStoreRefreshHandler }) {
     <div className="container-fluid mt-3">
       <div className="d-flex justify-content-between align-items-center mb-4">
         <h2>
-          Sparvi Data Profiler
+          Data Profiler
         </h2>
         <div>
           <button className="btn btn-primary" onClick={handleProfileData} disabled={loading || !connectionString || !tableName}>

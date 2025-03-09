@@ -9,11 +9,11 @@ import Dashboard from './components/Dashboard';
 import Documentation from './components/Documentation';
 import Header from './components/Header';
 import TestConnection from './components/TestConnection';
-import './colors.css';
 import './components/auth/AuthPages.css'
 import AdminDashboard from './components/admin/AdminDashboard';
 import InvitePage from './components/auth/InvitePage';
 import DatabaseDebugger from './components/debug/DatabaseDebugger';
+import './colors.css';
 
 function App() {
   const [session, setSession] = useState(null);

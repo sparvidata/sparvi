@@ -72,6 +72,8 @@ backend/history.db
 
 # Frontend and Node
 node_modules/
+/.pnp
+.pnp.js
 frontend/build/
 frontend/dist/
 frontend/coverage/
@@ -79,6 +81,8 @@ frontend/.env.local
 frontend/.env.development.local
 frontend/.env.test.local
 frontend/.env.production.local
+/build
+/dist
 
 # Testing
 .coverage
@@ -87,6 +91,7 @@ htmlcov/
 nosetests.xml
 coverage.xml
 *.cover
+/coverage
 
 # Misc
 *.pid
@@ -94,6 +99,7 @@ coverage.xml
 *.pid.lock
 .env*
 !.env.example
+Thumbs.db
 
 # Environment variables and secrets
 .env.local
@@ -108,3 +114,7 @@ backend/.env
 .temp/
 tmp/
 temp/
+.cache/
+
+# Supabase
+.supabase/
