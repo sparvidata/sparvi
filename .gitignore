@@ -49,6 +49,7 @@ lerna-debug.log*
 supabase.log
 validations.log
 profile_history.log
+app.log
 
 # Database files
 backend/my_database.duckdb
