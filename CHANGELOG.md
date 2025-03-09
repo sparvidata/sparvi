@@ -2,6 +2,16 @@
 
 All notable changes to Sparvi will be documented in this file.
 
+## [0.4.3] - 2025-03-08
+### Added
+- None
+
+### Changed
+- Updating color scheme
+
+### Fixed
+- None
+
 ## [0.4.2] - 2025-03-07
 ### Added
 - None
