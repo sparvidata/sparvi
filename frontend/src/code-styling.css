@@ -1,0 +1,132 @@
+/* Code styling for syntax highlighting and code display */
+pre {
+  background-color: var(--dark-bg);
+  color: #e2e8f0;
+  padding: 1rem;
+  border-radius: 0.5rem;
+  overflow-x: auto;
+  margin: 1.5rem 0;
+}
+
+code {
+  background-color: #f1f5f9;
+  color: #0f172a;
+  font-family: 'Fira Code', Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
+  font-size: 0.875rem;
+  padding: 0.25rem 0.5rem;
+  border-radius: 0.25rem;
+}
+
+pre code {
+  background-color: transparent;
+  padding: 0;
+  font-size: 0.875rem;
+  line-height: 1.7;
+  color: inherit;
+}
+
+/* Code window for displaying examples */
+.code-window {
+  background-color: var(--dark-bg);
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.2);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  margin-bottom: 1.5rem;
+}
+
+.code-header {
+  background-color: var(--dark-surface);
+  padding: 12px 16px;
+  display: flex;
+  align-items: center;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.code-dot {
+  height: 12px;
+  width: 12px;
+  border-radius: 50%;
+  margin-right: 6px;
+}
+
+.code-dot-red {
+  background-color: #ff5f56;
+}
+
+.code-dot-yellow {
+  background-color: #ffbd2e;
+}
+
+.code-dot-green {
+  background-color: #27c93f;
+}
+
+.code-title {
+  margin-left: 8px;
+  font-size: 0.875rem;
+  color: rgba(255, 255, 255, 0.6);
+}
+
+.code-body {
+  padding: 16px;
+  font-family: 'Fira Code', Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
+  font-size: 14px;
+  line-height: 1.6;
+  overflow-x: auto;
+  color: #e2e8f0;
+  background-color: var(--dark-bg);
+}
+
+/* Syntax highlighting colors - to be used with a syntax highlighter like highlight.js */
+.hljs-keyword {
+  color: #ff79c6;
+}
+
+.hljs-built_in {
+  color: #bd93f9;
+}
+
+.hljs-type {
+  color: #8be9fd;
+}
+
+.hljs-literal {
+  color: #bd93f9;
+}
+
+.hljs-number {
+  color: #bd93f9;
+}
+
+.hljs-comment {
+  color: #6272a4;
+}
+
+.hljs-string {
+  color: #f1fa8c;
+}
+
+.hljs-attr {
+  color: #50fa7b;
+}
+
+.hljs-selector-id {
+  color: #50fa7b;
+}
+
+.hljs-selector-class {
+  color: #50fa7b;
+}
+
+.hljs-meta {
+  color: #6272a4;
+}
+
+.hljs-deletion {
+  color: #ff5555;
+}
+
+.hljs-addition {
+  color: #50fa7b;
+}

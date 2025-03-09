@@ -1,20 +1,39 @@
-/* Custom CSS variables for your color scheme */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap');
+
+body {
+  font-family: 'Inter', system-ui, sans-serif;
+}
+
 :root {
-  --primary-blue: #0051ba;
-  --primary-blue-dark: #004097;
-  --primary-blue-light: #3378d1;
-  --secondary-crimson: #e8000d;
-  --secondary-crimson-dark: #c2000b;
-  --secondary-crimson-light: #ff3341;
+  --primary-blue: #4851f4;
+  --primary-blue-dark: #3a41d6;
+  --primary-blue-light: #5a62f5;
+  --secondary-crimson: #7c3aed;
+  --secondary-crimson-dark: #6527da;
+  --secondary-crimson-light: #8f58f4;
+  --brand-tertiary: #f36c3d;
   --background-white: #ffffff;
   --background-light: #f8f9fa;
   --text-dark: #212529;
   --text-light: #f8f9fa;
   --border-light: #dee2e6;
+  --dark-bg: #0f172a;
+  --dark-surface: #1e293b;
+}
+
+/* Dark mode colors - can be enabled later */
+[data-theme='dark'] {
+  --foreground-rgb: 255, 255, 255;
+  --background-start-rgb: 15, 23, 42;
+  --background-end-rgb: 30, 41, 59;
 }
 
 /* Override Bootstrap primary color */
 .bg-primary {
+  background-color: var(--primary-blue) !important;
+}
+
+nav.bg-primary {
   background-color: var(--primary-blue) !important;
 }
 
@@ -23,19 +42,19 @@
 }
 
 .btn-primary {
-  background-color: var(--primary-blue);
-  border-color: var(--primary-blue-dark);
+  background-color: var(--primary-blue) !important;
+  border-color: var(--primary-blue-dark) !important;
 }
 
 .btn-primary:hover, .btn-primary:focus {
-  background-color: var(--primary-blue-dark);
-  border-color: var(--primary-blue-dark);
+  background-color: var(--primary-blue-dark) !important;
+  border-color: var(--primary-blue-dark) !important;
 }
 
 /* Add secondary crimson elements */
 .bg-secondary-crimson {
   background-color: var(--secondary-crimson) !important;
-  color: white;
+  color: white !important;
 }
 
 .text-secondary-crimson {
@@ -43,78 +62,116 @@
 }
 
 .btn-secondary-crimson {
-  background-color: var(--secondary-crimson);
-  border-color: var(--secondary-crimson-dark);
-  color: white;
+  background-color: var(--secondary-crimson) !important;
+  border-color: var(--secondary-crimson-dark) !important;
+  color: white !important;
 }
 
 .btn-secondary-crimson:hover, .btn-secondary-crimson:focus {
-  background-color: var(--secondary-crimson-dark);
-  border-color: var(--secondary-crimson-dark);
-  color: white;
+  background-color: var(--secondary-crimson-dark) !important;
+  border-color: var(--secondary-crimson-dark) !important;
+  color: white !important;
 }
 
 .btn-outline-secondary-crimson {
-  color: var(--secondary-crimson);
-  border-color: var(--secondary-crimson);
-}
-
-.btn-outline-secondary-crimson:hover, .btn-outline-secondary-crimson:focus {
-  background-color: var(--secondary-crimson);
-  color: white;
-}
-
-/* Badge styles */
-.badge.bg-secondary-crimson {
-  background-color: var(--secondary-crimson) !important;
-}
-
-/* Card accents */
-.card .card-header.bg-secondary-crimson {
-  background-color: var(--secondary-crimson);
-  color: white;
-}
-
-.border-secondary-crimson {
+  color: var(--secondary-crimson) !important;
   border-color: var(--secondary-crimson) !important;
 }
 
-/* Alert styling */
-.alert-secondary-crimson {
-  background-color: rgba(232, 0, 13, 0.1);
-  border-color: rgba(232, 0, 13, 0.2);
-  color: var(--secondary-crimson);
+.btn-outline-secondary-crimson:hover, .btn-outline-secondary-crimson:focus {
+  background-color: var(--secondary-crimson) !important;
+  color: white !important;
 }
 
-/* Tab styling */
-.nav-tabs .nav-link.active.crimson-tab {
-  color: var(--secondary-crimson);
-  border-color: var(--border-light) var(--border-light) var(--secondary-crimson);
-  border-bottom-width: 3px;
+.btn-outline-primary {
+  color: var(--primary-blue) !important;
+  border-color: var(--primary-blue) !important;
+  background-color: transparent !important;
 }
 
-/* Links */
-a.text-secondary-crimson {
-  color: var(--secondary-crimson);
-  text-decoration: none;
+.btn-outline-primary:hover, .btn-outline-primary:focus {
+  color: white !important;
+  background-color: var(--primary-blue) !important;
+  border-color: var(--primary-blue) !important;
 }
 
-a.text-secondary-crimson:hover {
-  color: var(--secondary-crimson-dark);
-  text-decoration: underline;
+.card .card-header.bg-primary {
+  background-color: var(--primary-blue) !important;
 }
 
-/* Table highlights */
-.table .crimson-highlight {
-  background-color: rgba(232, 0, 13, 0.05);
+/* Style for the tabs navigation */
+.nav-tabs {
+  border-bottom: 1px solid var(--border-light);
 }
 
-/* Progress bars */
-.progress .progress-bar-crimson {
-  background-color: var(--secondary-crimson);
+.nav-tabs .nav-link {
+  color: var(--text-dark);
+  border: none;
+  padding: 0.75rem 1rem;
+  margin-right: 0.5rem;
+  border-radius: 0;
+  transition: all 0.2s ease;
 }
 
-/* Spinners */
-.spinner-crimson {
-  color: var(--secondary-crimson);
+.nav-tabs .nav-link:hover {
+  color: var(--primary-blue);
+  border-bottom: 2px solid rgba(72, 81, 244, 0.3);
+}
+
+.nav-tabs .nav-link.active {
+  color: var(--primary-blue) !important;
+  font-weight: 500;
+  background-color: transparent !important;
+  border-top: none;
+  border-left: none;
+  border-right: none;
+  border-bottom: 2px solid var(--primary-blue) !important;
+}
+
+/* For tab content area */
+.tab-content {
+  padding-top: 1.5rem;
+}
+
+/* For card headers inside tabs */
+.tab-content .card-header {
+  background-color: #f8f9fa;
+  border-bottom: 1px solid var(--border-light);
+}
+
+.tab-content .card-header h5 {
+  color: var(--text-dark);
+  font-weight: 500;
+}
+
+/* Make sidebar background white instead of light gray */
+.sidebar.bg-light {
+  background-color: #ffffff !important;
+}
+
+/* Make Documentation heading black instead of muted */
+.sidebar-heading.text-muted {
+  color: #000000 !important;
+  font-weight: 500;
+  padding-left: 1rem !important; /* Consistent padding for header */
+}
+
+/* Make all documentation nav links black and indented */
+.sidebar .nav-link {
+  color: #000000 !important;
+  padding-left: 2rem !important; /* Indent the links */
+}
+
+/* Keep active link styled with a highlight similar to your example */
+.sidebar .nav-link.active {
+  color: var(--primary-blue) !important; /* Use your primary blue variable instead of black */
+  font-weight: 500;
+  background-color: rgba(72, 81, 244, 0.1) !important; /* Light blue background for active item */
+  border-radius: 0.375rem; /* Rounded corners (equivalent to rounded-md) */
+}
+
+/* Hover effect while keeping text black */
+.sidebar .nav-link:hover {
+  background-color: rgba(0, 0, 0, 0.03);
+  color: #000000;
 }
