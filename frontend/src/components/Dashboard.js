@@ -109,101 +109,154 @@ function Dashboard({ onStoreRefreshHandler }) {
     }
   }, [connectionString, tableName]); // Dependencies
 
-  // Initial load - automatically load profile data
   useEffect(() => {
-    // Get connection info from localStorage
-    const storedConnString = localStorage.getItem('connectionString');
-    const storedTable = localStorage.getItem('tableName');
+    // This function handles all initial loading
+    async function initialLoad() {
+      // EXTENSIVE DEBUGGING
+      console.log("%c[Dashboard] === INITIAL LOAD STARTED ===", "background: #333; color: yellow; font-size: 12px");
+      console.log("%c[Dashboard] Component just mounted", "color: blue");
 
-    if (storedConnString && storedTable) {
-      setConnectionString(storedConnString);
-      setTableName(storedTable);
-
-      // Only load on first render to prevent loading twice in strict mode
-      if (!initialLoadComplete.current) {
-        console.log("Initial load - automatically loading profile data");
-        initialLoadComplete.current = true;
-
-        // Small delay to ensure state is updated
-        setTimeout(() => {
-          handleProfileData();
-        }, 100);
+      // Only run this once
+      if (initialLoadComplete.current) {
+        console.log("[Dashboard] Initial load already completed, skipping");
+        return;
       }
-    } else {
-      setLoading(false);
+
+      console.log("%c[Dashboard] Setting initialLoadComplete to true", "color: magenta");
+      initialLoadComplete.current = true;
+      setLoading(true);
+
+      // Connections
+      const storedConnString = connectionString;
+      const storedTable = tableName;
+
+      console.log("%c[Dashboard] Connection info from localStorage:", "color: green", {
+        storedConnString: storedConnString ? (storedConnString.substring(0, 20) + "...") : null,
+        storedTable
+      });
+
+      if (storedConnString && storedTable) {
+        console.log("%c[Dashboard] Setting connection state values", "color: orange");
+        setConnectionString(storedConnString);
+        setTableName(storedTable);
+
+        try {
+          // First try to load profile history (which is faster and doesn't trigger a profile run)
+          console.log("%c[Dashboard] About to call loadProfileHistory()", "background: #ff9; color: black");
+          const historyResult = await loadProfileHistory(storedTable);
+          console.log("%c[Dashboard] loadProfileHistory result:", "background: #ff9; color: black", historyResult);
+
+          if (historyResult && historyResult.success) {
+            console.log("%c[Dashboard] History loaded successfully with items:", "color: green", historyResult.data.length);
+            // If we loaded history successfully, we can skip the profile run for now
+            setLoading(false);
+          } else {
+            // If we couldn't load history, try to directly fetch profile data
+            console.log("%c[Dashboard] No history found, fetching fresh profile...", "color: orange");
+            try {
+              console.log("%c[Dashboard] About to call directFetchProfile", "background: #ccf; color: black");
+              const data = await directFetchProfile(storedConnString, storedTable);
+              console.log("%c[Dashboard] directFetchProfile returned data", "color: green", data ? "✅" : "❌");
+              setProfileData(data);
+            } catch (profileErr) {
+              console.error("%c[Dashboard] Failed to fetch initial profile:", "color: red", profileErr);
+              setError("Failed to load initial profile data. Try clicking 'Profile Data'.");
+            } finally {
+              console.log("%c[Dashboard] Setting loading to false after profile attempt", "color: purple");
+              setLoading(false);
+            }
+          }
+        } catch (err) {
+          console.error("%c[Dashboard] Error in initial load:", "color: red", err);
+          setError("Error loading initial data");
+          setLoading(false);
+        }
+      } else {
+        console.log("%c[Dashboard] No stored connection info found, setting loading = false", "color: orange");
+        setLoading(false);
+      }
+
+      console.log("%c[Dashboard] === INITIAL LOAD COMPLETED ===", "background: #333; color: yellow; font-size: 12px");
     }
 
-    // Still load profile history if available
-    if (storedTable) {
-      loadProfileHistory(storedTable);
-    }
-  }, []); // Empty dependencies array - run once on mount
+    // IMMEDIATELY call initialLoad instead of waiting for next tick
+    console.log("%c[Dashboard] useEffect mounted, calling initialLoad immediately", "color: red");
+    initialLoad();
 
-  // Share the profile handler with the parent component if needed
-  useEffect(() => {
+    // Set up the refresh handler for the parent component
     if (onStoreRefreshHandler) {
+      console.log("[Dashboard] Setting up refresh handler with parent");
       onStoreRefreshHandler(handleProfileData);
     }
-  }, [onStoreRefreshHandler, handleProfileData]);
+
+    // Cleanup function
+    return () => {
+      console.log("[Dashboard] Component unmounting, cleaning up");
+    };
+  }, []); // Empty dependency array - run once on mount
+
+  console.log("Component defined");
 
   // Function to load profile history
   const loadProfileHistory = async (table) => {
-    if (!table) return;
+    console.log("%c[Dashboard] loadProfileHistory called with table:", "background: cyan; color: black", table);
+
+    if (!table) {
+      console.log("%c[Dashboard] No table provided to loadProfileHistory, returning early", "color: red");
+      return { success: false, reason: "no_table" };
+    }
 
     try {
+      console.log(`%c[Dashboard] Fetching profile history for table ${table}`, "color: blue");
       setHistoryLoading(true);
-      const response = await fetchProfileHistory(table, 15); // Get up to 15 history items
-      console.log("Profile history loaded:", response.history);
+
+      console.log("%c[Dashboard] About to call fetchProfileHistory API", "color: purple");
+      const response = await fetchProfileHistory(table, 15);
+
+      console.log("%c[Dashboard] fetchProfileHistory returned:", "color: purple", {
+        hasHistory: !!response.history,
+        itemCount: response.history?.length || 0
+      });
 
       if (response.history && response.history.length > 0) {
+        console.log("%c[Dashboard] Setting profile history state", "color: green");
         setProfileHistory(response.history);
+
         // Set the selected profile data to the most recent one by default
-        setSelectedProfileData(response.history[0]);
+        const latestProfile = response.history[0];
+        console.log("%c[Dashboard] Setting latest profile as display data", "color: green", {
+          timestamp: latestProfile.timestamp,
+          table: latestProfile.table
+        });
+
+        setSelectedProfileData(latestProfile);
+        setActiveProfileIndex(0);
+
+        console.log("%c[Dashboard] Returning success=true from loadProfileHistory", "background: green; color: white");
+        return { success: true, data: response.history };
       } else {
+        console.log("%c[Dashboard] No profile history found", "color: orange");
         setProfileHistory([]);
         setSelectedProfileData(null);
+        console.log("%c[Dashboard] Returning success=false from loadProfileHistory", "background: orange; color: black");
+        return { success: false, reason: "no_history" };
       }
     } catch (err) {
-      console.error("Error loading profile history:", err);
-      // Don't set error state here to avoid interfering with the main profile display
+      console.error("%c[Dashboard] Error loading profile history:", "color: red", err);
+      console.log("%c[Dashboard] Returning success=false with error from loadProfileHistory", "background: red; color: white");
+      return { success: false, reason: "error", error: err };
     } finally {
+      console.log("%c[Dashboard] Setting historyLoading=false", "color: blue");
       setHistoryLoading(false);
     }
   };
 
-  // Share the profile handler with the parent component if needed
-  useEffect(() => {
-    if (onStoreRefreshHandler) {
-      onStoreRefreshHandler(handleProfileData);
-    }
-  }, [onStoreRefreshHandler, handleProfileData]);
-
-  // Initial load - only set up connection info but don't profile
-  useEffect(() => {
-    // Just load connection info from localStorage, don't run profiling
-    const storedConnString = localStorage.getItem('connectionString');
-    const storedTable = localStorage.getItem('tableName');
-
-    if (storedConnString && storedTable) {
-      setConnectionString(storedConnString);
-      setTableName(storedTable);
-      // Note: Not calling directFetchProfile here anymore
-    }
-
-    // Still load profile history if available
-    if (storedTable) {
-      loadProfileHistory(storedTable);
-    }
-
-    setLoading(false);
-  }, []);
-
   const handleConnectionSubmit = (newConnection, newTable) => {
-    console.log('Connection form submitted:', { newConnection, newTable });
+    console.log('[Dashboard] Connection form submitted:', { newConnection, newTable });
 
     // Make sure the new values are different from the current ones
     if (newConnection !== connectionString || newTable !== tableName) {
-      console.log('Setting new connection and table values');
+      console.log('[Dashboard] Setting new connection and table values');
       setConnectionString(newConnection);
       setTableName(newTable);
 
@@ -224,6 +277,10 @@ function Dashboard({ onStoreRefreshHandler }) {
 
   // Get the active profile data for display
   const displayData = selectedProfileData || profileData;
+
+  useEffect(() => {
+    console.log('[Dashboard] Display data updated:', displayData ? 'data available' : 'no data');
+  }, [displayData]);
 
   return (
     <div className="container-fluid mt-3">

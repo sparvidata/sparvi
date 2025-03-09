@@ -15,6 +15,8 @@ import InvitePage from './components/auth/InvitePage';
 import DatabaseDebugger from './components/debug/DatabaseDebugger';
 import './colors.css';
 
+console.log("APP.JS LOADED");
+
 function App() {
   const [session, setSession] = useState(null);
   const [loading, setLoading] = useState(true);
