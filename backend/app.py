@@ -293,11 +293,14 @@ def run_validation_rules(current_user, organization_id):
 
             # Store results in Supabase
             for i, result in enumerate(results):
+                # Check if actual_value exists in the result
+                actual_value = result.get("actual_value", None)
+
                 validation_manager.store_validation_result(
                     organization_id,
                     rules[i]["id"],
                     result["is_valid"],
-                    result["actual_value"]
+                    actual_value
                 )
 
             logger.info(f"Validation execution complete, got {len(results)} results")
