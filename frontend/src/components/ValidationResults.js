@@ -66,6 +66,20 @@ function ValidationResults({ tableName, connectionString, activeConnection }) {
     loadRules();
   }, [tableName]);
 
+  // Add this right after your existing useEffect hooks in ValidationResults.js
+  useEffect(() => {
+    console.log("Rules state changed:", rules);
+    // If we have rules but the UI shows they're empty, force a re-render
+    if (rules && rules.length > 0) {
+      console.log("We have rules but they might not be showing - forcing refresh");
+      // Use a safe approach to force a re-render if needed
+      setTimeout(() => {
+        // This is just a trick to force a re-render by updating a state value
+        setLoading(false);
+      }, 100);
+    }
+  }, [rules]);
+
   // Handle form submission to add a new rule
   const handleAddRule = async (e) => {
     e.preventDefault();
@@ -271,37 +285,64 @@ const handleUpdateRule = async (ruleId) => {
   };
 
   const handleRunValidations = async () => {
-    if (!connectionString || !tableName) {
-      setError("Connection string and table name are required to run validations");
+    if (!activeConnection) {
+      setError("Connection information is required to run validations");
+      console.error("Missing connection:", activeConnection);
+      return;
+    }
+
+    if (!tableName) {
+      setError("Table name is required to run validations");
       return;
     }
 
     try {
       setLoading(true);
       setError(null);
-      console.log("Running validations with:", { connectionString, tableName });
 
-      const response = await runValidations(connectionString, tableName);
-      console.log("Validation run response:", response);
+      console.log("Running validations with:", { activeConnection, tableName });
 
-      // Check if we got results back
-      if (response.results) {
-        console.log(`Received ${response.results.length} validation results`);
-        setResults(response.results);
+      // Get connection credentials
+      const token = await AuthHandler.getAccessToken();
+      const apiBaseUrl = process.env.REACT_APP_API_BASE_URL || '';
 
-        // If you have a visualization component for results, make sure it's updating
-        console.log("Updated state with new results");
-      } else {
-        console.warn("No results returned from validation run");
-        setResults([]);
+      try {
+        // Fetch credentials from backend
+        const credentialsResponse = await axios.get(
+          `${apiBaseUrl}/api/connections/${activeConnection.id}/credentials`,
+          { headers: { Authorization: `Bearer ${token}` } }
+        );
+
+        if (!credentialsResponse.data) {
+          throw new Error("Failed to get connection credentials");
+        }
+
+        // Build connection string
+        const details = {...activeConnection.connection_details, ...credentialsResponse.data};
+        const schema = details.schema || 'PUBLIC';
+        const connectionString = `snowflake://${details.username}:${details.password}@${details.account}/${details.database}/${schema}?warehouse=${details.warehouse}`;
+
+        console.log("Built connection string for validation run");
+
+        // Run validations
+        const response = await runValidations(connectionString, tableName);
+        console.log("Validation run response:", response);
+
+        if (response.results) {
+          setResults(response.results);
+          setSuccessMessage("Validations completed");
+          setTimeout(() => setSuccessMessage(null), 3000);
+        } else {
+          console.warn("No results returned from validation run");
+          setResults([]);
+        }
+      } catch (err) {
+        console.error("Error running validations:", err);
+        setError(err.message || "Failed to run validations");
       }
-
-      setSuccessMessage("Validations completed");
-      setTimeout(() => setSuccessMessage(null), 3000);
     } catch (err) {
       console.error("Error running validations:", err);
-      console.error("Error details:", err.response?.data || err.message);
-      setError(err.response?.data?.error || "Failed to run validations");
+      setError(err.response?.data?.error || err.message || "Failed to run validations");
     } finally {
       setLoading(false);
     }
@@ -317,6 +358,7 @@ const handleUpdateRule = async (ruleId) => {
 
     try {
       setShowGeneratingSpinner(true);
+      setError(null); // Clear any previous errors
 
       // If we have activeConnection instead of connectionString, we need to build it
       let effectiveConnectionString = connectionString;
@@ -324,25 +366,41 @@ const handleUpdateRule = async (ruleId) => {
       if (!effectiveConnectionString && activeConnection) {
         console.log("Using activeConnection to build connection string");
 
-        // Try to get credentials from the backend
         try {
           // Fetch credentials from backend using the connection ID
           const token = await AuthHandler.getAccessToken();
-          const credentialsResponse = await axios.get(`${process.env.REACT_APP_API_BASE_URL}/api/connections/${activeConnection.id}/credentials`, {
+
+          // Log what we're about to do
+          console.log(`Fetching credentials for connection ID: ${activeConnection.id}`);
+
+          const apiBaseUrl = process.env.REACT_APP_API_BASE_URL || '';
+          const credentialsResponse = await axios.get(`${apiBaseUrl}/api/connections/${activeConnection.id}/credentials`, {
             headers: { Authorization: `Bearer ${token}` }
           });
 
           if (credentialsResponse.data) {
             // Build connection string from fetched credentials
-            const details = credentialsResponse.data;
+            const details = {...activeConnection.connection_details, ...credentialsResponse.data};
+            console.log("Got credentials, building connection string with details:", {
+              hasUsername: !!details.username,
+              hasPassword: !!details.password,
+              hasAccount: !!details.account,
+              hasDatabase: !!details.database,
+              hasSchema: !!details.schema,
+              hasWarehouse: !!details.warehouse
+            });
+
             const schema = details.schema || 'PUBLIC';
             effectiveConnectionString = `snowflake://${details.username}:${details.password}@${details.account}/${details.database}/${schema}?warehouse=${details.warehouse}`;
 
-            console.log("Built connection string from credentials");
+            console.log("Successfully built connection string");
+          } else {
+            console.error("No data returned from credentials endpoint");
+            throw new Error("Failed to get connection credentials");
           }
         } catch (err) {
           console.error("Failed to build connection string from activeConnection:", err);
-          setError("Failed to build connection string");
+          setError("Failed to build connection string: " + (err.message || "Unknown error"));
           setShowGeneratingSpinner(false);
           return;
         }
@@ -364,23 +422,52 @@ const handleUpdateRule = async (ruleId) => {
 
       console.log("Default validations response:", response);
 
-      // Refresh rules list
-      const rulesResponse = await fetchValidations(tableName);
-      setRules(rulesResponse.rules || []);
+      if (response.success) {
+        // Only update the success message if the operation was successful
+        setSuccessMessage(response.message || `Added ${response.count} default validation rules`);
 
-      setSuccessMessage(response.message || `Added ${response.count} default validation rules`);
-      setTimeout(() => setSuccessMessage(null), 3000);
+        // Explicitly refresh rules list on success
+        console.log("Refreshing rules list after successful default rules generation");
+        try {
+          const rulesResponse = await fetchValidations(tableName);
+          console.log("Rules refresh result:", rulesResponse);
+          if (rulesResponse.rules) {
+            setRules(rulesResponse.rules);
+          } else {
+            console.warn("No rules found in refresh response");
+          }
+        } catch (refreshError) {
+          console.error("Error refreshing rules:", refreshError);
+        }
+      } else {
+        // Handle the case where response.success is false
+        setError(response.message || "Failed to generate default validation rules");
+      }
     } catch (err) {
       console.error("Error generating default validations:", err);
       setError(err.message || "Failed to generate default validations");
     } finally {
       setLoading(false);
       setShowGeneratingSpinner(false);
+
+      // Additional refresh after everything is done, just to be sure
+      setTimeout(async () => {
+        try {
+          console.log("Delayed rules refresh to ensure backend has completed processing");
+          const refreshResponse = await fetchValidations(tableName);
+          if (refreshResponse.rules) {
+            setRules(refreshResponse.rules);
+          }
+        } catch (e) {
+          console.error("Error in delayed refresh:", e);
+        }
+      }, 1000); // Delay by 1 second
     }
   };
 
   // Display existing validation results
   const renderValidationResults = () => {
+    console.log("Rules when rendering:", rules);
     console.log("Rendering validation results:", results);
     if (loading && !showGeneratingSpinner && !results.length) {
       return (
