@@ -8,8 +8,9 @@ import {
   generateDefaultValidations
 } from '../api';
 import AuthHandler from "../auth/AuthHandler";
+import axios from 'axios';
 
-function ValidationResults({ tableName, connectionString }) {
+function ValidationResults({ tableName, connectionString, activeConnection }) {
   const [rules, setRules] = useState([]);
   const [results, setResults] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -308,21 +309,58 @@ const handleUpdateRule = async (ruleId) => {
 
   // Generate default validation rules
   const handleGenerateDefaults = async () => {
-    if (!connectionString || !tableName) {
+    if (!activeConnection && !connectionString) {
       setError("Connection string and table name are required");
-      console.error("Missing required parameters:", { connectionString, tableName });
+      console.error("Missing required parameters:", { activeConnection, connectionString, tableName });
       return;
     }
 
     try {
       setShowGeneratingSpinner(true);
+
+      // If we have activeConnection instead of connectionString, we need to build it
+      let effectiveConnectionString = connectionString;
+
+      if (!effectiveConnectionString && activeConnection) {
+        console.log("Using activeConnection to build connection string");
+
+        // Try to get credentials from the backend
+        try {
+          // Fetch credentials from backend using the connection ID
+          const token = await AuthHandler.getAccessToken();
+          const credentialsResponse = await axios.get(`${process.env.REACT_APP_API_BASE_URL}/api/connections/${activeConnection.id}/credentials`, {
+            headers: { Authorization: `Bearer ${token}` }
+          });
+
+          if (credentialsResponse.data) {
+            // Build connection string from fetched credentials
+            const details = credentialsResponse.data;
+            const schema = details.schema || 'PUBLIC';
+            effectiveConnectionString = `snowflake://${details.username}:${details.password}@${details.account}/${details.database}/${schema}?warehouse=${details.warehouse}`;
+
+            console.log("Built connection string from credentials");
+          }
+        } catch (err) {
+          console.error("Failed to build connection string from activeConnection:", err);
+          setError("Failed to build connection string");
+          setShowGeneratingSpinner(false);
+          return;
+        }
+      }
+
+      if (!effectiveConnectionString) {
+        setError("Could not determine connection string");
+        setShowGeneratingSpinner(false);
+        return;
+      }
+
       console.log("Calling generateDefaultValidations with:", {
-        connectionString,
+        connectionString: effectiveConnectionString ? "[CONNECTION STRING PRESENT]" : "[MISSING]",
         tableName
       });
 
       // Use the API function directly instead of making a direct fetch call
-      const response = await generateDefaultValidations(connectionString, tableName);
+      const response = await generateDefaultValidations(effectiveConnectionString, tableName);
 
       console.log("Default validations response:", response);
 

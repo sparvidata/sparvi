@@ -28,6 +28,26 @@ function DataSourcePanel({
     }
   }, [selectedConnection]);
 
+  useEffect(() => {
+    if (selectedConnection) {
+      console.log("DataSourcePanel - selectedConnection structure:", {
+        id: selectedConnection.id,
+        name: selectedConnection.name,
+        connection_type: selectedConnection.connection_type,
+        connection_details: selectedConnection.connection_details ? {
+          ...selectedConnection.connection_details,
+          password: selectedConnection.connection_details.password ? "[PRESENT]" : "[MISSING]",
+        } : "[MISSING]",
+        is_default: selectedConnection.is_default
+      });
+
+      if (onConnectionChange) {
+        console.log("DataSourcePanel - About to call onConnectionChange");
+        onConnectionChange(selectedConnection);
+      }
+    }
+  }, [selectedConnection]);
+
   // Set selectedTable when tableName prop changes
   useEffect(() => {
     if (tableName) {

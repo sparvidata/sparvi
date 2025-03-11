@@ -423,6 +423,9 @@ def index():
     return render_template("index.html", version=os.getenv("SPARVI_CORE_VERSION", "Unknown"))
 
 
+# In app.py, find the get_profile function (around line 245)
+# Update it with more detailed logging:
+
 @app.route("/api/profile", methods=["GET"])
 @token_required
 def get_profile(current_user, organization_id):
@@ -434,8 +437,22 @@ def get_profile(current_user, organization_id):
 
     try:
         logger.info(f"========== PROFILING STARTED ==========")
-        logger.info(f"Profiling table {table_name} with connection {connection_string}")
+        logger.info(f"Profiling table {table_name} with connection {connection_string[:20]}...")
         logger.info(f"User ID: {current_user}, Organization ID: {organization_id}")
+
+        # Check if connection string is properly formatted
+        if "://" not in connection_string:
+            logger.error(f"Invalid connection string format: {connection_string[:20]}...")
+            return jsonify({"error": "Invalid connection string format"}), 400
+
+        # Check if the connection string contains required components for Snowflake
+        if connection_string.startswith("snowflake://"):
+            # Very basic validation - should contain username, password, account, etc.
+            required_parts = ["@", "?warehouse="]
+            missing_parts = [part for part in required_parts if part not in connection_string]
+            if missing_parts:
+                logger.error(f"Connection string missing required parts: {missing_parts}")
+                return jsonify({"error": f"Connection string is incomplete. Missing: {', '.join(missing_parts)}"}), 400
 
         # Resolve any environment variable references in connection string
         from core.utils.connection_utils import resolve_connection_string, detect_connection_type
@@ -1248,6 +1265,8 @@ def get_connection_credentials(connection_id):
     try:
         # Get current user from auth token
         current_user = get_current_user()
+        if not current_user:
+            return jsonify({"error": "Authentication required"}), 401
 
         # Get connection details from Supabase
         supabase_mgr = SupabaseManager()
@@ -1261,6 +1280,7 @@ def get_connection_credentials(connection_id):
 
     except Exception as e:
         logger.error(f"Error getting connection credentials: {str(e)}")
+        logger.error(traceback.format_exc())  # Log the full stack trace
         return jsonify({"error": "Failed to get connection credentials"}), 500
 
 

@@ -90,6 +90,12 @@ function Dashboard({ onStoreRefreshHandler }) {
       setError(null);
 
       try {
+        // Ensure we're passing the connection properly to the API
+        if (!activeConnection.connection_details && !activeConnection.credentials) {
+          console.error("Connection object is missing required structure:", activeConnection);
+          throw new Error("Connection configuration is invalid. Missing connection details.");
+        }
+
         // Use the connection details directly from activeConnection
         const data = await directFetchProfile(activeConnection, tableName);
         setProfileData(data);

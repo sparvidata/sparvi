@@ -80,37 +80,87 @@ const sanitizeConnectionString = (connectionString) => {
 
 // Export a direct fetch profile function that doesn't rely on interceptors
 export const directFetchProfile = async (connection, tableName) => {
-  // Debug log to see full connection structure
-  console.log('Full connection object:', {
-    ...connection,
-    credentials: connection.credentials ? '[REDACTED]' : 'missing',
-    connection_details: connection.connection_details ? '[REDACTED]' : 'missing'
-  });
+  try {
+    console.log('Connection object:', JSON.stringify({
+      ...connection,
+      connection_details: connection.connection_details ? {
+        ...connection.connection_details,
+        password: connection.connection_details.password ? "[REDACTED]" : "[MISSING]"
+      } : undefined
+    }, null, 2));
 
-  // Get credentials from the correct location
-  const credentials = connection.credentials || connection.connection_details;
+    let connectionString;
 
-  // Verify we have all required fields
-  if (!credentials || !credentials.password) {
-    throw new Error('Missing required connection credentials');
+    // Check if we need to fetch credentials
+    if (connection.connection_details &&
+        connection.id &&
+        (!connection.connection_details.password || connection.connection_details.password === "[REDACTED]")) {
+
+      console.log("Password missing, attempting to fetch credentials from backend");
+
+      // Fetch credentials from backend using the connection ID
+      const token = await getToken();
+      const credentialsResponse = await axios.get(`${API_BASE_URL}/api/connections/${connection.id}/credentials`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+
+      if (credentialsResponse.data) {
+        // Update connection details with fetched credentials
+        console.log("Retrieved credentials from backend");
+        connection = {
+          ...connection,
+          connection_details: {
+            ...connection.connection_details,
+            ...credentialsResponse.data
+          }
+        };
+      }
+    }
+
+    // Now build the connection string with the updated details
+    if (connection.connection_details) {
+      const details = connection.connection_details;
+
+      // Check we have all required fields
+      if (!details.username || !details.password || !details.account ||
+          !details.database || !details.warehouse) {
+        console.error('Missing fields in connection_details:', {
+          hasUsername: !!details.username,
+          hasPassword: !!details.password,
+          hasAccount: !!details.account,
+          hasDatabase: !!details.database,
+          hasSchema: !!details.schema,
+          hasWarehouse: !!details.warehouse
+        });
+        throw new Error('Missing required connection credentials in connection_details');
+      }
+
+      // Use the schema if provided, otherwise default to 'PUBLIC'
+      const schema = details.schema || 'PUBLIC';
+
+      connectionString = `snowflake://${details.username}:${details.password}@${details.account}/${details.database}/${schema}?warehouse=${details.warehouse}`;
+    } else {
+      console.error('Invalid connection object structure:', connection);
+      throw new Error('Missing required connection details');
+    }
+
+    const safeConnString = sanitizeConnectionString(connectionString);
+    console.log('directFetchProfile called with:', { connectionString: safeConnString, tableName });
+
+    const token = await getToken();
+    const response = await axios.get(`${API_BASE_URL}/api/profile`, {
+      params: {
+        connection_string: connectionString,
+        table: tableName
+      },
+      headers: { Authorization: `Bearer ${token}` }
+    });
+
+    return response.data;
+  } catch (error) {
+    console.error("Error in directFetchProfile:", error);
+    throw error;
   }
-
-  const connectionString = `snowflake://${credentials.username}:${credentials.password}@${credentials.account}/${credentials.database}/${credentials.schema}?warehouse=${credentials.warehouse}`;
-
-  const safeConnString = sanitizeConnectionString(connectionString);
-  console.log('directFetchProfile called with:', { connectionString: safeConnString, tableName });
-
-  const token = await getToken();
-
-  const response = await axios.get(`${API_BASE_URL}/api/profile`, {
-    params: {
-      connection_string: connectionString,
-      table: tableName
-    },
-    headers: { Authorization: `Bearer ${token}` }
-  });
-
-  return response.data;
 };
 
 

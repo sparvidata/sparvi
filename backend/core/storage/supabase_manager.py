@@ -558,3 +558,27 @@ class SupabaseManager:
         except Exception as e:
             logger.error(f"Error updating organization settings: {str(e)}")
             return False
+
+    def get_connection(self, connection_id):
+        """Get connection details by ID"""
+        try:
+            response = self.supabase.table("database_connections") \
+                .select("*") \
+                .eq("id", connection_id) \
+                .single() \
+                .execute()
+
+            return response.data
+        except Exception as e:
+            logger.error(f"Error getting connection: {str(e)}")
+            return None
+
+    def verify_token(self, token):
+        """Verify a JWT token and return the user ID"""
+        try:
+            # Use Supabase to decode and verify the token
+            decoded = self.supabase.auth.get_user(token)
+            return decoded.user.id
+        except Exception as e:
+            logger.error(f"Token verification error: {str(e)}")
+            return None
