@@ -93,7 +93,7 @@ app.config["SECRET_KEY"] = os.getenv("SECRET_KEY", "default_secret_key")
 # Initialize Supabase validation manager
 validation_manager = SupabaseValidationManager()
 
-run_validations_after_profile = False  # Set to True to automatically run validations after profiling
+run_validations_after_profile = True  # Set to True to automatically run validations after profiling
 
 # Decorator to require a valid token for protected routes
 def token_required(f):
