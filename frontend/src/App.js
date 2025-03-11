@@ -13,6 +13,7 @@ import './components/auth/AuthPages.css'
 import AdminDashboard from './components/admin/AdminDashboard';
 import InvitePage from './components/auth/InvitePage';
 import DatabaseDebugger from './components/debug/DatabaseDebugger';
+import Connections from './components/Connections';
 import './colors.css';
 
 console.log("APP.JS LOADED");
@@ -107,6 +108,7 @@ function App() {
           <Route path="/forgot-password" element={!session ? <ForgotPasswordPage /> : <Navigate to="/dashboard" />} />
           <Route path="/reset-password" element={!session ? <ResetPasswordPage /> : <Navigate to="/dashboard" />} />
           <Route path="/dashboard" element={session ? <Dashboard /> : <Navigate to="/login" />} />
+          <Route path="/connections" element={session ? <Connections /> : <Navigate to="/login" />} />
           <Route path="/test-connection" element={session ? <TestConnection /> : <Navigate to="/login" />} />
           <Route path="/docs/:page" element={<Documentation />} />
           <Route path="/docs" element={<Navigate to="/docs/overview" />} />

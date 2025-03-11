@@ -1,214 +1,144 @@
 import React, { useState, useEffect } from 'react';
-import { directFetchTables } from '../profile-api';
 
-function ConnectionForm({ initialConnection, initialTable, onSubmit }) {
-  // State for form visibility
-  const [showForm, setShowForm] = useState(false);
-
-  // Connection form fields
-  const [connectionString, setConnectionString] = useState(initialConnection || '');
-  const [tableName, setTableName] = useState(initialTable || '');
-
-  // Database type selector
-  const [databaseType, setDatabaseType] = useState('snowflake');
-
-  // Table loading state
-  const [tables, setTables] = useState([]);
-  const [loadingTables, setLoadingTables] = useState(false);
-  const [tableError, setTableError] = useState(null);
-
-  // Snowflake form section with completely independent state
-  // This prevents cross-contamination between UI state and connection string
-  const [snowflakeForm, setSnowflakeForm] = useState({
-    account: '',
-    username: '',
-    password: '',
-    warehouse: '',
-    database: '',
-    schema: 'PUBLIC',
-    useEnvVars: false,
-    envVarPrefix: 'SNOWFLAKE'
+function ConnectionForm({ initialConnection, onSubmit, onCancel, onTest, testResults, testLoading }) {
+  // State for form data
+  const [formData, setFormData] = useState({
+    name: '',
+    connection_type: 'snowflake',
+    connection_details: {
+      account: '',
+      username: '',
+      password: '',
+      warehouse: '',
+      database: '',
+      schema: 'PUBLIC',
+      useEnvVars: false,
+      envVarPrefix: 'SNOWFLAKE'
+    }
   });
 
-  // Initialize database type based on initial connection string
+  // Copy initial connection data to form state when editing
   useEffect(() => {
     if (initialConnection) {
-      if (initialConnection.startsWith('snowflake://')) {
-        setDatabaseType('snowflake');
-      } else if (initialConnection.startsWith('duckdb://')) {
-        setDatabaseType('duckdb');
-      } else if (initialConnection.startsWith('postgresql://')) {
-        setDatabaseType('postgresql');
-      } else {
-        setDatabaseType('other');
-      }
+      setFormData({
+        name: initialConnection.name || '',
+        connection_type: initialConnection.connection_type || 'snowflake',
+        connection_details: {
+          ...initialConnection.connection_details,
+          // Don't prefill password for security reasons
+          password: ''
+        }
+      });
     }
   }, [initialConnection]);
 
-  // Parse connection string into form fields when the form is shown
-  useEffect(() => {
-    if (showForm && connectionString && connectionString.startsWith('snowflake://')) {
-      try {
-        // Modified regex to handle more complex URL patterns
-        const match = connectionString.match(/snowflake:\/\/([^:]+):([^@]+)@([^\/]+)\/([^\/]+)(?:\/([^\?]+))?(?:\?warehouse=([^&]+))?/);
+  // Handle form field changes
+  const handleInputChange = (e) => {
+    const { name, value } = e.target;
+    setFormData({
+      ...formData,
+      [name]: value
+    });
+  };
 
-        if (match) {
-          const [, username, password, account, database, schema, warehouse] = match;
-
-          setSnowflakeForm(prev => ({
-            ...prev,
-            username: decodeURIComponent(username || ''),
-            password: decodeURIComponent(password || ''),
-            account: account || '',
-            database: database || '',
-            schema: schema || 'PUBLIC',
-            warehouse: warehouse || ''
-          }));
-        }
-      } catch (err) {
-        console.error('Error parsing Snowflake connection string:', err);
+  // Handle connection detail changes
+  const handleDetailChange = (e) => {
+    const { name, value } = e.target;
+    setFormData({
+      ...formData,
+      connection_details: {
+        ...formData.connection_details,
+        [name]: value
       }
-    }
-  }, [showForm, connectionString]);
-
-  // Handle Snowflake form field changes
-  const handleSnowflakeFieldChange = (field) => (e) => {
-    setSnowflakeForm(prev => ({
-      ...prev,
-      [field]: e.target.value
-    }));
+    });
   };
 
-  // Handle checkbox changes for Snowflake form
-  const handleSnowflakeCheckboxChange = (field) => (e) => {
-    setSnowflakeForm(prev => ({
-      ...prev,
-      [field]: e.target.checked
-    }));
-  };
-
-  // Build Snowflake connection string from form fields
-  const buildSnowflakeConnectionString = () => {
-    const { username, password, account, database, schema, warehouse } = snowflakeForm;
-
-    if (username && password && account && database && warehouse) {
-      // Properly encode the username and password for URL
-      const encodedUsername = encodeURIComponent(username);
-      const encodedPassword = encodeURIComponent(password);
-
-      return `snowflake://${encodedUsername}:${encodedPassword}@${account}/${database}/${schema}?warehouse=${warehouse}`;
-    }
-    return '';
-  };
-
-  // Handle database type change
-  const handleDatabaseTypeChange = (e) => {
-    const newType = e.target.value;
-    setDatabaseType(newType);
-
-    // Reset connection string for different database types
-    if (newType === 'snowflake') {
-      const newConnString = buildSnowflakeConnectionString();
-      if (newConnString) {
-        setConnectionString(newConnString);
-      } else {
-        setConnectionString('');
+  // Handle checkbox changes
+  const handleCheckboxChange = (e) => {
+    const { name, checked } = e.target;
+    setFormData({
+      ...formData,
+      connection_details: {
+        ...formData.connection_details,
+        [name]: checked
       }
-    } else if (newType === 'duckdb') {
-      setConnectionString('duckdb:///path/to/database.duckdb');
-    } else if (newType === 'postgresql') {
-      setConnectionString('postgresql://username:password@hostname:port/database');
-    } else {
-      setConnectionString('');
-    }
+    });
   };
-
-  // Handle connection string manual changes
-  const handleConnectionStringChange = (e) => {
-    setConnectionString(e.target.value);
-  };
-
-  // Load tables for the selected connection
-  const loadTables = async (connString) => {
-    if (!connString) return;
-
-    try {
-      setLoadingTables(true);
-      setTableError(null);
-
-      console.log("Loading tables for connection:", connString);
-      const result = await directFetchTables(connString);
-      console.log("Tables loaded:", result.tables);
-
-      setTables(result.tables || []);
-
-      // Set first table as default if none selected
-      if (result.tables && result.tables.length > 0 && !tableName) {
-        setTableName(result.tables[0]);
-      }
-    } catch (error) {
-      console.error("Error loading tables:", error);
-      setTableError("Failed to load tables from database");
-      setTables([]);
-    } finally {
-      setLoadingTables(false);
-    }
-  };
-
-  // Load tables when showing the form and we have a connection string
-  useEffect(() => {
-    if (showForm && connectionString) {
-      loadTables(connectionString);
-    }
-  }, [showForm, connectionString]);
 
   // Handle form submission
   const handleSubmit = (e) => {
     e.preventDefault();
 
-    // If using Snowflake with fields, build the connection string
-    if (databaseType === 'snowflake' && !snowflakeForm.useEnvVars) {
-      const newConnString = buildSnowflakeConnectionString();
-      if (newConnString) {
-        setConnectionString(newConnString);
-      } else {
-        alert("Please fill in all required Snowflake fields");
-        return;
+    // Validate form
+    if (!formData.name) {
+      alert('Connection name is required');
+      return;
+    }
+
+    // For snowflake connections, validate required fields
+    if (formData.connection_type === 'snowflake' && !formData.connection_details.useEnvVars) {
+      const requiredFields = ['account', 'username', 'warehouse', 'database'];
+
+      // If we're creating a new connection or updating with a new password, require password
+      if (!initialConnection || formData.connection_details.password) {
+        requiredFields.push('password');
+      }
+
+      for (const field of requiredFields) {
+        if (!formData.connection_details[field]) {
+          alert(`${field.charAt(0).toUpperCase() + field.slice(1)} is required`);
+          return;
+        }
       }
     }
 
-    // If using environment variables, construct a reference string
-    if (databaseType === 'snowflake' && snowflakeForm.useEnvVars) {
-      setConnectionString(`snowflake://${snowflakeForm.envVarPrefix}_CONNECTION`);
+    // Submit form data
+    const dataToSubmit = {
+      ...formData,
+      connection_details: {
+        ...formData.connection_details
+      }
+    };
+
+    // If updating and no new password provided, remove password field
+    if (initialConnection && !dataToSubmit.connection_details.password) {
+      delete dataToSubmit.connection_details.password;
     }
 
-    // Validate
-    if (!connectionString) {
-      alert("Connection string is required");
-      return;
-    }
-
-    if (!tableName) {
-      alert("Table name is required");
-      return;
-    }
-
-    // Submit to parent component
-    onSubmit(connectionString, tableName);
-    setShowForm(false);
+    onSubmit(dataToSubmit);
   };
 
-  // Sync connection string when Snowflake form changes and not using env vars
-  useEffect(() => {
-    if (databaseType === 'snowflake' && !snowflakeForm.useEnvVars && showForm) {
-      const newConnString = buildSnowflakeConnectionString();
-      if (newConnString) {
-        setConnectionString(newConnString);
+  // Handle test connection
+  const handleTestConnection = () => {
+    // Don't test if required fields are missing
+    if (formData.connection_type === 'snowflake' && !formData.connection_details.useEnvVars) {
+      const requiredFields = ['account', 'username', 'password', 'warehouse', 'database'];
+      for (const field of requiredFields) {
+        if (!formData.connection_details[field]) {
+          alert(`${field.charAt(0).toUpperCase() + field.slice(1)} is required for testing`);
+          return;
+        }
       }
     }
-  }, [databaseType, snowflakeForm, showForm]);
 
-  // Render Snowflake form fields
+    onTest(formData);
+  };
+
+  // Render different forms based on connection type
+  const renderConnectionForm = () => {
+    switch (formData.connection_type) {
+      case 'snowflake':
+        return renderSnowflakeForm();
+      case 'duckdb':
+        return renderDuckDBForm();
+      case 'postgresql':
+        return renderPostgreSQLForm();
+      default:
+        return null;
+    }
+  };
+
+  // Render Snowflake connection form
   const renderSnowflakeForm = () => {
     return (
       <>
@@ -217,26 +147,27 @@ function ConnectionForm({ initialConnection, initialTable, onSubmit }) {
             type="checkbox"
             className="form-check-input"
             id="useEnvVars"
-            checked={snowflakeForm.useEnvVars}
-            onChange={handleSnowflakeCheckboxChange('useEnvVars')}
+            name="useEnvVars"
+            checked={formData.connection_details.useEnvVars}
+            onChange={handleCheckboxChange}
           />
           <label className="form-check-label" htmlFor="useEnvVars">
             Use environment variables for Snowflake credentials
           </label>
         </div>
 
-        {snowflakeForm.useEnvVars ? (
+        {formData.connection_details.useEnvVars ? (
           <>
             <div className="alert alert-info">
               <i className="bi bi-info-circle-fill me-2"></i>
               Using environment variables for secure credential storage. Make sure the following environment variables are set in your backend:
               <ul className="mt-2 mb-0">
-                <li><code>{snowflakeForm.envVarPrefix}_ACCOUNT</code> - Snowflake account identifier</li>
-                <li><code>{snowflakeForm.envVarPrefix}_USER</code> - Snowflake username</li>
-                <li><code>{snowflakeForm.envVarPrefix}_PASSWORD</code> - Snowflake password</li>
-                <li><code>{snowflakeForm.envVarPrefix}_WAREHOUSE</code> - Snowflake warehouse name</li>
-                <li><code>{snowflakeForm.envVarPrefix}_DATABASE</code> - Snowflake database name</li>
-                <li><code>{snowflakeForm.envVarPrefix}_SCHEMA</code> - Snowflake schema name (optional, defaults to PUBLIC)</li>
+                <li><code>{formData.connection_details.envVarPrefix}_ACCOUNT</code> - Snowflake account identifier</li>
+                <li><code>{formData.connection_details.envVarPrefix}_USER</code> - Snowflake username</li>
+                <li><code>{formData.connection_details.envVarPrefix}_PASSWORD</code> - Snowflake password</li>
+                <li><code>{formData.connection_details.envVarPrefix}_WAREHOUSE</code> - Snowflake warehouse name</li>
+                <li><code>{formData.connection_details.envVarPrefix}_DATABASE</code> - Snowflake database name</li>
+                <li><code>{formData.connection_details.envVarPrefix}_SCHEMA</code> - Snowflake schema name (optional, defaults to PUBLIC)</li>
               </ul>
             </div>
 
@@ -246,37 +177,28 @@ function ConnectionForm({ initialConnection, initialTable, onSubmit }) {
                 type="text"
                 className="form-control"
                 id="envVarPrefix"
-                value={snowflakeForm.envVarPrefix}
-                onChange={handleSnowflakeFieldChange('envVarPrefix')}
+                name="envVarPrefix"
+                value={formData.connection_details.envVarPrefix}
+                onChange={handleDetailChange}
                 placeholder="SNOWFLAKE"
               />
               <div className="form-text">
                 Prefix used for environment variables (e.g., SNOWFLAKE_ACCOUNT, SNOWFLAKE_USER)
               </div>
             </div>
-
-            <div className="mb-3">
-              <label className="form-label">Connection String</label>
-              <input
-                type="text"
-                className="form-control"
-                value={connectionString}
-                onChange={handleConnectionStringChange}
-                placeholder="snowflake://PREFIX_CONNECTION"
-              />
-            </div>
           </>
         ) : (
           <>
             <div className="row">
               <div className="col-md-6 mb-3">
-                <label htmlFor="snowflakeAccount" className="form-label">Account*</label>
+                <label htmlFor="account" className="form-label">Account*</label>
                 <input
                   type="text"
                   className="form-control"
-                  id="snowflakeAccount"
-                  value={snowflakeForm.account}
-                  onChange={handleSnowflakeFieldChange('account')}
+                  id="account"
+                  name="account"
+                  value={formData.connection_details.account}
+                  onChange={handleDetailChange}
                   placeholder="orgname-accountname"
                   required
                 />
@@ -286,13 +208,14 @@ function ConnectionForm({ initialConnection, initialTable, onSubmit }) {
               </div>
 
               <div className="col-md-6 mb-3">
-                <label htmlFor="snowflakeWarehouse" className="form-label">Warehouse*</label>
+                <label htmlFor="warehouse" className="form-label">Warehouse*</label>
                 <input
                   type="text"
                   className="form-control"
-                  id="snowflakeWarehouse"
-                  value={snowflakeForm.warehouse}
-                  onChange={handleSnowflakeFieldChange('warehouse')}
+                  id="warehouse"
+                  name="warehouse"
+                  value={formData.connection_details.warehouse}
+                  onChange={handleDetailChange}
                   placeholder="COMPUTE_WH"
                   required
                 />
@@ -301,68 +224,59 @@ function ConnectionForm({ initialConnection, initialTable, onSubmit }) {
 
             <div className="row">
               <div className="col-md-6 mb-3">
-                <label htmlFor="snowflakeUsername" className="form-label">Username*</label>
+                <label htmlFor="username" className="form-label">Username*</label>
                 <input
                   type="text"
                   className="form-control"
-                  id="snowflakeUsername"
-                  value={snowflakeForm.username}
-                  onChange={handleSnowflakeFieldChange('username')}
+                  id="username"
+                  name="username"
+                  value={formData.connection_details.username}
+                  onChange={handleDetailChange}
                   required
                 />
               </div>
 
               <div className="col-md-6 mb-3">
-                <label htmlFor="snowflakePassword" className="form-label">Password*</label>
+                <label htmlFor="password" className="form-label">
+                  {initialConnection ? 'Password (leave blank to keep current)' : 'Password*'}
+                </label>
                 <input
                   type="password"
                   className="form-control"
-                  id="snowflakePassword"
-                  value={snowflakeForm.password}
-                  onChange={handleSnowflakeFieldChange('password')}
-                  required
+                  id="password"
+                  name="password"
+                  value={formData.connection_details.password}
+                  onChange={handleDetailChange}
+                  required={!initialConnection}
                 />
               </div>
             </div>
 
             <div className="row">
               <div className="col-md-6 mb-3">
-                <label htmlFor="snowflakeDatabase" className="form-label">Database*</label>
+                <label htmlFor="database" className="form-label">Database*</label>
                 <input
                   type="text"
                   className="form-control"
-                  id="snowflakeDatabase"
-                  value={snowflakeForm.database}
-                  onChange={handleSnowflakeFieldChange('database')}
+                  id="database"
+                  name="database"
+                  value={formData.connection_details.database}
+                  onChange={handleDetailChange}
                   required
                 />
               </div>
 
               <div className="col-md-6 mb-3">
-                <label htmlFor="snowflakeSchema" className="form-label">Schema</label>
+                <label htmlFor="schema" className="form-label">Schema</label>
                 <input
                   type="text"
                   className="form-control"
-                  id="snowflakeSchema"
-                  value={snowflakeForm.schema}
-                  onChange={handleSnowflakeFieldChange('schema')}
+                  id="schema"
+                  name="schema"
+                  value={formData.connection_details.schema}
+                  onChange={handleDetailChange}
                   placeholder="PUBLIC"
                 />
-              </div>
-            </div>
-
-            <div className="mb-3">
-              <label className="form-label">Generated Connection String</label>
-              <input
-                type="text"
-                className="form-control font-monospace"
-                value={connectionString}
-                onChange={handleConnectionStringChange}
-                placeholder="snowflake://username:password@account/database/schema?warehouse=warehouse"
-                readOnly
-              />
-              <div className="form-text">
-                This connection string is generated from the fields above. Special characters in the password are properly encoded.
               </div>
             </div>
           </>
@@ -371,182 +285,200 @@ function ConnectionForm({ initialConnection, initialTable, onSubmit }) {
     );
   };
 
-  // Render different forms based on database type
-  const renderDatabaseForm = () => {
-    switch (databaseType) {
-      case 'snowflake':
-        return renderSnowflakeForm();
-      case 'duckdb':
-        return (
-          <div className="mb-3">
-            <label htmlFor="duckdbConnection" className="form-label">DuckDB Connection String</label>
+  // Render DuckDB connection form
+  const renderDuckDBForm = () => {
+    return (
+      <div className="mb-3">
+        <label htmlFor="path" className="form-label">DuckDB Path*</label>
+        <input
+          type="text"
+          className="form-control"
+          id="path"
+          name="path"
+          value={formData.connection_details.path || ''}
+          onChange={handleDetailChange}
+          placeholder="/path/to/database.duckdb"
+          required
+        />
+        <div className="form-text">
+          Path to your DuckDB database file. For in-memory database, use :memory:
+        </div>
+      </div>
+    );
+  };
+
+  // Render PostgreSQL connection form
+  const renderPostgreSQLForm = () => {
+    return (
+      <>
+        <div className="row">
+          <div className="col-md-6 mb-3">
+            <label htmlFor="host" className="form-label">Host*</label>
             <input
               type="text"
               className="form-control"
-              id="duckdbConnection"
-              value={connectionString}
-              onChange={handleConnectionStringChange}
-              placeholder="duckdb:///path/to/database.duckdb"
+              id="host"
+              name="host"
+              value={formData.connection_details.host || ''}
+              onChange={handleDetailChange}
+              placeholder="localhost"
               required
             />
-            <div className="form-text">
-              Path to your DuckDB database file. For in-memory database, use duckdb:///:memory:
-            </div>
           </div>
-        );
-      case 'postgresql':
-        return (
-          <div className="mb-3">
-            <label htmlFor="postgresConnection" className="form-label">PostgreSQL Connection String</label>
+
+          <div className="col-md-6 mb-3">
+            <label htmlFor="port" className="form-label">Port*</label>
             <input
               type="text"
               className="form-control"
-              id="postgresConnection"
-              value={connectionString}
-              onChange={handleConnectionStringChange}
-              placeholder="postgresql://username:password@hostname:port/database"
+              id="port"
+              name="port"
+              value={formData.connection_details.port || '5432'}
+              onChange={handleDetailChange}
+              placeholder="5432"
               required
             />
-            <div className="form-text">
-              Standard PostgreSQL connection string format
-            </div>
           </div>
-        );
-      default:
-        return (
-          <div className="mb-3">
-            <label htmlFor="connectionString" className="form-label">Connection String</label>
+        </div>
+
+        <div className="row">
+          <div className="col-md-6 mb-3">
+            <label htmlFor="username" className="form-label">Username*</label>
             <input
               type="text"
               className="form-control"
-              id="connectionString"
-              value={connectionString}
-              onChange={handleConnectionStringChange}
-              placeholder="dialect://username:password@hostname:port/database"
+              id="username"
+              name="username"
+              value={formData.connection_details.username || ''}
+              onChange={handleDetailChange}
               required
             />
-            <div className="form-text">
-              SQLAlchemy-compatible connection string for your database
-            </div>
           </div>
-        );
-    }
+
+          <div className="col-md-6 mb-3">
+            <label htmlFor="password" className="form-label">
+              {initialConnection ? 'Password (leave blank to keep current)' : 'Password*'}
+            </label>
+            <input
+              type="password"
+              className="form-control"
+              id="password"
+              name="password"
+              value={formData.connection_details.password || ''}
+              onChange={handleDetailChange}
+              required={!initialConnection}
+            />
+          </div>
+        </div>
+
+        <div className="mb-3">
+          <label htmlFor="database" className="form-label">Database*</label>
+          <input
+            type="text"
+            className="form-control"
+            id="database"
+            name="database"
+            value={formData.connection_details.database || ''}
+            onChange={handleDetailChange}
+            required
+          />
+        </div>
+      </>
+    );
   };
 
   return (
-    <div className="card mb-4 shadow-sm">
-      <div className="card-header bg-light d-flex justify-content-between align-items-center">
-        <h5 className="mb-0">
-          <i className="bi bi-database me-2"></i>
-          Data Source
-        </h5>
-        <button
-          className="btn btn-sm btn-outline-primary"
-          onClick={() => setShowForm(!showForm)}
-        >
-          {showForm ? 'Hide' : 'Change'} Connection
-        </button>
+    <form onSubmit={handleSubmit}>
+      <div className="mb-3">
+        <label htmlFor="name" className="form-label">Connection Name*</label>
+        <input
+          type="text"
+          className="form-control"
+          id="name"
+          name="name"
+          value={formData.name}
+          onChange={handleInputChange}
+          placeholder="My Snowflake Connection"
+          required
+        />
+        <div className="form-text">
+          A friendly name to identify this connection
+        </div>
       </div>
 
-      {!showForm ? (
-        <div className="card-body">
-          <div className="row">
-            <div className="col-md-6">
-              <p className="mb-1"><strong>Connection:</strong></p>
-              <code className="text-break">{connectionString || 'Not set'}</code>
-            </div>
-            <div className="col-md-6">
-              <p className="mb-1"><strong>Table:</strong></p>
-              <code>{tableName || 'Not set'}</code>
-            </div>
-          </div>
-        </div>
-      ) : (
-        <div className="card-body">
-          <form onSubmit={handleSubmit}>
-            {/* Database type selector */}
-            <div className="mb-3">
-              <label className="form-label">Database Type</label>
-              <select
-                className="form-select"
-                value={databaseType}
-                onChange={handleDatabaseTypeChange}
-              >
-                <option value="snowflake">Snowflake (Recommended)</option>
-                <option value="duckdb">DuckDB</option>
-                <option value="postgresql">PostgreSQL</option>
-                <option value="other">Other</option>
-              </select>
-            </div>
+      <div className="mb-3">
+        <label htmlFor="connection_type" className="form-label">Connection Type*</label>
+        <select
+          className="form-select"
+          id="connection_type"
+          name="connection_type"
+          value={formData.connection_type}
+          onChange={handleInputChange}
+          required
+        >
+          <option value="snowflake">Snowflake</option>
+          <option value="duckdb">DuckDB</option>
+          <option value="postgresql">PostgreSQL</option>
+        </select>
+      </div>
 
-            {/* Database-specific form */}
-            {renderDatabaseForm()}
+      {renderConnectionForm()}
 
-            {/* Table selection */}
-            <div className="mb-3">
-              <label htmlFor="tableName" className="form-label">Table Name</label>
-              {loadingTables ? (
-                <div className="d-flex align-items-center">
-                  <div className="spinner-border spinner-border-sm me-2" role="status">
-                    <span className="visually-hidden">Loading tables...</span>
-                  </div>
-                  <span>Loading available tables...</span>
-                </div>
-              ) : tables.length > 0 ? (
-                <select
-                  className="form-select"
-                  id="tableName"
-                  value={tableName}
-                  onChange={(e) => setTableName(e.target.value)}
-                  required
-                >
-                  {tables.map(table => (
-                    <option key={table} value={table}>{table}</option>
-                  ))}
-                </select>
-              ) : (
-                <>
-                  <input
-                    type="text"
-                    className="form-control"
-                    id="tableName"
-                    value={tableName}
-                    onChange={(e) => setTableName(e.target.value)}
-                    placeholder="e.g., employees"
-                    required
-                  />
-                  {tableError && (
-                    <div className="form-text text-danger">
-                      {tableError}. Please enter table name manually.
-                    </div>
-                  )}
-                </>
-              )}
+      {/* Test Connection Results */}
+      {testResults && (
+        <div className={`alert ${testResults.success ? 'alert-success' : 'alert-danger'} mt-3`}>
+          <i className={`bi ${testResults.success ? 'bi-check-circle-fill' : 'bi-exclamation-triangle-fill'} me-2`}></i>
+          <strong>{testResults.message}</strong>
+          {testResults.details && Object.keys(testResults.details).length > 0 && (
+            <div className="mt-2">
+              <strong>Connection Details:</strong>
+              <ul className="mb-0">
+                {Object.entries(testResults.details).map(([key, value]) => (
+                  <li key={key}><strong>{key}:</strong> {value}</li>
+                ))}
+              </ul>
             </div>
-
-            <div className="d-flex justify-content-end">
-              <button type="button" className="btn btn-secondary me-2" onClick={() => setShowForm(false)}>
-                Cancel
-              </button>
-              <button type="submit" className="btn btn-primary">
-                <i className="bi bi-lightning-charge-fill me-1"></i>
-                Connect
-              </button>
-              {connectionString && !loadingTables && (
-                <button
-                  type="button"
-                  className="btn btn-outline-secondary ms-2"
-                  onClick={() => loadTables(connectionString)}
-                >
-                  <i className="bi bi-arrow-repeat me-1"></i>
-                  Refresh Tables
-                </button>
-              )}
-            </div>
-          </form>
+          )}
         </div>
       )}
-    </div>
+
+      <div className="d-flex justify-content-between mt-4">
+        <button
+          type="button"
+          className="btn btn-outline-primary"
+          onClick={handleTestConnection}
+          disabled={testLoading}
+        >
+          {testLoading ? (
+            <>
+              <span className="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
+              Testing...
+            </>
+          ) : (
+            <>
+              <i className="bi bi-lightning-charge me-1"></i>
+              Test Connection
+            </>
+          )}
+        </button>
+
+        <div>
+          <button
+            type="button"
+            className="btn btn-secondary me-2"
+            onClick={onCancel}
+          >
+            Cancel
+          </button>
+          <button
+            type="submit"
+            className="btn btn-primary"
+          >
+            {initialConnection ? 'Update Connection' : 'Create Connection'}
+          </button>
+        </div>
+      </div>
+    </form>
   );
 }
 

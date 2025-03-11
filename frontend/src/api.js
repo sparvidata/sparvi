@@ -246,6 +246,44 @@ export const updatePreviewSettings = async (previewSettings) => {
   return response.data;
 };
 
+// Add these functions to your existing api.js file
+
+// Get all connections for current organization
+export const fetchConnections = async () => {
+  const response = await apiClient.get('/api/connections');
+  return response.data;
+};
+
+// Create a new connection
+export const createConnection = async (connectionData) => {
+  const response = await apiClient.post('/api/connections', connectionData);
+  return response.data;
+};
+
+// Update an existing connection
+export const updateConnection = async (id, connectionData) => {
+  const response = await apiClient.put(`/api/connections/${id}`, connectionData);
+  return response.data;
+};
+
+// Delete a connection
+export const deleteConnection = async (id) => {
+  const response = await apiClient.delete(`/api/connections/${id}`);
+  return response.data;
+};
+
+// Test a connection
+export const testConnection = async (connectionData) => {
+  const response = await apiClient.post('/api/connections/test', connectionData);
+  return response.data;
+};
+
+// Set a connection as default
+export const setDefaultConnection = async (id) => {
+  const response = await apiClient.put(`/api/connections/${id}/default`);
+  return response.data;
+};
+
 // Export the default functions
 export default {
   fetchProfile,
@@ -269,5 +307,11 @@ export default {
   fetchDataPreview,
   updateOrganizationSettings,
   getPreviewSettings,
-  updatePreviewSettings
+  updatePreviewSettings,
+  fetchConnections,
+  createConnection,
+  updateConnection,
+  deleteConnection,
+  testConnection,
+  setDefaultConnection
 };

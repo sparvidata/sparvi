@@ -1,3 +1,5 @@
+import urllib
+
 from flask import Flask, render_template, jsonify, request
 import datetime
 import os
@@ -143,6 +145,39 @@ def token_required(f):
         return f(current_user, organization_id, *args, **kwargs)
 
     return decorated
+
+
+def build_connection_string(connection_data):
+    """Build connection string from stored connection details"""
+    conn_type = connection_data["connection_type"]
+    details = connection_data["connection_details"]
+
+    if conn_type == "snowflake":
+        username = details.get("username", "")
+        password = details.get("password", "")
+        account = details.get("account", "")
+        database = details.get("database", "")
+        schema = details.get("schema", "PUBLIC")
+        warehouse = details.get("warehouse", "")
+
+        # URL encode password
+        encoded_password = urllib.parse.quote_plus(password)
+
+        return f"snowflake://{username}:{encoded_password}@{account}/{database}/{schema}?warehouse={warehouse}"
+
+    # Add other connection types as needed
+    return None
+
+
+def get_current_user():
+    """Get current user from auth token"""
+    auth_header = request.headers.get('Authorization')
+    if not auth_header or not auth_header.startswith('Bearer '):
+        return None
+
+    token = auth_header.split(' ')[1]
+    supabase_mgr = SupabaseManager()
+    return supabase_mgr.verify_token(token)
 
 
 @app.route("/api/login", methods=["POST"])
@@ -338,69 +373,49 @@ def generate_default_validations(current_user, organization_id):
         return jsonify({"error": str(e)}), 500
 
 
-# Replace the existing get_tables endpoint with this version
-
-# Replace the existing get_tables endpoint with this corrected version
-
 @app.route("/api/tables", methods=["GET"])
 @token_required
 def get_tables(current_user, organization_id):
-    connection_string = request.args.get("connection_string", os.getenv("DEFAULT_CONNECTION_STRING"))
+    """Get all tables for a connection"""
     try:
-        logger.info(f"Getting tables for connection: {connection_string}")
+        connection_string = request.args.get("connection_string")
 
-        # Resolve any environment variable references
-        from core.utils.connection_utils import resolve_connection_string, detect_connection_type
-        resolved_connection = resolve_connection_string(connection_string)
-        db_type = detect_connection_type(resolved_connection)
-        logger.info(f"Database type detected: {db_type}")
+        if not connection_string:
+            return jsonify({"error": "Connection string is required"}), 400
 
-        # Create engine and get inspector
-        engine = create_engine(resolved_connection)
+        # Parse connection string to extract components
+        parts = connection_string.replace('snowflake://', '').split('@')
+        username = parts[0].split(':')[0]  # Get username
+        connection_details = parts[1]
+
+        # Get connection details from Supabase
+        supabase_mgr = SupabaseManager()
+        db_connections = supabase_mgr.supabase.table("database_connections") \
+            .select("*") \
+            .eq("organization_id", organization_id) \
+            .execute()
+
+        if not db_connections.data:
+            return jsonify({"error": "Connection not found"}), 404
+
+        # Get credentials from connection_details JSON
+        conn_details = db_connections.data[0]["connection_details"]
+        password = conn_details["password"]
+
+        # Build proper connection string with password
+        proper_connection_string = f"snowflake://{username}:{password}@{connection_details}"
+
+        # Create engine with complete connection string
+        engine = create_engine(proper_connection_string)
         inspector = inspect(engine)
-
-        # Test connection
-        with engine.connect() as conn:
-            pass  # Just test that we can connect
-
-        # Get all table names with optimized approach for Snowflake
-        if db_type == "snowflake":
-            # Use specific Snowflake SQL for better performance
-            with engine.connect() as conn:
-                # Get current schema and database from connection
-                schema_query = "SELECT CURRENT_SCHEMA()"
-                schema_result = conn.execute(text(schema_query)).fetchone()
-                current_schema = schema_result[0] if schema_result else "PUBLIC"
-
-                database_query = "SELECT CURRENT_DATABASE()"
-                db_result = conn.execute(text(database_query)).fetchone()
-                current_database = db_result[0] if db_result else None
-
-                # Query to get tables from the information schema
-                # This is optimized for Snowflake and returns tables the user has access to
-                tables_query = f"""
-                    SELECT TABLE_NAME 
-                    FROM INFORMATION_SCHEMA.TABLES 
-                    WHERE TABLE_SCHEMA = '{current_schema}'
-                    AND TABLE_TYPE = 'BASE TABLE'
-                    ORDER BY TABLE_NAME
-                """
-                result = conn.execute(text(tables_query))
-                tables = [row[0] for row in result]
-                logger.info(f"Found {len(tables)} tables using Snowflake-specific query")
-        else:
-            # For non-Snowflake databases, use SQLAlchemy's generic approach
-            tables = inspector.get_table_names()
-            logger.info(f"Found {len(tables)} tables using generic SQLAlchemy inspector")
+        tables = inspector.get_table_names()
 
         return jsonify({"tables": tables})
+
     except Exception as e:
         logger.error(f"Error getting tables: {str(e)}")
-        traceback.print_exc()
-        error_message = str(e)
-        if "could not connect" in error_message.lower():
-            return jsonify({"error": "Could not connect to database. Please check your connection string."}), 500
-        return jsonify({"error": error_message}), 500
+        logger.error(traceback.format_exc())
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route("/")
@@ -831,6 +846,422 @@ def get_data_preview(current_user, organization_id):
         logger.error(f"Error generating data preview: {str(e)}")
         logger.error(traceback.format_exc())
         return jsonify({"error": f"Failed to generate preview: {str(e)}"}), 500
+
+
+# Connection management routes
+@app.route("/api/connections", methods=["GET"])
+@token_required
+def get_connections(current_user, organization_id):
+    """Get all connections for the organization"""
+    try:
+        # Query connections for this organization
+        supabase_mgr = SupabaseManager()
+
+        # Use the Supabase client to query the database_connections table
+        connections_response = supabase_mgr.supabase.table("database_connections") \
+            .select("*") \
+            .eq("organization_id", organization_id) \
+            .order("created_at") \
+            .execute()
+
+        connections = connections_response.data if connections_response.data else []
+
+        # For security, remove passwords from the response
+        for conn in connections:
+            if 'connection_details' in conn and 'password' in conn['connection_details']:
+                conn['connection_details'].pop('password', None)
+
+        return jsonify({"connections": connections})
+    except Exception as e:
+        logger.error(f"Error fetching connections: {str(e)}")
+        logger.error(traceback.format_exc())
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/connections", methods=["POST"])
+@token_required
+def create_connection(current_user, organization_id):
+    """Create a new database connection"""
+    data = request.get_json()
+
+    # Validate input
+    required_fields = ["name", "connection_type", "connection_details"]
+    for field in required_fields:
+        if field not in data:
+            return jsonify({"error": f"Missing required field: {field}"}), 400
+
+    try:
+        # Check if this is the first connection - if so, make it the default
+        is_default = False
+        supabase_mgr = SupabaseManager()
+
+        # Count existing connections
+        count_response = supabase_mgr.supabase.table("database_connections") \
+            .select("id", count="exact") \
+            .eq("organization_id", organization_id) \
+            .execute()
+
+        # If no connections exist, make this one the default
+        if count_response.count == 0:
+            is_default = True
+
+        # Insert the new connection
+        connection_data = {
+            "organization_id": organization_id,
+            "created_by": current_user,
+            "name": data["name"],
+            "connection_type": data["connection_type"],
+            "connection_details": data["connection_details"],
+            "is_default": is_default
+        }
+
+        response = supabase_mgr.supabase.table("database_connections") \
+            .insert(connection_data) \
+            .execute()
+
+        # If successful, return the new connection
+        if response.data and len(response.data) > 0:
+            new_connection = response.data[0]
+
+            # For security, remove password from the response
+            if 'connection_details' in new_connection and 'password' in new_connection['connection_details']:
+                new_connection['connection_details'].pop('password', None)
+
+            return jsonify({"connection": new_connection})
+        else:
+            return jsonify({"error": "Failed to create connection"}), 500
+
+    except Exception as e:
+        logger.error(f"Error creating connection: {str(e)}")
+        logger.error(traceback.format_exc())
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/connections/<connection_id>", methods=["PUT"])
+@token_required
+def update_connection(current_user, organization_id, connection_id):
+    """Update an existing database connection"""
+    data = request.get_json()
+
+    # Validate input
+    required_fields = ["name", "connection_type", "connection_details"]
+    for field in required_fields:
+        if field not in data:
+            return jsonify({"error": f"Missing required field: {field}"}), 400
+
+    try:
+        supabase_mgr = SupabaseManager()
+
+        # First check if the connection exists and belongs to this organization
+        get_response = supabase_mgr.supabase.table("database_connections") \
+            .select("*") \
+            .eq("id", connection_id) \
+            .eq("organization_id", organization_id) \
+            .execute()
+
+        if not get_response.data or len(get_response.data) == 0:
+            return jsonify({"error": "Connection not found or you don't have permission to update it"}), 404
+
+        # Handle password updates specially - don't update password if not provided
+        existing_connection = get_response.data[0]
+        update_data = {
+            "name": data["name"],
+            "connection_type": data["connection_type"],
+            "connection_details": data["connection_details"],
+            "updated_at": datetime.datetime.now().isoformat()
+        }
+
+        # If password is empty and we're updating, keep the existing password
+        if not data["connection_details"].get("password") and \
+                "password" in existing_connection["connection_details"]:
+            update_data["connection_details"]["password"] = existing_connection["connection_details"]["password"]
+
+        # Update the connection
+        response = supabase_mgr.supabase.table("database_connections") \
+            .update(update_data) \
+            .eq("id", connection_id) \
+            .eq("organization_id", organization_id) \
+            .execute()
+
+        # If successful, return the updated connection
+        if response.data and len(response.data) > 0:
+            updated_connection = response.data[0]
+
+            # For security, remove password from the response
+            if 'connection_details' in updated_connection and 'password' in updated_connection['connection_details']:
+                updated_connection['connection_details'].pop('password', None)
+
+            return jsonify({"connection": updated_connection})
+        else:
+            return jsonify({"error": "Failed to update connection"}), 500
+
+    except Exception as e:
+        logger.error(f"Error updating connection: {str(e)}")
+        logger.error(traceback.format_exc())
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/connections/<connection_id>", methods=["DELETE"])
+@token_required
+def delete_connection(current_user, organization_id, connection_id):
+    """Delete a database connection"""
+    try:
+        supabase_mgr = SupabaseManager()
+
+        # First check if the connection exists and belongs to this organization
+        get_response = supabase_mgr.supabase.table("database_connections") \
+            .select("is_default") \
+            .eq("id", connection_id) \
+            .eq("organization_id", organization_id) \
+            .execute()
+
+        if not get_response.data or len(get_response.data) == 0:
+            return jsonify({"error": "Connection not found or you don't have permission to delete it"}), 404
+
+        # Don't allow deleting the default connection
+        if get_response.data[0].get("is_default", False):
+            return jsonify(
+                {"error": "Cannot delete the default connection. Make another connection the default first."}), 400
+
+        # Delete the connection
+        delete_response = supabase_mgr.supabase.table("database_connections") \
+            .delete() \
+            .eq("id", connection_id) \
+            .eq("organization_id", organization_id) \
+            .execute()
+
+        # Check if any rows were deleted
+        if delete_response.data and len(delete_response.data) > 0:
+            return jsonify({"success": True})
+        else:
+            return jsonify({"error": "Failed to delete connection"}), 500
+
+    except Exception as e:
+        logger.error(f"Error deleting connection: {str(e)}")
+        logger.error(traceback.format_exc())
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/connections/<connection_id>/default", methods=["PUT"])
+@token_required
+def set_default_connection(current_user, organization_id, connection_id):
+    """Set a connection as the default"""
+    try:
+        supabase_mgr = SupabaseManager()
+
+        # First check if the connection exists and belongs to this organization
+        get_response = supabase_mgr.supabase.table("database_connections") \
+            .select("*") \
+            .eq("id", connection_id) \
+            .eq("organization_id", organization_id) \
+            .execute()
+
+        if not get_response.data or len(get_response.data) == 0:
+            return jsonify({"error": "Connection not found or you don't have permission to update it"}), 404
+
+        # First, set all connections for this organization to not default
+        update_all_response = supabase_mgr.supabase.table("database_connections") \
+            .update({"is_default": False}) \
+            .eq("organization_id", organization_id) \
+            .execute()
+
+        # Then set this connection as default
+        update_response = supabase_mgr.supabase.table("database_connections") \
+            .update({"is_default": True}) \
+            .eq("id", connection_id) \
+            .eq("organization_id", organization_id) \
+            .execute()
+
+        # If successful, return success
+        if update_response.data and len(update_response.data) > 0:
+            return jsonify({"success": True})
+        else:
+            return jsonify({"error": "Failed to set default connection"}), 500
+
+    except Exception as e:
+        logger.error(f"Error setting default connection: {str(e)}")
+        logger.error(traceback.format_exc())
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/connections/test", methods=["POST"])
+@token_required
+def test_connection(current_user, organization_id):
+    """Test a database connection without saving it"""
+    data = request.get_json()
+
+    # Validate input
+    required_fields = ["connection_type", "connection_details"]
+    for field in required_fields:
+        if field not in data:
+            return jsonify({"error": f"Missing required field: {field}"}), 400
+
+    # Build connection string based on connection type
+    connection_string = ""
+    connection_type = data["connection_type"]
+    details = data["connection_details"]
+
+    try:
+        if connection_type == "snowflake":
+            if details.get("useEnvVars", False):
+                # Use environment variables
+                prefix = details.get("envVarPrefix", "SNOWFLAKE")
+                # Create connection string using environment variables
+                from core.utils.connection_utils import get_snowflake_connection_from_env
+                connection_string = get_snowflake_connection_from_env(prefix)
+
+                if not connection_string:
+                    return jsonify({
+                        "error": f"Required environment variables for {prefix} connection not found"
+                    }), 400
+            else:
+                # Create direct connection string
+                try:
+                    username = details.get("username", "")
+                    password = details.get("password", "")
+                    account = details.get("account", "")
+                    database = details.get("database", "")
+                    schema = details.get("schema", "PUBLIC")
+                    warehouse = details.get("warehouse", "")
+
+                    # Validate required fields
+                    if not all([username, password, account, database, warehouse]):
+                        return jsonify({
+                            "error": "Missing required Snowflake connection parameters"
+                        }), 400
+
+                    # URL encode password to handle special characters
+                    import urllib.parse
+                    encoded_password = urllib.parse.quote_plus(password)
+
+                    # Build connection string
+                    connection_string = f"snowflake://{username}:{encoded_password}@{account}/{database}/{schema}?warehouse={warehouse}"
+                except Exception as e:
+                    return jsonify({
+                        "error": f"Error building Snowflake connection string: {str(e)}"
+                    }), 400
+
+        elif connection_type == "duckdb":
+            path = details.get("path", "")
+            if not path:
+                return jsonify({"error": "Missing required DuckDB path"}), 400
+
+            connection_string = f"duckdb:///{path}"
+
+        elif connection_type == "postgresql":
+            try:
+                username = details.get("username", "")
+                password = details.get("password", "")
+                host = details.get("host", "")
+                port = details.get("port", "5432")
+                database = details.get("database", "")
+
+                # Validate required fields
+                if not all([username, password, host, database]):
+                    return jsonify({
+                        "error": "Missing required PostgreSQL connection parameters"
+                    }), 400
+
+                # URL encode password to handle special characters
+                import urllib.parse
+                encoded_password = urllib.parse.quote_plus(password)
+
+                # Build connection string
+                connection_string = f"postgresql://{username}:{encoded_password}@{host}:{port}/{database}"
+            except Exception as e:
+                return jsonify({
+                    "error": f"Error building PostgreSQL connection string: {str(e)}"
+                }), 400
+
+        else:
+            return jsonify({"error": f"Unsupported connection type: {connection_type}"}), 400
+
+        # Now test the connection by trying to connect to the database
+        try:
+            # Create SQLAlchemy engine
+            engine = create_engine(connection_string)
+
+            # Try to connect and get database info
+            with engine.connect() as conn:
+                # Get different information based on database type
+                if connection_type == "snowflake":
+                    # Get Snowflake info
+                    result = conn.execute(text("SELECT CURRENT_USER(), CURRENT_ROLE(), CURRENT_DATABASE(), CURRENT_SCHEMA(), CURRENT_WAREHOUSE()"))
+                    row = result.fetchone()
+
+                    return jsonify({
+                        "message": "Connection successful!",
+                        "details": {
+                            "user": row[0],
+                            "role": row[1],
+                            "database": row[2],
+                            "schema": row[3],
+                            "warehouse": row[4]
+                        }
+                    })
+
+                elif connection_type == "duckdb":
+                    # Get DuckDB info - simple version check
+                    result = conn.execute(text("SELECT sqlite_version()"))
+                    row = result.fetchone()
+
+                    # Get table count
+                    tables_result = conn.execute(text("SELECT COUNT(*) FROM sqlite_master WHERE type='table'"))
+                    tables_row = tables_result.fetchone()
+
+                    return jsonify({
+                        "message": "Connection successful!",
+                        "details": {
+                            "version": row[0],
+                            "table_count": tables_row[0]
+                        }
+                    })
+
+                elif connection_type == "postgresql":
+                    # Get PostgreSQL info
+                    result = conn.execute(text("SELECT current_user, current_database(), version()"))
+                    row = result.fetchone()
+
+                    return jsonify({
+                        "message": "Connection successful!",
+                        "details": {
+                            "user": row[0],
+                            "database": row[1],
+                            "version": row[2]
+                        }
+                    })
+
+        except Exception as e:
+            logger.error(f"Connection test failed: {str(e)}")
+            logger.error(traceback.format_exc())
+            return jsonify({"error": f"Connection failed: {str(e)}"}), 400
+
+    except Exception as e:
+        logger.error(f"Error testing connection: {str(e)}")
+        logger.error(traceback.format_exc())
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/connections/<connection_id>/credentials', methods=['GET'])
+def get_connection_credentials(connection_id):
+    """Get decrypted credentials for a connection"""
+    try:
+        # Get current user from auth token
+        current_user = get_current_user()
+
+        # Get connection details from Supabase
+        supabase_mgr = SupabaseManager()
+        connection = supabase_mgr.get_connection(connection_id)
+
+        if not connection:
+            return jsonify({"error": "Connection not found"}), 404
+
+        # Return decrypted credentials
+        return jsonify(connection.get("connection_details", {}))
+
+    except Exception as e:
+        logger.error(f"Error getting connection credentials: {str(e)}")
+        return jsonify({"error": "Failed to get connection credentials"}), 500
 
 
 if __name__ == "__main__":

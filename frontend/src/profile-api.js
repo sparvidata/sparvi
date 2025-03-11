@@ -1,4 +1,3 @@
-// frontend/src/profile-api.js - updated to handle Snowflake connections
 import axios from 'axios';
 import { supabase } from './lib/supabase';
 
@@ -53,7 +52,9 @@ const getToken = async () => {
 
 // Sanitize connection string for logging - don't display passwords
 const sanitizeConnectionString = (connectionString) => {
-  if (!connectionString) return '';
+  if (!connectionString || typeof connectionString !== 'string') {
+    return '';
+  }
 
   try {
     // If it contains a password, replace it with asterisks
@@ -71,63 +72,48 @@ const sanitizeConnectionString = (connectionString) => {
     }
     return connectionString;
   } catch (e) {
-    // If any error occurs during parsing, return masked version
-    return connectionString.replace(/:[^@:]+@/, ':******@');
+    console.log("Error sanitizing connection string:", e);
+    return '';
   }
 };
 
+
 // Export a direct fetch profile function that doesn't rely on interceptors
-export const directFetchProfile = async (connectionString, tableName) => {
+export const directFetchProfile = async (connection, tableName) => {
+  // Debug log to see full connection structure
+  console.log('Full connection object:', {
+    ...connection,
+    credentials: connection.credentials ? '[REDACTED]' : 'missing',
+    connection_details: connection.connection_details ? '[REDACTED]' : 'missing'
+  });
+
+  // Get credentials from the correct location
+  const credentials = connection.credentials || connection.connection_details;
+
+  // Verify we have all required fields
+  if (!credentials || !credentials.password) {
+    throw new Error('Missing required connection credentials');
+  }
+
+  const connectionString = `snowflake://${credentials.username}:${credentials.password}@${credentials.account}/${credentials.database}/${credentials.schema}?warehouse=${credentials.warehouse}`;
+
   const safeConnString = sanitizeConnectionString(connectionString);
   console.log('directFetchProfile called with:', { connectionString: safeConnString, tableName });
 
-  try {
-    // Get the token directly
-    const token = await getToken();
+  const token = await getToken();
 
-    console.log(`Token available: ${!!token}`);
-    if (!token) {
-      console.error('No authentication token available');
-      throw new Error('Authentication required');
-    }
+  const response = await axios.get(`${API_BASE_URL}/api/profile`, {
+    params: {
+      connection_string: connectionString,
+      table: tableName
+    },
+    headers: { Authorization: `Bearer ${token}` }
+  });
 
-    // Make the request with explicit token
-    console.log(`Making GET request to ${API_BASE_URL}/api/profile`, {
-      params: {
-        connection_string: connectionString, // Original connection string for backend
-        table: tableName
-      },
-      headers: { Authorization: `Bearer ${token}` }
-    });
-
-    const response = await axios.get(`${API_BASE_URL}/api/profile`, {
-      params: {
-        connection_string: connectionString,
-        table: tableName
-      },
-      headers: { Authorization: `Bearer ${token}` }
-    });
-
-    console.log('Profile API response received');
-    return response.data;
-  } catch (error) {
-    console.error('Profile API error:', error);
-    if (error.response) {
-      // The request was made and the server responded with a status code
-      // that falls out of the range of 2xx
-      console.error('Error data:', error.response.data);
-      console.error('Error status:', error.response.status);
-      console.error('Error headers:', error.response.headers);
-    } else if (error.request) {
-      // The request was made but no response was received
-      console.error('No response received:', error.request);
-    } else {
-      // Something happened in setting up the request that triggered an Error
-      console.error('Request setup error:', error.message);
-    }
-    throw error;
-  }
+  return response.data;
 };
+
+
 
 // Export a direct fetch tables function with Snowflake support
 export const directFetchTables = async (connectionString) => {

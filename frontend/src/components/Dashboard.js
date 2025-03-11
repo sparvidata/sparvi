@@ -6,7 +6,7 @@ import AnomalyList from './AnomalyList';
 import SchemaShift from './SchemaShift';
 import ValidationResults from './ValidationResults';
 import AlertsPanel from './AlertsPanel';
-import ConnectionForm from './ConnectionForm';
+import DataSourcePanel from './DataSourcePanel';
 import HistoryTab from './HistoryTab';
 import { Tabs, Tab } from 'react-bootstrap';
 import { fetchDataPreview } from '../api';
@@ -20,10 +20,8 @@ function Dashboard({ onStoreRefreshHandler }) {
   const [loading, setLoading] = useState(true);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [error, setError] = useState(null);
-  const [connectionString, setConnectionString] = useState(
-    localStorage.getItem('connectionString') || "duckdb:///C:/Users/mhard/PycharmProjects/sparvidata/backend/my_database.duckdb"
-  );
-  const [tableName, setTableName] = useState(localStorage.getItem('tableName') || "employees");
+  const [tableName, setTableName] = useState(null);
+  const [activeConnection, setActiveConnection] = useState(null);
   const [activeTab, setActiveTab] = useState('overview');
   const [sampleData, setSampleData] = useState([]);
   const [loadingSamples, setLoadingSamples] = useState(false);
@@ -34,7 +32,7 @@ function Dashboard({ onStoreRefreshHandler }) {
     restrictedColumns: []
   });
 
-  console.log("Dashboard rendered with:", { connectionString, tableName });
+  console.log("Dashboard rendered with:", { activeConnection, tableName });
 
   // Function to handle profile selection from history
   const handleSelectProfile = (index) => {
@@ -45,7 +43,7 @@ function Dashboard({ onStoreRefreshHandler }) {
 
   // Function to fetch sample data on-demand
   const fetchSampleData = async () => {
-    if (!connectionString || !tableName) {
+    if (!activeConnection || !tableName) {
       setPreviewError("Connection string and table name are required");
       return;
     }
@@ -55,7 +53,7 @@ function Dashboard({ onStoreRefreshHandler }) {
       setPreviewError(null);
 
       const response = await fetchDataPreview(
-        connectionString,
+        activeConnection,
         tableName,
         previewSettings.maxRows
       );
@@ -79,35 +77,39 @@ function Dashboard({ onStoreRefreshHandler }) {
 
   // Define the profile data handler
   const handleProfileData = useCallback(async () => {
-    console.log("Profile Data function called");
-    if (connectionString && tableName) {
-      console.log("Profiling data for:", { connectionString, tableName });
+    console.log("Active Connection Full Structure:", {
+      id: activeConnection?.id,
+      type: activeConnection?.connection_type,
+      details: activeConnection?.details,
+      connection_details: activeConnection?.connection_details
+    });
+
+    if (activeConnection && tableName) {
       setProfileData(null);
       setLoading(true);
       setError(null);
 
       try {
-        const data = await directFetchProfile(connectionString, tableName);
-        console.log("Profile successful, data received:", data);
+        // Use the connection details directly from activeConnection
+        const data = await directFetchProfile(activeConnection, tableName);
         setProfileData(data);
-
-        // Also refresh history data
         await loadProfileHistory(tableName);
-
-        // Reset to showing the latest profile after profiling
         setActiveProfileIndex(0);
-
       } catch (err) {
-        console.error("Profile failed:", err);
-        setError(err.response?.data?.error || 'Failed to profile data');
+        console.error("Profile failed with details:", {
+          message: err.message,
+          type: err.name,
+          response: err.response?.data
+        });
+        setError(err.response?.data?.error || err.message || 'Failed to profile data');
       } finally {
         setLoading(false);
       }
-    } else {
-      console.log("Cannot profile: missing connection string or table name");
-      setError("Connection string and table name are required to profile data");
     }
-  }, [connectionString, tableName]); // Dependencies
+  }, [activeConnection, tableName]);
+
+
+
 
   useEffect(() => {
     // This function handles all initial loading
@@ -127,7 +129,7 @@ function Dashboard({ onStoreRefreshHandler }) {
       setLoading(true);
 
       // Connections
-      const storedConnString = connectionString;
+      const storedConnString = activeConnection;
       const storedTable = tableName;
 
       console.log("%c[Dashboard] Connection info from localStorage:", "color: green", {
@@ -251,29 +253,29 @@ function Dashboard({ onStoreRefreshHandler }) {
     }
   };
 
-  const handleConnectionSubmit = (newConnection, newTable) => {
-    console.log('[Dashboard] Connection form submitted:', { newConnection, newTable });
-
-    // Make sure the new values are different from the current ones
-    if (newConnection !== connectionString || newTable !== tableName) {
-      console.log('[Dashboard] Setting new connection and table values');
-      setConnectionString(newConnection);
-      setTableName(newTable);
-
-      // Save connection info to localStorage
-      localStorage.setItem('connectionString', newConnection);
-      localStorage.setItem('tableName', newTable);
-
-      // Reset active profile index when changing tables
-      setActiveProfileIndex(0);
-
-      // Reset profileData to indicate no profile run yet
-      setProfileData(null);
-
-      // Still load profile history for the new table
-      loadProfileHistory(newTable);
-    }
-  };
+  // const handleConnectionSubmit = (newConnection, newTable) => {
+  //   console.log('[Dashboard] Connection form submitted:', { newConnection, newTable });
+  //
+  //   // Make sure the new values are different from the current ones
+  //   if (newConnection !== activeConnection || newTable !== tableName) {
+  //     console.log('[Dashboard] Setting new connection and table values');
+  //     setConnectionString(newConnection);
+  //     setTableName(newTable);
+  //
+  //     // Save connection info to localStorage
+  //     localStorage.setItem('connectionString', newConnection);
+  //     localStorage.setItem('tableName', newTable);
+  //
+  //     // Reset active profile index when changing tables
+  //     setActiveProfileIndex(0);
+  //
+  //     // Reset profileData to indicate no profile run yet
+  //     setProfileData(null);
+  //
+  //     // Still load profile history for the new table
+  //     loadProfileHistory(newTable);
+  //   }
+  // };
 
   // Get the active profile data for display
   const displayData = selectedProfileData || profileData;
@@ -289,7 +291,7 @@ function Dashboard({ onStoreRefreshHandler }) {
           Data Profiler
         </h2>
         <div>
-          <button className="btn btn-primary" onClick={handleProfileData} disabled={loading || !connectionString || !tableName}>
+          <button className="btn btn-primary" onClick={handleProfileData} disabled={loading || !activeConnection || !tableName}>
             {loading ? (
               <>
                 <span className="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>
@@ -304,10 +306,18 @@ function Dashboard({ onStoreRefreshHandler }) {
         </div>
       </div>
 
-      <ConnectionForm
-          initialConnection={connectionString}
-          initialTable={tableName}
-          onSubmit={handleConnectionSubmit}
+      <DataSourcePanel
+        tableName={tableName}
+        onTableChange={(newTable) => {
+          setTableName(newTable);
+          // We can still store in localStorage if needed
+          localStorage.setItem('tableName', newTable);
+        }}
+        onConnectionChange={(connection) => {
+          setActiveConnection(connection);
+          setActiveProfileIndex(0);
+          setProfileData(null);
+        }}
       />
 
       {error && (
@@ -839,7 +849,7 @@ function Dashboard({ onStoreRefreshHandler }) {
                     /* Current ValidationResults component for the latest profile */
                     <ValidationResults
                       tableName={tableName}
-                      connectionString={connectionString}
+                      activeConnection={activeConnection}
                     />
                   )}
                 </div>
@@ -940,7 +950,7 @@ function Dashboard({ onStoreRefreshHandler }) {
             </Tab>
           </Tabs>
         </>
-      ) : connectionString && tableName ? (
+      ) : activeConnection && tableName ? (
         <div className="alert alert-info mt-4">
           <i className="bi bi-info-circle-fill me-2"></i>
           Connection established. Click the <strong>"Profile Data"</strong> button to analyze your data.

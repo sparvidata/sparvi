@@ -102,6 +102,12 @@ function Header({ session }) {
                   </Link>
                 </li>
                 <li className="nav-item">
+                  <Link className={`nav-link ${location.pathname === '/connections' ? 'active' : ''}`} to="/connections">
+                    <i className="bi bi-database me-1"></i>
+                    Connections
+                  </Link>
+                </li>
+                <li className="nav-item">
                   <Link className={`nav-link ${isDocumentation ? 'active' : ''}`} to="/docs/validations">
                     <i className="bi bi-book me-1"></i>
                     Documentation
