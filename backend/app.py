@@ -254,6 +254,63 @@ def get_validations(current_user, organization_id):
         return jsonify({"error": str(e)}), 500
 
 
+@app.route("/api/validations", methods=["POST"])
+@token_required
+def add_validation_rule(current_user, organization_id):
+    """Add a new validation rule for a table"""
+    table_name = request.args.get("table")
+    if not table_name:
+        return jsonify({"error": "Table name is required"}), 400
+
+    rule_data = request.get_json()
+    if not rule_data:
+        return jsonify({"error": "Rule data is required"}), 400
+
+    required_fields = ["name", "description", "query", "operator", "expected_value"]
+    for field in required_fields:
+        if field not in rule_data:
+            return jsonify({"error": f"Missing required field: {field}"}), 400
+
+    try:
+        logger.info(f"Adding validation rule for organization: {organization_id}, table: {table_name}")
+        rule_id = validation_manager.add_rule(organization_id, table_name, rule_data)
+
+        if rule_id:
+            return jsonify({"success": True, "id": rule_id})
+        else:
+            return jsonify({"error": "Failed to add validation rule"}), 500
+    except Exception as e:
+        logger.error(f"Error adding validation rule: {str(e)}")
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/validations", methods=["DELETE"])
+@token_required
+def delete_validation_rule(current_user, organization_id):
+    """Delete a validation rule"""
+    table_name = request.args.get("table")
+    rule_name = request.args.get("rule_name")
+
+    if not table_name:
+        return jsonify({"error": "Table name is required"}), 400
+    if not rule_name:
+        return jsonify({"error": "Rule name is required"}), 400
+
+    try:
+        logger.info(f"Deleting validation rule {rule_name} for organization: {organization_id}, table: {table_name}")
+        success = validation_manager.delete_rule(organization_id, table_name, rule_name)
+
+        if success:
+            return jsonify({"success": True})
+        else:
+            return jsonify({"error": "Rule not found or delete failed"}), 404
+    except Exception as e:
+        logger.error(f"Error deleting validation rule: {str(e)}")
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route("/api/run-validations", methods=["POST"])
 @token_required
 def run_validation_rules(current_user, organization_id):
@@ -1286,6 +1343,32 @@ def get_connection_credentials(connection_id):
         logger.error(traceback.format_exc())  # Log the full stack trace
         return jsonify({"error": "Failed to get connection credentials"}), 500
 
+
+@app.route("/api/profile-history", methods=["GET"])
+@token_required
+def get_profile_history(current_user, organization_id):
+    """Get history of profile runs for a table"""
+    table_name = request.args.get("table")
+    limit = request.args.get("limit", 10, type=int)
+
+    if not table_name:
+        return jsonify({"error": "Table name is required"}), 400
+
+    try:
+        logger.info(f"Getting profile history for organization: {organization_id}, table: {table_name}, limit: {limit}")
+
+        # Create profile history manager
+        profile_history = SupabaseProfileHistoryManager()
+
+        # Get history data
+        history_data = profile_history.get_profile_history(organization_id, table_name, limit)
+
+        logger.info(f"Retrieved {len(history_data)} profile history records")
+        return jsonify({"history": history_data})
+    except Exception as e:
+        logger.error(f"Error getting profile history: {str(e)}")
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
 
 if __name__ == "__main__":
     # In production, ensure you run with HTTPS (via a reverse proxy or WSGI server with SSL configured)

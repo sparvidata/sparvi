@@ -54,7 +54,9 @@ class SupabaseProfileHistoryManager:
         Save a profile to Supabase and manage history retention - without row-level data
         """
         try:
-            logger.info(f"Attempting to save profile for table {profile['table']} to Supabase")
+            logger.info(f"Attempting to save profile for table {profile.get('table', 'unknown')} to Supabase")
+            logger.info(f"Profile data keys: {list(profile.keys())}")
+            logger.info(f"Organization ID: {organization_id}, User ID: {user_id}")
 
             # Create a sanitized copy of the profile without any row-level data
             sanitized_profile = profile.copy()
@@ -80,17 +82,19 @@ class SupabaseProfileHistoryManager:
 
             # Create a JSON-safe copy of the profile
             serialized_profile = json.loads(json.dumps(sanitized_profile, cls=DateTimeEncoder))
+            logger.info(f"Serialized profile has {len(serialized_profile)} keys")
 
             # Sanitize connection string to remove credentials
             sanitized_connection = self.supabase._sanitize_connection_string(connection_string)
+            logger.info(f"Sanitized connection string: {sanitized_connection}")
 
             # Prepare data for saving
             data = {
                 "organization_id": organization_id,
                 "profile_id": user_id,
                 "connection_string": sanitized_connection,
-                "table_name": sanitized_profile['table'],
-                "data": serialized_profile  # Use the sanitized version
+                "table_name": sanitized_profile.get('table', 'unknown'),
+                "data": serialized_profile
             }
 
             # Create a direct Supabase client
@@ -101,9 +105,15 @@ class SupabaseProfileHistoryManager:
             supabase_url = os.getenv("SUPABASE_URL")
             supabase_key = os.getenv("SUPABASE_SERVICE_KEY")
 
+            logger.info(f"Supabase URL available: {bool(supabase_url)}")
+            logger.info(f"Supabase Service Key available: {bool(supabase_key)}")
+
             # Create the client and insert data
             direct_client = create_client(supabase_url, supabase_key)
+            logger.info("About to insert data into profiling_history table")
             response = direct_client.table("profiling_history").insert(data).execute()
+
+            logger.info(f"Insert response: {response}")
 
             if response.data and len(response.data) > 0:
                 profile_id = response.data[0].get('id')
@@ -111,6 +121,7 @@ class SupabaseProfileHistoryManager:
                 return profile_id
             else:
                 logger.warning("No data returned from Supabase after insert")
+                logger.warning(f"Response: {response}")
                 return None
 
         except Exception as e:
