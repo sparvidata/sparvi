@@ -222,6 +222,7 @@ class SupabaseValidationManager:
             logger.error(f"Error updating validation rule: {str(e)}")
             return False
 
+    # In backend/core/validations/supabase_validation_manager.py line ~330
     def store_validation_result(self, organization_id: str, rule_id: str, is_valid: bool, actual_value: Any,
                                 profile_history_id: str = None) -> str:
         """Store a validation result"""
@@ -239,6 +240,7 @@ class SupabaseValidationManager:
             # Add profile_history_id if provided
             if profile_history_id:
                 data["profile_history_id"] = profile_history_id
+                logger.info(f"Including profile_history_id: {profile_history_id} in validation result")
 
             # Create a direct Supabase client
             import os

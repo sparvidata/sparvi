@@ -251,7 +251,8 @@ class SupabaseManager:
             logger.error(f"Error deleting validation rule: {str(e)}")
             return False
 
-    def store_validation_result(self, organization_id: str, rule_id: str, is_valid: bool, actual_value: Any) -> str:
+    def store_validation_result(self, organization_id: str, rule_id: str, is_valid: bool, actual_value: Any,
+                                profile_history_id: str = None) -> str:
         """Store a validation result"""
         try:
             # Ensure actual_value is stored as a JSON string
@@ -263,6 +264,10 @@ class SupabaseManager:
                 "is_valid": is_valid,
                 "actual_value": actual_value_str
             }
+
+            # Add profile_history_id if provided
+            if profile_history_id:
+                data["profile_history_id"] = profile_history_id
 
             response = self.supabase.table("validation_results").insert(data).execute()
 
