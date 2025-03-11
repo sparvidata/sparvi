@@ -199,54 +199,6 @@ def login():
         return jsonify({"error": "Authentication failed", "message": str(e)}), 401
 
 
-# Protected profile endpoint: returns profiling results
-@app.route("/api/profile", methods=["GET"])
-@token_required
-def get_profile(current_user, organization_id):
-    connection_string = request.args.get("connection_string", os.getenv("DEFAULT_CONNECTION_STRING"))
-    table_name = request.args.get("table", "employees")
-
-    # Explicitly set include_samples to false - no row data in profiles
-    include_samples = False  # Override to always be false regardless of request
-
-    try:
-        logger.info(f"========== PROFILING STARTED ==========")
-        logger.info(f"Profiling table {table_name} with connection {connection_string}")
-        logger.info(f"User ID: {current_user}, Organization ID: {organization_id}")
-
-        # Create profile history manager
-        profile_history = SupabaseProfileHistoryManager()
-        logger.info("Created SupabaseProfileHistoryManager")
-
-        # Try to get previous profile to detect changes
-        previous_profile = profile_history.get_latest_profile(organization_id, table_name)
-        logger.info(f"Previous profile found: {previous_profile is not None}")
-
-        # Run the profiler using the sparvi-core package - with no samples
-        result = profile_table(connection_string, table_name, previous_profile, include_samples=include_samples)
-        result["timestamp"] = datetime.datetime.now().isoformat()
-        logger.info(f"Profile completed with {len(result)} keys")
-
-        # Save the profile to Supabase
-        logger.info("About to save profile to Supabase")
-        profile_id = profile_history.save_profile(current_user, organization_id, result, connection_string)
-        logger.info(f"Profile save result: {profile_id}")
-
-        # Get trend data from history
-        trends = profile_history.get_trends(organization_id, table_name)
-        if not isinstance(trends, dict) or "error" not in trends:
-            result["trends"] = trends
-            logger.info(f"Added trends data with {len(trends.get('timestamps', []))} points")
-        else:
-            logger.warning(f"Could not get trends: {trends.get('error', 'Unknown error')}")
-
-        return jsonify(result)
-    except Exception as e:
-        logger.error(f"Error profiling table: {str(e)}")
-        traceback.print_exc()  # Print the full traceback to your console
-        return jsonify({"error": str(e)}), 500
-
-
 @app.route("/api/validations", methods=["GET"])
 @token_required
 def get_validations(current_user, organization_id):
@@ -386,23 +338,60 @@ def generate_default_validations(current_user, organization_id):
         return jsonify({"error": str(e)}), 500
 
 
+# Replace the existing get_tables endpoint with this version
+
+# Replace the existing get_tables endpoint with this corrected version
+
 @app.route("/api/tables", methods=["GET"])
 @token_required
 def get_tables(current_user, organization_id):
     connection_string = request.args.get("connection_string", os.getenv("DEFAULT_CONNECTION_STRING"))
     try:
         logger.info(f"Getting tables for connection: {connection_string}")
+
+        # Resolve any environment variable references
+        from core.utils.connection_utils import resolve_connection_string, detect_connection_type
+        resolved_connection = resolve_connection_string(connection_string)
+        db_type = detect_connection_type(resolved_connection)
+        logger.info(f"Database type detected: {db_type}")
+
         # Create engine and get inspector
-        engine = create_engine(connection_string)
+        engine = create_engine(resolved_connection)
         inspector = inspect(engine)
 
         # Test connection
         with engine.connect() as conn:
             pass  # Just test that we can connect
 
-        # Get all table names
-        tables = inspector.get_table_names()
-        logger.info(f"Found {len(tables)} tables")
+        # Get all table names with optimized approach for Snowflake
+        if db_type == "snowflake":
+            # Use specific Snowflake SQL for better performance
+            with engine.connect() as conn:
+                # Get current schema and database from connection
+                schema_query = "SELECT CURRENT_SCHEMA()"
+                schema_result = conn.execute(text(schema_query)).fetchone()
+                current_schema = schema_result[0] if schema_result else "PUBLIC"
+
+                database_query = "SELECT CURRENT_DATABASE()"
+                db_result = conn.execute(text(database_query)).fetchone()
+                current_database = db_result[0] if db_result else None
+
+                # Query to get tables from the information schema
+                # This is optimized for Snowflake and returns tables the user has access to
+                tables_query = f"""
+                    SELECT TABLE_NAME 
+                    FROM INFORMATION_SCHEMA.TABLES 
+                    WHERE TABLE_SCHEMA = '{current_schema}'
+                    AND TABLE_TYPE = 'BASE TABLE'
+                    ORDER BY TABLE_NAME
+                """
+                result = conn.execute(text(tables_query))
+                tables = [row[0] for row in result]
+                logger.info(f"Found {len(tables)} tables using Snowflake-specific query")
+        else:
+            # For non-Snowflake databases, use SQLAlchemy's generic approach
+            tables = inspector.get_table_names()
+            logger.info(f"Found {len(tables)} tables using generic SQLAlchemy inspector")
 
         return jsonify({"tables": tables})
     except Exception as e:
@@ -419,29 +408,58 @@ def index():
     return render_template("index.html", version=os.getenv("SPARVI_CORE_VERSION", "Unknown"))
 
 
-@app.route("/api/profile-history", methods=["GET"])
+@app.route("/api/profile", methods=["GET"])
 @token_required
-def get_profile_history(current_user, organization_id):
-    """Get complete history of profile runs for a table"""
-    table_name = request.args.get("table")
-    limit = request.args.get("limit", 10, type=int)
+def get_profile(current_user, organization_id):
+    connection_string = request.args.get("connection_string", os.getenv("DEFAULT_CONNECTION_STRING"))
+    table_name = request.args.get("table", "employees")
 
-    if not table_name:
-        return jsonify({"error": "Table name is required"}), 400
+    # Explicitly set include_samples to false - no row data in profiles
+    include_samples = False  # Override to always be false regardless of request
 
     try:
-        logger.info(f"Getting profile history for table {table_name}, limit {limit}")
+        logger.info(f"========== PROFILING STARTED ==========")
+        logger.info(f"Profiling table {table_name} with connection {connection_string}")
+        logger.info(f"User ID: {current_user}, Organization ID: {organization_id}")
 
-        # Create the supabase profile history manager
+        # Resolve any environment variable references in connection string
+        from core.utils.connection_utils import resolve_connection_string, detect_connection_type
+        resolved_connection = resolve_connection_string(connection_string)
+        db_type = detect_connection_type(resolved_connection)
+        logger.info(f"Database type detected: {db_type}")
+
+        # Create profile history manager
         profile_history = SupabaseProfileHistoryManager()
+        logger.info("Created SupabaseProfileHistoryManager")
 
-        # Get the history data
-        history = profile_history.get_profile_history(organization_id, table_name, limit)
+        # Try to get previous profile to detect changes
+        previous_profile = profile_history.get_latest_profile(organization_id, table_name)
+        logger.info(f"Previous profile found: {previous_profile is not None}")
 
-        return jsonify({"history": history})
+        # Run the profiler using the sparvi-core package - with no samples
+        result = profile_table(resolved_connection, table_name, previous_profile, include_samples=include_samples)
+        result["timestamp"] = datetime.datetime.now().isoformat()
+        logger.info(f"Profile completed with {len(result)} keys")
+
+        # Save the profile to Supabase - use original connection string to avoid storing credentials
+        from core.utils.connection_utils import sanitize_connection_string
+        sanitized_connection = sanitize_connection_string(connection_string)
+        logger.info("About to save profile to Supabase")
+        profile_id = profile_history.save_profile(current_user, organization_id, result, sanitized_connection)
+        logger.info(f"Profile save result: {profile_id}")
+
+        # Get trend data from history
+        trends = profile_history.get_trends(organization_id, table_name)
+        if not isinstance(trends, dict) or "error" not in trends:
+            result["trends"] = trends
+            logger.info(f"Added trends data with {len(trends.get('timestamps', []))} points")
+        else:
+            logger.warning(f"Could not get trends: {trends.get('error', 'Unknown error')}")
+
+        return jsonify(result)
     except Exception as e:
-        logger.error(f"Error getting profile history: {str(e)}")
-        logger.error(traceback.format_exc())
+        logger.error(f"Error profiling table: {str(e)}")
+        traceback.print_exc()  # Print the full traceback to your console
         return jsonify({"error": str(e)}), 500
 
 @app.route("/api/validations/<rule_id>", methods=["PUT"])

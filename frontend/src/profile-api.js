@@ -1,4 +1,4 @@
-// This is a simplified version of the API code, specifically for profile
+// frontend/src/profile-api.js - updated to handle Snowflake connections
 import axios from 'axios';
 import { supabase } from './lib/supabase';
 
@@ -51,9 +51,35 @@ const getToken = async () => {
   }
 };
 
+// Sanitize connection string for logging - don't display passwords
+const sanitizeConnectionString = (connectionString) => {
+  if (!connectionString) return '';
+
+  try {
+    // If it contains a password, replace it with asterisks
+    if (connectionString.includes('@') && connectionString.includes(':')) {
+      // Extract parts of the connection string
+      const [protocol, rest] = connectionString.split('://');
+      const [auth, hostPart] = rest.split('@');
+
+      // If auth contains username:password
+      if (auth.includes(':')) {
+        const [username, password] = auth.split(':');
+        // Replace password with asterisks
+        return `${protocol}://${username}:******@${hostPart}`;
+      }
+    }
+    return connectionString;
+  } catch (e) {
+    // If any error occurs during parsing, return masked version
+    return connectionString.replace(/:[^@:]+@/, ':******@');
+  }
+};
+
 // Export a direct fetch profile function that doesn't rely on interceptors
 export const directFetchProfile = async (connectionString, tableName) => {
-  console.log('directFetchProfile called with:', { connectionString, tableName });
+  const safeConnString = sanitizeConnectionString(connectionString);
+  console.log('directFetchProfile called with:', { connectionString: safeConnString, tableName });
 
   try {
     // Get the token directly
@@ -68,7 +94,7 @@ export const directFetchProfile = async (connectionString, tableName) => {
     // Make the request with explicit token
     console.log(`Making GET request to ${API_BASE_URL}/api/profile`, {
       params: {
-        connection_string: connectionString,
+        connection_string: connectionString, // Original connection string for backend
         table: tableName
       },
       headers: { Authorization: `Bearer ${token}` }
@@ -82,7 +108,7 @@ export const directFetchProfile = async (connectionString, tableName) => {
       headers: { Authorization: `Bearer ${token}` }
     });
 
-    console.log('Profile API response:', response.data);
+    console.log('Profile API response received');
     return response.data;
   } catch (error) {
     console.error('Profile API error:', error);
@@ -103,9 +129,10 @@ export const directFetchProfile = async (connectionString, tableName) => {
   }
 };
 
-// Export a direct fetch tables function
+// Export a direct fetch tables function with Snowflake support
 export const directFetchTables = async (connectionString) => {
-  console.log('directFetchTables called with:', connectionString);
+  const safeConnString = sanitizeConnectionString(connectionString);
+  console.log('directFetchTables called with:', safeConnString);
 
   try {
     // Get the token directly
@@ -119,7 +146,7 @@ export const directFetchTables = async (connectionString) => {
 
     // Make the request with explicit token
     console.log(`Making GET request to ${API_BASE_URL}/api/tables`, {
-      params: { connection_string: connectionString },
+      params: { connection_string: connectionString }, // Original connection string for backend
       headers: { Authorization: `Bearer ${token}` }
     });
 
