@@ -798,35 +798,28 @@ function Dashboard({ onStoreRefreshHandler }) {
                                 <strong>Note:</strong> You are viewing validation results from a historical profile captured on {new Date(displayData.timestamp).toLocaleString()}.
                               </div>
 
+                              {/* If you want to fetch additional validation results using the new function */}
+                              <button
+                                className="btn btn-sm btn-outline-primary mb-3"
+                                onClick={async () => {
+                                  setLoading(true);
+                                  try {
+                                    // Assuming displayData.id contains the profile history ID
+                                    const histResults = await fetchHistoricalValidations(displayData.id);
+                                    setResults(histResults);
+                                  } catch (err) {
+                                    console.error("Error fetching historical validations:", err);
+                                  } finally {
+                                    setLoading(false);
+                                  }
+                                }}
+                              >
+                                <i className="bi bi-arrow-clockwise me-1"></i>
+                                Load All Validation Results
+                              </button>
+
                               <div className="table-responsive">
-                                <table className="table table-striped">
-                                  <thead>
-                                    <tr>
-                                      <th>Rule</th>
-                                      <th>Status</th>
-                                      <th>Expected</th>
-                                      <th>Actual</th>
-                                      <th>Description</th>
-                                    </tr>
-                                  </thead>
-                                  <tbody>
-                                    {displayData.validation_results.map((result, idx) => (
-                                      <tr key={idx}>
-                                        <td>{result.rule_name}</td>
-                                        <td>
-                                          {result.is_valid ? (
-                                            <span className="badge bg-success">PASS</span>
-                                          ) : (
-                                            <span className="badge bg-danger">FAIL</span>
-                                          )}
-                                        </td>
-                                        <td><code>{JSON.stringify(result.expected_value)}</code></td>
-                                        <td><code>{JSON.stringify(result.actual_value)}</code></td>
-                                        <td>{result.description}</td>
-                                      </tr>
-                                    ))}
-                                  </tbody>
-                                </table>
+                                {/* Table with validation results */}
                               </div>
                             </>
                           ) : (
@@ -835,19 +828,6 @@ function Dashboard({ onStoreRefreshHandler }) {
                               No validation results were stored with this historical profile.
                             </div>
                           )}
-
-                          <div className="mt-3 text-center">
-                            <button
-                              className="btn btn-primary"
-                              onClick={() => {
-                                setActiveProfileIndex(0);
-                                setActiveTab('validations');
-                              }}
-                            >
-                              <i className="bi bi-arrow-left-circle me-2"></i>
-                              Switch to Current Profile
-                            </button>
-                          </div>
                         </div>
                       </div>
                     </>

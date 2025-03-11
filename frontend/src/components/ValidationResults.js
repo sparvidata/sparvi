@@ -9,6 +9,7 @@ import {
 } from '../api';
 import AuthHandler from "../auth/AuthHandler";
 import axios from 'axios';
+import apiClient from '../api';
 
 function ValidationResults({ tableName, connectionString, activeConnection }) {
   const [rules, setRules] = useState([]);
@@ -36,6 +37,16 @@ function ValidationResults({ tableName, connectionString, activeConnection }) {
     operator: 'equals',
     expected_value: ''
   });
+
+  const fetchHistoricalValidations = async (profileHistoryId) => {
+    try {
+      const response = await apiClient.get(`/api/validation-history/${profileHistoryId}`);
+      return response.data.results;
+    } catch (error) {
+      console.error("Error fetching historical validations:", error);
+      return [];
+    }
+  };
 
   // Function to toggle the guide modal
   const toggleGuideModal = () => setShowGuideModal(!showGuideModal);

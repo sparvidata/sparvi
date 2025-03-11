@@ -222,7 +222,8 @@ class SupabaseValidationManager:
             logger.error(f"Error updating validation rule: {str(e)}")
             return False
 
-    def store_validation_result(self, organization_id: str, rule_id: str, is_valid: bool, actual_value: Any) -> str:
+    def store_validation_result(self, organization_id: str, rule_id: str, is_valid: bool, actual_value: Any,
+                                profile_history_id: str = None) -> str:
         """Store a validation result"""
         try:
             # Ensure actual_value is stored as a JSON string
@@ -235,6 +236,10 @@ class SupabaseValidationManager:
                 "actual_value": actual_value_str
             }
 
+            # Add profile_history_id if provided
+            if profile_history_id:
+                data["profile_history_id"] = profile_history_id
+
             # Create a direct Supabase client
             import os
             from supabase import create_client
@@ -245,6 +250,7 @@ class SupabaseValidationManager:
 
             # Create the client and insert data
             direct_client = create_client(supabase_url, supabase_key)
+            logger.info(f"Storing validation result with profile_history_id: {profile_history_id}")
             response = direct_client.table("validation_results").insert(data).execute()
 
             if response.data and len(response.data) > 0:

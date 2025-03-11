@@ -58,6 +58,11 @@ class SupabaseProfileHistoryManager:
             logger.info(f"Profile data keys: {list(profile.keys())}")
             logger.info(f"Organization ID: {organization_id}, User ID: {user_id}")
 
+            # Validate inputs to help with debugging
+            if not user_id or not organization_id:
+                logger.error(f"Missing required parameters: user_id={user_id}, org_id={organization_id}")
+                return None
+
             # Create a sanitized copy of the profile without any row-level data
             sanitized_profile = profile.copy()
 
@@ -81,8 +86,22 @@ class SupabaseProfileHistoryManager:
                     return super().default(obj)
 
             # Create a JSON-safe copy of the profile
-            serialized_profile = json.loads(json.dumps(sanitized_profile, cls=DateTimeEncoder))
-            logger.info(f"Serialized profile has {len(serialized_profile)} keys")
+            try:
+                serialized_profile = json.loads(json.dumps(sanitized_profile, cls=DateTimeEncoder))
+                logger.info(f"Successfully serialized profile with {len(serialized_profile)} keys")
+            except Exception as e:
+                logger.error(f"Error serializing profile: {str(e)}")
+                logger.error(f"Problem keys: {[k for k in sanitized_profile.keys() if not isinstance(k, str)]}")
+                # Try again with a more resilient approach
+                clean_profile = {}
+                for k, v in sanitized_profile.items():
+                    try:
+                        if isinstance(k, str):
+                            test_json = json.dumps({k: v}, cls=DateTimeEncoder)
+                            clean_profile[k] = v
+                    except Exception as e:
+                        logger.warning(f"Skipping problematic key {k}: {str(e)}")
+                serialized_profile = json.loads(json.dumps(clean_profile, cls=DateTimeEncoder))
 
             # Sanitize connection string to remove credentials
             sanitized_connection = self.supabase._sanitize_connection_string(connection_string)
@@ -97,7 +116,7 @@ class SupabaseProfileHistoryManager:
                 "data": serialized_profile
             }
 
-            # Create a direct Supabase client
+            # Create a direct Supabase client for more reliable insertion
             import os
             from supabase import create_client
 
@@ -108,20 +127,35 @@ class SupabaseProfileHistoryManager:
             logger.info(f"Supabase URL available: {bool(supabase_url)}")
             logger.info(f"Supabase Service Key available: {bool(supabase_key)}")
 
+            if not supabase_url or not supabase_key:
+                logger.error("Missing Supabase credentials in environment")
+                return None
+
             # Create the client and insert data
             direct_client = create_client(supabase_url, supabase_key)
             logger.info("About to insert data into profiling_history table")
-            response = direct_client.table("profiling_history").insert(data).execute()
+            try:
+                response = direct_client.table("profiling_history").insert(data).execute()
 
-            logger.info(f"Insert response: {response}")
+                logger.info(f"Insert response status: {hasattr(response, 'status_code') and response.status_code}")
+                logger.info(
+                    f"Insert response data count: {len(response.data) if hasattr(response, 'data') and response.data else 0}")
 
-            if response.data and len(response.data) > 0:
-                profile_id = response.data[0].get('id')
-                logger.info(f"Successfully saved profile with ID {profile_id}")
-                return profile_id
-            else:
-                logger.warning("No data returned from Supabase after insert")
-                logger.warning(f"Response: {response}")
+                if hasattr(response, 'error') and response.error:
+                    logger.error(f"Supabase insert error: {response.error}")
+                    return None
+
+                if response.data and len(response.data) > 0:
+                    profile_id = response.data[0].get('id')
+                    logger.info(f"Successfully saved profile with ID {profile_id}")
+                    return profile_id
+                else:
+                    logger.warning("No data returned from Supabase after insert")
+                    logger.warning(f"Full response: {response}")
+                    return None
+            except Exception as e:
+                logger.error(f"Exception during Supabase insert: {str(e)}")
+                logger.error(traceback.format_exc())
                 return None
 
         except Exception as e:

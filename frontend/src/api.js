@@ -115,22 +115,26 @@ export const deleteValidationRule = async (table, ruleName) => {
 };
 
 // Run all validation rules for a table
-export const runValidations = async (connectionString, table) => {
-  console.log("API runValidations called with:", { connectionString, table });
+export const runValidations = async (connectionString, table, profileHistoryId = null) => {
+  console.log("API runValidations called with:", {
+    connectionString: connectionString ? "[CONNECTION STRING PRESENT]" : "[MISSING]",
+    table,
+    profileHistoryId
+  });
 
   try {
     const response = await apiClient.post('/api/run-validations', {
       connection_string: connectionString,
-      table
+      table,
+      profile_history_id: profileHistoryId
     });
     console.log("runValidations API response:", response.data);
     return response.data;
-  } catch (error) {
-    console.error("runValidations API error:", error);
-    throw error;
+  } catch (err) {
+    console.error("runValidations API error:", err);
+    throw err;
   }
 };
-
 // Get validation history for a table
 export const fetchValidationHistory = async (table, limit = 10) => {
   const response = await apiClient.get('/api/validation-history', {

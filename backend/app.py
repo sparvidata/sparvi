@@ -1,5 +1,6 @@
 import urllib
 
+import supabase
 from flask import Flask, render_template, jsonify, request
 import datetime
 import os
@@ -180,6 +181,58 @@ def get_current_user():
     return supabase_mgr.verify_token(token)
 
 
+def run_validation_rules_internal(user_id, organization_id, data):
+    """Internal version of run_validation_rules that can be called from other functions"""
+    if not data or "table" not in data:
+        return {"error": "Table name is required"}
+
+    connection_string = data.get("connection_string")
+    table_name = data["table"]
+    profile_history_id = data.get("profile_history_id")
+
+    try:
+        # Get all rules
+        rules = validation_manager.get_rules(organization_id, table_name)
+
+        if not rules:
+            return {"results": []}
+
+        # Convert from Supabase format to sparvi-core format if needed
+        validation_rules = []
+        for rule in rules:
+            validation_rules.append({
+                "name": rule["rule_name"],
+                "description": rule["description"],
+                "query": rule["query"],
+                "operator": rule["operator"],
+                "expected_value": rule["expected_value"]
+            })
+
+        # Execute the rules
+        if validation_rules:
+            results = sparvi_run_validations(connection_string, validation_rules)
+
+            # Store results in Supabase
+            for i, result in enumerate(results):
+                actual_value = result.get("actual_value", None)
+                validation_manager.store_validation_result(
+                    organization_id,
+                    rules[i]["id"],
+                    result["is_valid"],
+                    actual_value,
+                    profile_history_id
+                )
+
+            return {"results": results}
+        else:
+            return {"results": []}
+
+    except Exception as e:
+        logger.error(f"Error running validations internal: {str(e)}")
+        traceback.print_exc()
+        return {"error": str(e)}
+
+
 @app.route("/api/login", methods=["POST"])
 def login():
     try:
@@ -324,6 +377,9 @@ def run_validation_rules(current_user, organization_id):
 
     connection_string = data.get("connection_string", os.getenv("DEFAULT_CONNECTION_STRING"))
     table_name = data["table"]
+    profile_history_id = data.get("profile_history_id")  # Get profile_history_id if provided
+
+    logger.info(f"Running validations with profile_history_id: {profile_history_id}")
 
     try:
         logger.info(
@@ -357,11 +413,12 @@ def run_validation_rules(current_user, organization_id):
                     organization_id,
                     rules[i]["id"],
                     result["is_valid"],
-                    actual_value
+                    actual_value,
+                    profile_history_id  # Pass the profile_history_id
                 )
 
             logger.info(f"Validation execution complete, got {len(results)} results")
-            logger.debug(f"Validation results: {results}")
+            logger.info(f"Validation results: {results}")
 
             return jsonify({"results": results})
         else:
@@ -533,12 +590,49 @@ def get_profile(current_user, organization_id):
         result["timestamp"] = datetime.datetime.now().isoformat()
         logger.info(f"Profile completed with {len(result)} keys")
 
+        # Log the structure of the profile data
+        logger.info(f"Profile data structure: {list(result.keys())}")
+
+        # Check for problematic fields
+        problematic_fields = [k for k in result.keys() if not isinstance(k, str)]
+        if problematic_fields:
+            logger.warning(f"Found problematic field keys: {problematic_fields}")
+            # Try to clean up problematic fields
+            for field in problematic_fields:
+                logger.warning(f"Removing problematic field: {field}")
+                del result[field]
+
         # Save the profile to Supabase - use original connection string to avoid storing credentials
         from core.utils.connection_utils import sanitize_connection_string
         sanitized_connection = sanitize_connection_string(connection_string)
         logger.info("About to save profile to Supabase")
-        profile_id = profile_history.save_profile(current_user, organization_id, result, sanitized_connection)
-        logger.info(f"Profile save result: {profile_id}")
+
+        profile_id = None
+        try:
+            profile_id = profile_history.save_profile(current_user, organization_id, result, sanitized_connection)
+            logger.info(f"Profile save result: {profile_id}")
+
+            # Now that we have the profile_id, we can run validations with it
+            if profile_id and run_validations_after_profile:
+                logger.info(f"Automatically running validations for profile {profile_id}")
+                try:
+                    validation_data = {
+                        "table": table_name,
+                        "connection_string": connection_string,
+                        "profile_history_id": profile_id  # Pass the profile ID
+                    }
+                    validation_results = run_validation_rules_internal(current_user, organization_id, validation_data)
+                    if validation_results and "results" in validation_results:
+                        result["validation_results"] = validation_results["results"]
+                        logger.info(f"Added {len(validation_results['results'])} validation results to profile")
+                except Exception as val_error:
+                    logger.error(f"Error running automatic validations: {str(val_error)}")
+                    # Continue even if validation fails
+
+        except Exception as save_error:
+            logger.error(f"Exception saving profile to Supabase: {str(save_error)}")
+            logger.error(traceback.format_exc())
+            # Continue execution even if save fails
 
         # Get trend data from history
         trends = profile_history.get_trends(organization_id, table_name)
@@ -1368,6 +1462,47 @@ def get_profile_history(current_user, organization_id):
     except Exception as e:
         logger.error(f"Error getting profile history: {str(e)}")
         traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/validation-history/<profile_id>", methods=["GET"])
+@token_required
+def get_validation_history_by_profile(current_user, organization_id, profile_id):
+    """Get validation results for a specific profile run"""
+    try:
+        logger.info(f"Fetching validation history for profile ID: {profile_id}")
+
+        # Get direct Supabase client credentials
+        import os
+        from supabase import create_client
+
+        # Get credentials from environment
+        supabase_url = os.getenv("SUPABASE_URL")
+        supabase_key = os.getenv("SUPABASE_SERVICE_KEY")
+
+        if not supabase_url or not supabase_key:
+            logger.error("Missing Supabase configuration")
+            return jsonify({"error": "Server configuration error"}), 500
+
+        # Create direct client
+        direct_client = create_client(supabase_url, supabase_key)
+
+        # Query validation results linked to this profile
+        response = direct_client.table("validation_results") \
+            .select("*, validation_rules(*)") \
+            .eq("organization_id", organization_id) \
+            .eq("profile_history_id", profile_id) \
+            .execute()
+
+        if not response.data:
+            logger.info(f"No validation results found for profile ID: {profile_id}")
+            return jsonify({"results": []})
+
+        logger.info(f"Found {len(response.data)} validation results for profile ID: {profile_id}")
+        return jsonify({"results": response.data})
+    except Exception as e:
+        logger.error(f"Error getting validation history: {str(e)}")
+        logger.error(traceback.format_exc())
         return jsonify({"error": str(e)}), 500
 
 if __name__ == "__main__":
