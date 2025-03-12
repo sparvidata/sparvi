@@ -84,10 +84,11 @@ logger = setup_comprehensive_logging()
 load_dotenv()
 
 app = Flask(__name__, template_folder="templates")
-CORS(app, origins=["https://cloud.sparvi.io", "http://localhost:3000"],
+CORS(app,
+     resources={r"/api/*": {"origins": ["https://cloud.sparvi.io", "http://localhost:3000"]}},
      supports_credentials=True,
+     allow_headers=["Content-Type", "Authorization", "X-Requested-With"],
      expose_headers=["Content-Type", "Authorization"],
-     allow_headers=["Content-Type", "Authorization"],
      methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"])
 
 # Set the secret key from environment variables
@@ -282,6 +283,12 @@ def force_gc():
     collected = gc.collect()
     logger.debug(f"Garbage collection: collected {collected} objects")
     return collected
+
+@app.route('/', defaults={'path': ''}, methods=['OPTIONS'])
+
+@app.route('/<path:path>', methods=['OPTIONS'])
+def options_handler(path):
+    return app.make_default_options_response()
 
 @app.route("/api/login", methods=["POST"])
 def login():
