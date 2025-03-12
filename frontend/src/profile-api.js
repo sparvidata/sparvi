@@ -81,6 +81,29 @@ const sanitizeConnectionString = (connectionString) => {
 // Export a direct fetch profile function that doesn't rely on interceptors
 export const directFetchProfile = async (connection, tableName) => {
   try {
+    // If connection is a string, we need to handle it differently
+    if (typeof connection === 'string') {
+      console.log(`directFetchProfile called with connection string: ${sanitizeConnectionString(connection)}`);
+
+      // Get auth token
+      const token = await getToken();
+      if (!token) {
+        throw new Error('No authentication token available');
+      }
+
+      // Make direct API call using the string connection
+      const response = await axios.get(`${API_BASE_URL}/api/profile`, {
+        params: {
+          connection_string: connection,
+          table: tableName
+        },
+        headers: { Authorization: `Bearer ${token}` }
+      });
+
+      return response.data;
+    }
+
+    // For object-based connections, continue with the existing logic
     console.log('Connection object:', JSON.stringify({
       ...connection,
       connection_details: connection.connection_details ? {

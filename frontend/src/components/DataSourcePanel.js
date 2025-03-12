@@ -2,8 +2,9 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { fetchConnections, fetchTables } from '../api';
 
-function DataSourcePanel({ activeConnection, tableName, onTableChange, onConnectionChange }) {
+function DataSourcePanel({ tableName, onTableChange, onConnectionChange, activeConnection }) {
   const [connections, setConnections] = useState([]);
+  const [selectedConnectionId, setSelectedConnectionId] = useState(null);
   const [tables, setTables] = useState([]);
   const [loading, setLoading] = useState(true);
   const [tablesLoading, setTablesLoading] = useState(false);
@@ -12,11 +13,34 @@ function DataSourcePanel({ activeConnection, tableName, onTableChange, onConnect
 
   // Compute selected connection dynamically
   const selectedConnection = useMemo(() => {
-    if (!connections.length) return null;
-    return activeConnection
-      ? connections.find(c => c.id === activeConnection.id) || connections[0]
+    // If there are no connections, check if activeConnection is a string (direct connection string)
+    if (!connections.length) {
+      // If activeConnection is a string (connection string), return it directly
+      if (activeConnection && typeof activeConnection === 'string') {
+        return activeConnection;
+      }
+      // If activeConnection is an object, return it directly
+      if (activeConnection && (activeConnection.id || activeConnection.connection_details)) {
+        return activeConnection;
+      }
+      return null;
+    }
+
+    // If activeConnection is a string, return it as is
+    if (activeConnection && typeof activeConnection === 'string') {
+      return activeConnection;
+    }
+
+    // If activeConnection is an object with id or connection_details, return it directly
+    if (activeConnection && (activeConnection.id || activeConnection.connection_details)) {
+      return activeConnection;
+    }
+
+    // Otherwise use dropdown selection
+    return selectedConnectionId
+      ? connections.find(c => c.id === selectedConnectionId)
       : connections.find(c => c.is_default) || connections[0];
-  }, [activeConnection, connections]);
+  }, [selectedConnectionId, connections, activeConnection]);
 
   // Compute selected table dynamically
   const selectedTable = useMemo(() => {
@@ -31,14 +55,33 @@ function DataSourcePanel({ activeConnection, tableName, onTableChange, onConnect
         setConnectionError(null);
         const data = await fetchConnections();
         setConnections(data.connections || []);
+
+        // Set initial selected connection to activeConnection, default, or first in list
+        if (data.connections && data.connections.length > 0) {
+          // If we have an activeConnection with an ID, try to find it in the list
+          if (activeConnection && activeConnection.id) {
+            const matchingConn = data.connections.find(c => c.id === activeConnection.id);
+            if (matchingConn) {
+              setSelectedConnectionId(matchingConn.id);
+            } else {
+              // Fall back to default or first
+              const defaultConn = data.connections.find(c => c.is_default) || data.connections[0];
+              setSelectedConnectionId(defaultConn.id);
+            }
+          } else {
+            // No activeConnection, use default
+            const defaultConn = data.connections.find(c => c.is_default) || data.connections[0];
+            setSelectedConnectionId(defaultConn.id);
+          }
+        }
       } catch (err) {
-        setConnectionError(err.message || 'Failed to load connections.');
+        setConnectionError(err.response?.data?.error || err.message || 'Failed to load connections.');
       } finally {
         setLoading(false);
       }
     };
     loadConnections();
-  }, []);
+  }, [activeConnection]);
 
   // Load tables when selected connection changes
   useEffect(() => {
@@ -48,11 +91,21 @@ function DataSourcePanel({ activeConnection, tableName, onTableChange, onConnect
       try {
         setTablesLoading(true);
         setTableError(null);
-        const connectionString = buildConnectionString(selectedConnection);
+
+        // Handle case where connection might be a string
+        const connectionString = typeof selectedConnection === 'string'
+          ? selectedConnection
+          : buildConnectionString(selectedConnection);
+
+        if (!connectionString) {
+          setTableError('Invalid connection information');
+          return;
+        }
+
         const response = await fetchTables(connectionString);
         setTables(response.tables || []);
       } catch (err) {
-        setTableError(err.message || 'Failed to load tables.');
+        setTableError(err.response?.data?.error || err.message || 'Failed to load tables.');
       } finally {
         setTablesLoading(false);
       }
@@ -74,9 +127,28 @@ function DataSourcePanel({ activeConnection, tableName, onTableChange, onConnect
     }
   }, [selectedTable, onTableChange]);
 
+  // Handle connection selection change
+  const handleConnectionChange = (e) => {
+    const connId = e.target.value;
+    setSelectedConnectionId(connId);
+
+    // Find the selected connection and notify parent
+    if (onConnectionChange && connections.length > 0) {
+      const newConnection = connections.find(c => c.id === connId);
+      if (newConnection) {
+        onConnectionChange(newConnection);
+      }
+    }
+  };
+
   // Utility function to build connection string
   const buildConnectionString = (connection) => {
     if (!connection) return '';
+
+    // If connection is already a string (from localStorage), return it directly
+    if (typeof connection === 'string') {
+      return connection;
+    }
 
     const { connection_type, connection_details } = connection;
     const encode = (str) => encodeURIComponent(str || '');
@@ -108,38 +180,118 @@ function DataSourcePanel({ activeConnection, tableName, onTableChange, onConnect
         </Link>
       </div>
 
-      <div className="card-body">
+      <div className="card-body pb-2">
         {loading ? (
-          <p>Loading connections...</p>
+          <div className="d-flex justify-content-center my-3">
+            <div className="spinner-border text-primary" role="status">
+              <span className="visually-hidden">Loading connections...</span>
+            </div>
+          </div>
         ) : connectionError ? (
-          <p className="text-danger">{connectionError}</p>
+          <div className="alert alert-danger">
+            <i className="bi bi-exclamation-triangle-fill me-2"></i>
+            {connectionError}
+          </div>
+        ) : connections.length === 0 ? (
+          <div className="alert alert-warning">
+            <i className="bi bi-info-circle-fill me-2"></i>
+            No database connections found. <Link to="/connections">Click here</Link> to add a connection.
+          </div>
         ) : (
           <>
-            <p><strong>Selected Connection:</strong> {selectedConnection?.name || 'None'}</p>
-            <p><strong>Connection Details:</strong> {buildConnectionString(selectedConnection)}</p>
-          </>
-        )}
+            <div className="row mb-3">
+              <div className="col-md-6 mb-2 mb-md-0">
+                <label className="form-label"><strong>Selected Connection:</strong></label>
+                <div>
+                  <select
+                    className="form-select"
+                    value={selectedConnectionId || ''}
+                    onChange={handleConnectionChange}
+                    disabled={typeof activeConnection === 'string'}
+                  >
+                    {typeof activeConnection === 'string' ? (
+                      <option value="">Using direct connection string</option>
+                    ) : (
+                      connections.map(conn => (
+                        <option key={conn.id} value={conn.id}>
+                          {conn.name} {conn.is_default ? '(Default)' : ''}
+                        </option>
+                      ))
+                    )}
+                  </select>
+                </div>
+              </div>
 
-        {tablesLoading ? (
-          <p>Loading tables...</p>
-        ) : tableError ? (
-          <p className="text-danger">{tableError}</p>
-        ) : (
-          <div className="form-group">
-            <label htmlFor="tableSelect">Select Table:</label>
-            <select
-              id="tableSelect"
-              className="form-control"
-              value={selectedTable}
-              onChange={(e) => onTableChange(e.target.value)}
-            >
-              {tables.map((table) => (
-                <option key={table} value={table}>
-                  {table}
-                </option>
-              ))}
-            </select>
-          </div>
+              <div className="col-md-6 mb-2 mb-md-0">
+                <label htmlFor="tableSelect" className="form-label"><strong>Select Table:</strong></label>
+                <div>
+                  {tablesLoading ? (
+                    <div className="d-flex align-items-center">
+                      <div className="spinner-border spinner-border-sm text-primary me-2" role="status">
+                        <span className="visually-hidden">Loading tables...</span>
+                      </div>
+                      <span>Loading tables...</span>
+                    </div>
+                  ) : tableError ? (
+                    <div className="alert alert-danger py-1">
+                      <i className="bi bi-exclamation-triangle-fill me-2"></i>
+                      {tableError}
+                    </div>
+                  ) : tables.length === 0 ? (
+                    <div className="alert alert-info py-1">
+                      <i className="bi bi-info-circle-fill me-2"></i>
+                      No tables found
+                    </div>
+                  ) : (
+                    <select
+                      id="tableSelect"
+                      className="form-select"
+                      value={selectedTable}
+                      onChange={(e) => onTableChange(e.target.value)}
+                    >
+                      {tables.map((table) => (
+                        <option key={table} value={table}>
+                          {table}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {selectedConnection && typeof selectedConnection === 'object' ? (
+              <div className="row mb-3">
+                <div className="col-md-6 mb-2">
+                  <div className="mb-1">
+                    <strong>Account:</strong> <span className="text-secondary">{selectedConnection.connection_details?.account || 'N/A'}</span>
+                  </div>
+                  <div className="mb-1">
+                    <strong>Username:</strong> <span className="text-secondary">{selectedConnection.connection_details?.username || 'N/A'}</span>
+                  </div>
+                  <div className="mb-1">
+                    <strong>Warehouse:</strong> <span className="text-secondary">{selectedConnection.connection_details?.warehouse || 'N/A'}</span>
+                  </div>
+                </div>
+                <div className="col-md-6 mb-2">
+                  <div className="mb-1">
+                    <strong>Database:</strong> <span className="text-secondary">{selectedConnection.connection_details?.database || 'N/A'}</span>
+                  </div>
+                  <div className="mb-1">
+                    <strong>Schema:</strong> <span className="text-secondary">{selectedConnection.connection_details?.schema || 'PUBLIC'}</span>
+                  </div>
+                  <div className="mb-1">
+                    <strong>Type:</strong> <span className="badge bg-secondary">{selectedConnection.connection_type}</span>
+                  </div>
+                </div>
+              </div>
+            ) : selectedConnection && typeof selectedConnection === 'string' ? (
+              <div className="alert alert-info mb-3 py-2">
+                <i className="bi bi-info-circle me-2"></i>
+                Using connection string: {selectedConnection.substring(0, 20)}...
+              </div>
+            ) : null}
+          </>
         )}
       </div>
     </div>
