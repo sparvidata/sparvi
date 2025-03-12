@@ -27,6 +27,7 @@ function Dashboard({ onStoreRefreshHandler }) {
   const [loadingSamples, setLoadingSamples] = useState(false);
   const [previewError, setPreviewError] = useState(null);
   const initialLoadComplete = useRef(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [previewSettings, setPreviewSettings] = useState({
     maxRows: 50,
     restrictedColumns: []
@@ -205,6 +206,54 @@ function Dashboard({ onStoreRefreshHandler }) {
 
   console.log("Component defined");
 
+
+  // Modify the useEffect to properly depend on refreshing
+  useEffect(() => {
+    // Only run this effect when refreshing state changes to true
+    if (refreshing) {
+      const loadData = async () => {
+        try {
+          // Try to load profile history
+          const historyResult = await loadProfileHistory(tableName);
+
+          // Reset refreshing state regardless of result
+          setRefreshing(false);
+
+          if (historyResult && historyResult.success && historyResult.data.length > 0) {
+            console.log(`[Dashboard] History loaded successfully with ${historyResult.data.length} items`);
+          } else {
+            console.log(`[Dashboard] No history found or error loading history`);
+          }
+        } catch (err) {
+          console.error("[Dashboard] Error during refresh:", err);
+          setRefreshing(false);
+        }
+      };
+
+      loadData();
+    }
+  }, [refreshing]); // Only depend on refreshing state
+
+  // Update your handleConnectionChange method to handle refresh properly
+  const handleConnectionChange = (connection) => {
+    // Add a basic check to prevent unnecessary updates
+    if (connection === activeConnection ||
+       (typeof connection === 'string' && typeof activeConnection === 'string' &&
+        connection === activeConnection)) {
+      // Only refresh if explicitly requested via button click
+      if (refreshing) {
+        console.log("[Dashboard] Refreshing current connection");
+        // We already set refreshing=true, so just let the effect handle it
+      }
+    } else {
+      // Different connection, handle normally
+      console.log("[Dashboard] Setting new connection:", connection);
+      setActiveConnection(connection);
+      setActiveProfileIndex(0);
+      setProfileData(null);
+    }
+  };
+
   // Function to load profile history
   const loadProfileHistory = async (table) => {
     console.log("%c[Dashboard] loadProfileHistory called with table:", "background: cyan; color: black", table);
@@ -258,6 +307,11 @@ function Dashboard({ onStoreRefreshHandler }) {
       setHistoryLoading(false);
     }
   };
+
+  const handleTableChange = useCallback((newTable) => {
+    setTableName(newTable);
+    localStorage.setItem('tableName', newTable);
+  }, []);
 
   // const handleConnectionSubmit = (newConnection, newTable) => {
   //   console.log('[Dashboard] Connection form submitted:', { newConnection, newTable });
@@ -314,17 +368,11 @@ function Dashboard({ onStoreRefreshHandler }) {
 
       <DataSourcePanel
         tableName={tableName}
-        onTableChange={(newTable) => {
-          setTableName(newTable);
-          // We can still store in localStorage if needed
-          localStorage.setItem('tableName', newTable);
-        }}
-        onConnectionChange={(connection) => {
-          setActiveConnection(connection);
-          setActiveProfileIndex(0);
-          setProfileData(null);
-        }}
+        onTableChange={handleTableChange}
+        onConnectionChange={handleConnectionChange}
+        activeConnection={activeConnection}
       />
+
 
       {error && (
           <div className="alert alert-danger mt-3" role="alert">

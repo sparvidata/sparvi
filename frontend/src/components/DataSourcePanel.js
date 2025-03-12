@@ -167,6 +167,31 @@ function DataSourcePanel({ tableName, onTableChange, onConnectionChange, activeC
     }
   };
 
+  const handleRefreshConnection = () => {
+    if (!selectedConnection || !selectedTable) {
+      return;
+    }
+
+    // Set loading state
+    setLoading(true);
+
+    // Notify parent about refreshing the connection
+    if (onConnectionChange) {
+      // Pass the same connection object to trigger a refresh
+      onConnectionChange(selectedConnection);
+    }
+
+    // Notify parent about the current table (to ensure it's loaded)
+    if (onTableChange) {
+      onTableChange(selectedTable);
+    }
+
+    // Reset loading state after a short delay
+    setTimeout(() => {
+      setLoading(false);
+    }, 500);
+  };
+
   return (
     <div className="card mb-4 shadow-sm">
       <div className="card-header bg-light d-flex justify-content-between align-items-center">
@@ -174,26 +199,36 @@ function DataSourcePanel({ tableName, onTableChange, onConnectionChange, activeC
           <i className="bi bi-database me-2"></i>
           Data Source
         </h5>
-        <Link to="/connections" className="btn btn-sm btn-outline-primary">
-          <i className="bi bi-gear me-1"></i>
-          Manage Connections
-        </Link>
+        <div>
+          <button
+              className="btn btn-sm btn-outline-secondary me-2"
+              onClick={handleRefreshConnection}
+              disabled={loading}
+          >
+            <i className="bi bi-arrow-repeat me-1"></i>
+            Refresh Connection
+          </button>
+          <Link to="/connections" className="btn btn-sm btn-outline-primary">
+            <i className="bi bi-gear me-1"></i>
+            Manage Connections
+          </Link>
+        </div>
       </div>
 
       <div className="card-body pb-2">
         {loading ? (
-          <div className="d-flex justify-content-center my-3">
-            <div className="spinner-border text-primary" role="status">
-              <span className="visually-hidden">Loading connections...</span>
+            <div className="d-flex justify-content-center my-3">
+              <div className="spinner-border text-primary" role="status">
+                <span className="visually-hidden">Loading connections...</span>
+              </div>
             </div>
-          </div>
         ) : connectionError ? (
-          <div className="alert alert-danger">
-            <i className="bi bi-exclamation-triangle-fill me-2"></i>
-            {connectionError}
-          </div>
+            <div className="alert alert-danger">
+              <i className="bi bi-exclamation-triangle-fill me-2"></i>
+              {connectionError}
+            </div>
         ) : connections.length === 0 ? (
-          <div className="alert alert-warning">
+            <div className="alert alert-warning">
             <i className="bi bi-info-circle-fill me-2"></i>
             No database connections found. <Link to="/connections">Click here</Link> to add a connection.
           </div>
