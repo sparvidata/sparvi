@@ -1516,16 +1516,16 @@ def get_validation_history_by_profile(current_user, organization_id, profile_id)
         logger.error(traceback.format_exc())
         return jsonify({"error": str(e)}), 500
 
-@app.before_request
-def log_memory_before():
-    memory_usage = psutil.virtual_memory()
-    logger.info(f"Before Request - Memory Usage: {memory_usage.percent}% used")
-
-@app.after_request
-def log_memory_after(response):
-    memory_usage = psutil.virtual_memory()
-    logger.info(f"After Request - Memory Usage: {memory_usage.percent}% used")
-    return response
+# @app.before_request
+# def log_memory_before():
+#     memory_usage = psutil.virtual_memory()
+#     logger.info(f"Before Request - Memory Usage: {memory_usage.percent}% used")
+#
+# @app.after_request
+# def log_memory_after(response):
+#     memory_usage = psutil.virtual_memory()
+#     logger.info(f"After Request - Memory Usage: {memory_usage.percent}% used")
+#     return response
 
 if __name__ == "__main__":
     # In production, ensure you run with HTTPS (via a reverse proxy or WSGI server with SSL configured)
