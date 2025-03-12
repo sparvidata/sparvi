@@ -209,35 +209,67 @@ def run_validation_rules_internal(user_id, organization_id, data):
                 "expected_value": rule["expected_value"]
             })
 
-        # Execute the rules
-        if validation_rules:
-            results = sparvi_run_validations(connection_string, validation_rules)
+        # Log memory usage before validation
+        log_memory_usage("Before validation")
 
-            # Store results in Supabase
-            for i, result in enumerate(results):
-                actual_value = result.get("actual_value", None)
-                validation_manager.store_validation_result(
-                    organization_id,
-                    rules[i]["id"],
-                    result["is_valid"],
-                    actual_value,
-                    profile_history_id
-                )
+        # Execute the rules in batches to manage memory
+        results = []
+        batch_size = 5  # Process in small batches
 
-            return {"results": results}
-        else:
-            return {"results": []}
+        for i in range(0, len(validation_rules), batch_size):
+            batch = validation_rules[i:i + batch_size]
+            logger.info(f"Processing validation batch {i // batch_size + 1} with {len(batch)} rules")
+
+            # Execute this batch of rules
+            batch_results = sparvi_run_validations(connection_string, batch)
+            results.extend(batch_results)
+
+            # Store batch results in Supabase
+            for j, result in enumerate(batch_results):
+                if i + j < len(rules):  # Safety check
+                    actual_value = result.get("actual_value", None)
+                    validation_manager.store_validation_result(
+                        organization_id,
+                        rules[i + j]["id"],
+                        result["is_valid"],
+                        actual_value,
+                        profile_history_id
+                    )
+
+            # Force garbage collection between batches
+            import gc
+            gc.collect()
+
+        # Log memory usage after validation
+        log_memory_usage("After validation")
+
+        return {"results": results}
 
     except Exception as e:
         logger.error(f"Error running validations internal: {str(e)}")
         traceback.print_exc()
         return {"error": str(e)}
 
-def log_memory_usage():
-    """Log current memory usage for debugging"""
-    process = psutil.Process(os.getpid())
-    mem_info = process.memory_info()
-    logger.info(f"Memory usage: {mem_info.rss / (1024 * 1024):.2f} MB (RSS), {mem_info.vms / (1024 * 1024):.2f} MB (VMS)")
+
+def log_memory_usage(label=""):
+    """Log current memory usage"""
+    try:
+        process = psutil.Process(os.getpid())
+        mem_info = process.memory_info()
+        memory_mb = mem_info.rss / (1024 * 1024)
+        logger.info(f"Memory Usage [{label}]: {memory_mb:.2f} MB")
+
+        # Alert if memory is getting high (adjust threshold as needed for your environment)
+        if memory_mb > 500:  # Alert if using more than 500 MB
+            logger.warning(f"High memory usage detected: {memory_mb:.2f} MB")
+
+        return memory_mb
+    except ImportError:
+        logger.warning("psutil not installed - cannot log memory usage")
+        return 0
+    except Exception as e:
+        logger.warning(f"Error logging memory usage: {str(e)}")
+        return 0
 
 @app.route("/api/login", methods=["POST"])
 def login():
@@ -568,19 +600,13 @@ def get_profile(current_user, organization_id):
         logger.info(f"Profiling table {table_name} with connection {connection_string[:20]}...")
         logger.info(f"User ID: {current_user}, Organization ID: {organization_id}")
 
+        # Log memory usage at start
+        log_memory_usage("Before profiling")
+
         # Check if connection string is properly formatted
         if "://" not in connection_string:
             logger.error(f"Invalid connection string format: {connection_string[:20]}...")
             return jsonify({"error": "Invalid connection string format"}), 400
-
-        # Check if the connection string contains required components for Snowflake
-        if connection_string.startswith("snowflake://"):
-            # Very basic validation - should contain username, password, account, etc.
-            required_parts = ["@", "?warehouse="]
-            missing_parts = [part for part in required_parts if part not in connection_string]
-            if missing_parts:
-                logger.error(f"Connection string missing required parts: {missing_parts}")
-                return jsonify({"error": f"Connection string is incomplete. Missing: {', '.join(missing_parts)}"}), 400
 
         # Resolve any environment variable references in connection string
         from core.utils.connection_utils import resolve_connection_string, detect_connection_type
@@ -596,13 +622,44 @@ def get_profile(current_user, organization_id):
         previous_profile = profile_history.get_latest_profile(organization_id, table_name)
         logger.info(f"Previous profile found: {previous_profile is not None}")
 
+        # Set reasonable timeouts for Snowflake queries
+        if db_type == "snowflake":
+            # Set query timeout options
+            from urllib.parse import parse_qs, urlparse, urlencode, urlunparse
+
+            # Parse the connection string
+            parsed_url = urlparse(resolved_connection)
+
+            # Get existing query parameters
+            query_params = parse_qs(parsed_url.query)
+
+            # Add timeout parameters if not already present
+            if 'statement_timeout_in_seconds' not in query_params:
+                query_params['statement_timeout_in_seconds'] = ['300']  # 5 minutes
+
+            # Rebuild the query string
+            new_query = urlencode(query_params, doseq=True)
+
+            # Rebuild the connection string
+            resolved_connection = urlunparse((
+                parsed_url.scheme,
+                parsed_url.netloc,
+                parsed_url.path,
+                parsed_url.params,
+                new_query,
+                parsed_url.fragment
+            ))
+
+            logger.info(f"Added timeout parameters to Snowflake connection")
+
         # Run the profiler using the sparvi-core package - with no samples
+        logger.info(f"Starting profile_table call")
         result = profile_table(resolved_connection, table_name, previous_profile, include_samples=include_samples)
         result["timestamp"] = datetime.datetime.now().isoformat()
         logger.info(f"Profile completed with {len(result)} keys")
 
-        # Log the structure of the profile data
-        logger.info(f"Profile data structure: {list(result.keys())}")
+        # Log memory usage after profiling
+        log_memory_usage("After profiling")
 
         # Check for problematic fields
         problematic_fields = [k for k in result.keys() if not isinstance(k, str)]
@@ -617,6 +674,11 @@ def get_profile(current_user, organization_id):
         from core.utils.connection_utils import sanitize_connection_string
         sanitized_connection = sanitize_connection_string(connection_string)
         logger.info("About to save profile to Supabase")
+
+        # Force garbage collection before saving profile
+        import gc
+        gc.collect()
+        log_memory_usage("After garbage collection, before saving profile")
 
         profile_id = None
         try:
@@ -652,6 +714,9 @@ def get_profile(current_user, organization_id):
             logger.info(f"Added trends data with {len(trends.get('timestamps', []))} points")
         else:
             logger.warning(f"Could not get trends: {trends.get('error', 'Unknown error')}")
+
+        # Final memory usage check
+        log_memory_usage("End of profile endpoint")
 
         return jsonify(result)
     except Exception as e:

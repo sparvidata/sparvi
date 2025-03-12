@@ -50,13 +50,9 @@ class SupabaseProfileHistoryManager:
 
     # Update the save_profile method to ensure no sample data is stored
     def save_profile(self, user_id: str, organization_id: str, profile: Dict, connection_string: str) -> int:
-        """
-        Save a profile to Supabase and manage history retention - without row-level data
-        """
+        """Save a profile to Supabase and manage history retention - without row-level data"""
         try:
             logger.info(f"Attempting to save profile for table {profile.get('table', 'unknown')} to Supabase")
-            logger.info(f"Profile data keys: {list(profile.keys())}")
-            logger.info(f"Organization ID: {organization_id}, User ID: {user_id}")
 
             # Validate inputs to help with debugging
             if not user_id or not organization_id:
@@ -64,19 +60,31 @@ class SupabaseProfileHistoryManager:
                 return None
 
             # Create a sanitized copy of the profile without any row-level data
-            sanitized_profile = profile.copy()
+            sanitized_profile = {}
 
-            # Explicitly remove any sample data if present
-            if "samples" in sanitized_profile:
-                logger.info("Removing sample data before storage")
-                del sanitized_profile["samples"]
+            # Selectively copy only needed fields to minimize memory usage
+            # These are the essential fields we want to keep
+            essential_fields = [
+                'table', 'row_count', 'timestamp', 'duplicate_count', 'completeness',
+                'frequent_values', 'schema_shifts', 'anomalies', 'numeric_stats',
+                'date_stats', 'text_length_stats', 'validation_results'
+            ]
 
-            # Also remove any other potential row-level data
-            for key in list(sanitized_profile.keys()):
-                # Look for keys that might contain row data
-                if key in ['sample_data', 'rows', 'data_examples', 'raw_data', 'source_rows']:
-                    logger.info(f"Removing potential row data field: {key}")
-                    del sanitized_profile[key]
+            # Copy only the essential fields
+            for field in essential_fields:
+                if field in profile:
+                    sanitized_profile[field] = profile[field]
+
+            # Explicitly remove any potential large data fields
+            excluded_fields = ['samples', 'sample_data', 'rows', 'data_examples', 'raw_data', 'source_rows', 'preview']
+            for field in excluded_fields:
+                if field in sanitized_profile:
+                    logger.info(f"Removing potential row data field: {field}")
+                    del sanitized_profile[field]
+
+            # Force garbage collection before serializing
+            import gc
+            gc.collect()
 
             # Convert datetime objects to ISO strings in the profile
             class DateTimeEncoder(json.JSONEncoder):
@@ -91,8 +99,7 @@ class SupabaseProfileHistoryManager:
                 logger.info(f"Successfully serialized profile with {len(serialized_profile)} keys")
             except Exception as e:
                 logger.error(f"Error serializing profile: {str(e)}")
-                logger.error(f"Problem keys: {[k for k in sanitized_profile.keys() if not isinstance(k, str)]}")
-                # Try again with a more resilient approach
+                # Try again with a more resilient approach - build clean object field by field
                 clean_profile = {}
                 for k, v in sanitized_profile.items():
                     try:
@@ -105,7 +112,6 @@ class SupabaseProfileHistoryManager:
 
             # Sanitize connection string to remove credentials
             sanitized_connection = self.supabase._sanitize_connection_string(connection_string)
-            logger.info(f"Sanitized connection string: {sanitized_connection}")
 
             # Prepare data for saving
             data = {
@@ -124,9 +130,6 @@ class SupabaseProfileHistoryManager:
             supabase_url = os.getenv("SUPABASE_URL")
             supabase_key = os.getenv("SUPABASE_SERVICE_KEY")
 
-            logger.info(f"Supabase URL available: {bool(supabase_url)}")
-            logger.info(f"Supabase Service Key available: {bool(supabase_key)}")
-
             if not supabase_url or not supabase_key:
                 logger.error("Missing Supabase credentials in environment")
                 return None
@@ -134,12 +137,9 @@ class SupabaseProfileHistoryManager:
             # Create the client and insert data
             direct_client = create_client(supabase_url, supabase_key)
             logger.info("About to insert data into profiling_history table")
+
             try:
                 response = direct_client.table("profiling_history").insert(data).execute()
-
-                logger.info(f"Insert response status: {hasattr(response, 'status_code') and response.status_code}")
-                logger.info(
-                    f"Insert response data count: {len(response.data) if hasattr(response, 'data') and response.data else 0}")
 
                 if hasattr(response, 'error') and response.error:
                     logger.error(f"Supabase insert error: {response.error}")
@@ -151,10 +151,10 @@ class SupabaseProfileHistoryManager:
                     return profile_id
                 else:
                     logger.warning("No data returned from Supabase after insert")
-                    logger.warning(f"Full response: {response}")
                     return None
-            except Exception as e:
-                logger.error(f"Exception during Supabase insert: {str(e)}")
+
+            except Exception as save_error:
+                logger.error(f"Exception during Supabase insert: {str(save_error)}")
                 logger.error(traceback.format_exc())
                 return None
 
