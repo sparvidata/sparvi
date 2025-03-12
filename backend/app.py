@@ -192,6 +192,7 @@ def run_validation_rules_internal(user_id, organization_id, data):
     profile_history_id = data.get("profile_history_id")
 
     try:
+        force_gc()
         # Get all rules
         rules = validation_manager.get_rules(organization_id, table_name)
 
@@ -211,6 +212,7 @@ def run_validation_rules_internal(user_id, organization_id, data):
 
         # Log memory usage before validation
         log_memory_usage("Before validation")
+        force_gc()
 
         # Execute the rules in batches to manage memory
         results = []
@@ -223,6 +225,7 @@ def run_validation_rules_internal(user_id, organization_id, data):
             # Execute this batch of rules
             batch_results = sparvi_run_validations(connection_string, batch)
             results.extend(batch_results)
+            force_gc()
 
             # Store batch results in Supabase
             for j, result in enumerate(batch_results):
@@ -237,8 +240,7 @@ def run_validation_rules_internal(user_id, organization_id, data):
                     )
 
             # Force garbage collection between batches
-            import gc
-            gc.collect()
+            force_gc()
 
         # Log memory usage after validation
         log_memory_usage("After validation")
@@ -270,6 +272,13 @@ def log_memory_usage(label=""):
     except Exception as e:
         logger.warning(f"Error logging memory usage: {str(e)}")
         return 0
+
+def force_gc():
+    """Force garbage collection to free memory"""
+    import gc
+    collected = gc.collect()
+    logger.debug(f"Garbage collection: collected {collected} objects")
+    return collected
 
 @app.route("/api/login", methods=["POST"])
 def login():
@@ -602,6 +611,7 @@ def get_profile(current_user, organization_id):
 
         # Log memory usage at start
         log_memory_usage("Before profiling")
+        force_gc()
 
         # Check if connection string is properly formatted
         if "://" not in connection_string:
@@ -660,6 +670,7 @@ def get_profile(current_user, organization_id):
 
         # Log memory usage after profiling
         log_memory_usage("After profiling")
+        force_gc()
 
         # Check for problematic fields
         problematic_fields = [k for k in result.keys() if not isinstance(k, str)]
@@ -676,14 +687,13 @@ def get_profile(current_user, organization_id):
         logger.info("About to save profile to Supabase")
 
         # Force garbage collection before saving profile
-        import gc
-        gc.collect()
         log_memory_usage("After garbage collection, before saving profile")
 
         profile_id = None
         try:
             profile_id = profile_history.save_profile(current_user, organization_id, result, sanitized_connection)
             logger.info(f"Profile save result: {profile_id}")
+            force_gc()
 
             # Now that we have the profile_id, we can run validations with it
             if profile_id and run_validations_after_profile:
@@ -717,6 +727,7 @@ def get_profile(current_user, organization_id):
 
         # Final memory usage check
         log_memory_usage("End of profile endpoint")
+        force_gc()
 
         return jsonify(result)
     except Exception as e:
