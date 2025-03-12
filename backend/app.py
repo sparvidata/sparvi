@@ -1,5 +1,5 @@
 import urllib
-
+import psutil
 import supabase
 from flask import Flask, render_template, jsonify, request
 import datetime
@@ -233,6 +233,11 @@ def run_validation_rules_internal(user_id, organization_id, data):
         traceback.print_exc()
         return {"error": str(e)}
 
+def log_memory_usage():
+    """Log current memory usage for debugging"""
+    process = psutil.Process(os.getpid())
+    mem_info = process.memory_info()
+    logger.info(f"Memory usage: {mem_info.rss / (1024 * 1024):.2f} MB (RSS), {mem_info.vms / (1024 * 1024):.2f} MB (VMS)")
 
 @app.route("/api/login", methods=["POST"])
 def login():
@@ -372,6 +377,8 @@ def run_validation_rules(current_user, organization_id):
     data = request.get_json()
     logger.info(f"Run validations request: {data}")
 
+    log_memory_usage()
+
     if not data or "table" not in data:
         logger.warning("Table name missing in request")
         return jsonify({"error": "Table name is required"}), 400
@@ -385,6 +392,8 @@ def run_validation_rules(current_user, organization_id):
     try:
         logger.info(
             f"Running validations for org: {organization_id}, table: {table_name}, connection: {connection_string}")
+
+        log_memory_usage()
 
         # Get all rules first to check if there are any
         rules = validation_manager.get_rules(organization_id, table_name)
@@ -418,6 +427,7 @@ def run_validation_rules(current_user, organization_id):
                     profile_history_id  # Pass the profile_history_id
                 )
 
+            log_memory_usage()
             logger.info(f"Validation execution complete, got {len(results)} results")
             logger.info(f"Validation results: {results}")
 
@@ -1505,6 +1515,17 @@ def get_validation_history_by_profile(current_user, organization_id, profile_id)
         logger.error(f"Error getting validation history: {str(e)}")
         logger.error(traceback.format_exc())
         return jsonify({"error": str(e)}), 500
+
+@app.before_request
+def log_memory_before():
+    memory_usage = psutil.virtual_memory()
+    logger.info(f"Before Request - Memory Usage: {memory_usage.percent}% used")
+
+@app.after_request
+def log_memory_after(response):
+    memory_usage = psutil.virtual_memory()
+    logger.info(f"After Request - Memory Usage: {memory_usage.percent}% used")
+    return response
 
 if __name__ == "__main__":
     # In production, ensure you run with HTTPS (via a reverse proxy or WSGI server with SSL configured)

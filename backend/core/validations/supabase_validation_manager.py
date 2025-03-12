@@ -84,68 +84,85 @@ class SupabaseValidationManager:
             return results
 
         try:
-            # Create database engine
+            # Create database engine - do this once for all rules
             logger.info(f"Creating database engine with connection string: {connection_string}")
-            engine = create_engine(connection_string)
+            engine = create_engine(connection_string, pool_recycle=600, pool_pre_ping=True)
 
-            # Execute each rule
-            for rule in rules:
-                try:
-                    logger.info(f"Executing rule: {rule['rule_name']}")
+            # Process rules in smaller batches to reduce memory pressure
+            batch_size = 5
+            for i in range(0, len(rules), batch_size):
+                batch_rules = rules[i:i + batch_size]
+                logger.info(f"Processing batch {i // batch_size + 1} with {len(batch_rules)} rules")
 
-                    with engine.connect() as conn:
-                        # Execute the query
-                        query = rule['query']
-                        logger.debug(f"Executing query: {query}")
-                        result = conn.execute(text(query)).fetchone()
-                        actual_value = result[0] if result else None
-                        logger.debug(f"Query result: {actual_value}")
+                for rule in batch_rules:
+                    try:
+                        logger.info(f"Executing rule: {rule['rule_name']}")
 
-                        # Compare with expected value based on operator
-                        is_valid = self._evaluate_rule(rule['operator'], actual_value, rule['expected_value'])
-                        logger.info(
-                            f"Rule evaluation: {is_valid} (expected: {rule['expected_value']}, actual: {actual_value})")
+                        with engine.connect() as conn:
+                            # Set a query timeout to prevent long-running queries
+                            if 'snowflake' in connection_string.lower():
+                                conn.execute(text("ALTER SESSION SET STATEMENT_TIMEOUT_IN_SECONDS = 60"))
 
-                        # Create result object
-                        validation_result = {
+                            # Execute the query with a timeout context if possible
+                            query = rule['query']
+                            logger.debug(f"Executing query: {query}")
+                            result = conn.execute(text(query)).fetchone()
+                            actual_value = result[0] if result else None
+                            logger.debug(f"Query result: {actual_value}")
+
+                            # Compare with expected value based on operator
+                            is_valid = self._evaluate_rule(rule['operator'], actual_value, rule['expected_value'])
+                            logger.info(
+                                f"Rule evaluation: {is_valid} (expected: {rule['expected_value']}, actual: {actual_value})")
+
+                            # Create result object
+                            validation_result = {
+                                'rule_name': rule['rule_name'],
+                                'description': rule['description'] or '',
+                                'is_valid': is_valid,
+                                'actual_value': actual_value,
+                                'expected_value': rule['expected_value'],
+                                'operator': rule['operator']
+                            }
+
+                            results.append(validation_result)
+
+                            # Store result in Supabase
+                            try:
+                                logger.info(f"Storing result in Supabase for rule: {rule['rule_name']}")
+                                self.supabase.store_validation_result(
+                                    organization_id,
+                                    rule['id'],
+                                    is_valid,
+                                    actual_value
+                                )
+                                logger.info(f"Result stored successfully")
+                            except Exception as storage_error:
+                                logger.error(f"Error storing validation result: {str(storage_error)}")
+                                # Continue execution even if storage fails
+
+                    except Exception as e:
+                        logger.error(f"Error executing validation rule {rule['rule_name']}: {str(e)}")
+                        logger.error(traceback.format_exc())
+                        results.append({
                             'rule_name': rule['rule_name'],
-                            'description': rule['description'],
-                            'is_valid': is_valid,
-                            'actual_value': actual_value,
-                            'expected_value': rule['expected_value'],
-                            'operator': rule['operator']
-                        }
+                            'description': rule.get('description', ''),
+                            'is_valid': False,
+                            'error': str(e),
+                            'expected_value': rule.get('expected_value'),
+                            'operator': rule.get('operator')
+                        })
 
-                        results.append(validation_result)
-
-                        # Store result in Supabase
-                        logger.info(f"Storing result in Supabase for rule: {rule['rule_name']}")
-                        self.supabase.store_validation_result(
-                            organization_id,
-                            rule['id'],
-                            is_valid,
-                            actual_value
-                        )
-                        logger.info(f"Result stored successfully")
-
-                except Exception as e:
-                    logger.error(f"Error executing validation rule {rule['rule_name']}: {str(e)}")
-                    logger.error(traceback.format_exc())
-                    results.append({
-                        'rule_name': rule['rule_name'],
-                        'description': rule.get('description', ''),
-                        'is_valid': False,
-                        'error': str(e),
-                        'expected_value': rule.get('expected_value'),
-                        'operator': rule.get('operator')
-                    })
+                # Release memory between batches
+                import gc
+                gc.collect()
 
             return results
 
         except Exception as e:
             logger.error(f"Error in execute_rules: {str(e)}")
             logger.error(traceback.format_exc())
-            raise
+            return results  # Return whatever results we have instead of raising
 
     def _evaluate_rule(self, operator: str, actual_value: Any, expected_value: Any) -> bool:
         """Evaluate whether the actual value meets the expected value based on the operator"""
