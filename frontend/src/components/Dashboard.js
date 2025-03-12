@@ -1,6 +1,5 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { directFetchProfile } from '../profile-api';
-import { fetchProfileHistory } from '../api';
 import TrendChart from './TrendChart';
 import AnomalyList from './AnomalyList';
 import SchemaShift from './SchemaShift';
@@ -9,7 +8,11 @@ import AlertsPanel from './AlertsPanel';
 import DataSourcePanel from './DataSourcePanel';
 import HistoryTab from './HistoryTab';
 import { Tabs, Tab } from 'react-bootstrap';
-import { fetchDataPreview } from '../api';
+import {
+  fetchProfileHistory,
+  fetchDataPreview,
+  fetchConnectionById  // Add this import
+} from '../api';
 
 
 function Dashboard({ onStoreRefreshHandler }) {
@@ -134,9 +137,7 @@ function Dashboard({ onStoreRefreshHandler }) {
       try {
         // Get values from localStorage
         const storedTable = localStorage.getItem('tableName');
-        // Try multiple possible keys for connection ID
-        const storedConnId = localStorage.getItem('connectionId') ||
-                             localStorage.getItem('activeConnectionId');
+        const storedConnId = localStorage.getItem('connectionId');
         const storedConnString = localStorage.getItem('connectionString');
 
         console.log("%c[Dashboard] Connection info from localStorage:", "color: green", {
@@ -154,18 +155,33 @@ function Dashboard({ onStoreRefreshHandler }) {
           }
         }
 
-        // If we have a table name, try to load profile history even without a connection ID
+        // If we have a table name, try to load profile history
         if (storedTable) {
           setTableName(storedTable);
           console.log(`%c[Dashboard] Setting tableName to: ${storedTable}`, "color: blue");
 
+          // If we have a connection ID, fetch the full connection details
           if (storedConnId) {
             console.log("%c[Dashboard] Loading connection by ID:", "color: orange", storedConnId);
-            setActiveConnection({ id: storedConnId });
-            localStorage.setItem('connectionId', storedConnId); // Ensure consistent storage key
+
+            try {
+              // Fetch full connection details using the ID
+              const connectionDetails = await fetchConnectionById(storedConnId);
+              console.log("%c[Dashboard] Got full connection details:", "color: green", connectionDetails);
+
+              // Set the full connection object in state
+              setActiveConnection(connectionDetails);
+
+              // Ensure the ID is stored consistently
+              localStorage.setItem('connectionId', storedConnId);
+            } catch (connErr) {
+              console.error("%c[Dashboard] Error fetching connection details:", "color: red", connErr);
+              // Fall back to just using the ID
+              setActiveConnection({ id: storedConnId });
+            }
           }
 
-          // Try to load profile history with just the table name
+          // Try to load profile history
           try {
             console.log("%c[Dashboard] About to call loadProfileHistory() with table:", "background: #ff9; color: black", storedTable);
             await new Promise(resolve => setTimeout(resolve, 50)); // Small delay for state updates
@@ -178,7 +194,6 @@ function Dashboard({ onStoreRefreshHandler }) {
             }
           } catch (histErr) {
             console.error("%c[Dashboard] Error loading profile history:", "color: red", histErr);
-            setError("Failed to load profile history. Try refreshing the page.");
           }
         } else {
           console.log("%c[Dashboard] No stored table name found", "color: orange");

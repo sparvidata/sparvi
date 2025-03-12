@@ -1,217 +1,200 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
-import { fetchConnections, fetchTables } from '../api';
+import { fetchConnections, fetchTables, fetchConnectionById } from '../api';
 
 function DataSourcePanel({ tableName, onTableChange, onConnectionChange, activeConnection }) {
   const [connections, setConnections] = useState([]);
-  const [selectedConnectionId, setSelectedConnectionId] = useState(null);
   const [tables, setTables] = useState([]);
+  const [selectedConnectionId, setSelectedConnectionId] = useState('');
+  const [selectedTable, setSelectedTable] = useState('');
   const [loading, setLoading] = useState(true);
+  const [connectionDetailsLoading, setConnectionDetailsLoading] = useState(false);
   const [tablesLoading, setTablesLoading] = useState(false);
   const [connectionError, setConnectionError] = useState(null);
   const [tableError, setTableError] = useState(null);
+  const [selectedConnection, setSelectedConnection] = useState(null);
 
-  // Compute selected connection dynamically
-  const selectedConnection = useMemo(() => {
-    // If there are no connections, check if activeConnection is a string (direct connection string)
-    if (!connections.length) {
-      // If activeConnection is a string (connection string), return it directly
-      if (activeConnection && typeof activeConnection === 'string') {
-        return activeConnection;
-      }
-      // If activeConnection is an object, return it directly
-      if (activeConnection && (activeConnection.id || activeConnection.connection_details)) {
-        return activeConnection;
-      }
-      return null;
-    }
-
-    // If activeConnection is a string, return it as is
-    if (activeConnection && typeof activeConnection === 'string') {
-      return activeConnection;
-    }
-
-    // If activeConnection is an object with id or connection_details, return it directly
-    if (activeConnection && (activeConnection.id || activeConnection.connection_details)) {
-      return activeConnection;
-    }
-
-    // Otherwise use dropdown selection
-    return selectedConnectionId
-      ? connections.find(c => c.id === selectedConnectionId)
-      : connections.find(c => c.is_default) || connections[0];
-  }, [selectedConnectionId, connections, activeConnection]);
-
-  // Compute selected table dynamically
-  const selectedTable = useMemo(() => {
-    return tableName || tables[0] || '';
-  }, [tableName, tables]);
-
-  // Load connections on mount
+  // Fetch connections list when component mounts
   useEffect(() => {
     const loadConnections = async () => {
-      try {
-        setLoading(true);
-        setConnectionError(null);
-        const data = await fetchConnections();
-        setConnections(data.connections || []);
+      setLoading(true);
+      setConnectionError(null);
 
-        // Set initial selected connection to activeConnection, default, or first in list
-        if (data.connections && data.connections.length > 0) {
-          // If we have an activeConnection with an ID, try to find it in the list
-          if (activeConnection && activeConnection.id) {
-            const matchingConn = data.connections.find(c => c.id === activeConnection.id);
-            if (matchingConn) {
-              setSelectedConnectionId(matchingConn.id);
-            } else {
-              // Fall back to default or first
-              const defaultConn = data.connections.find(c => c.is_default) || data.connections[0];
-              setSelectedConnectionId(defaultConn.id);
-            }
-          } else {
-            // No activeConnection, use default
-            const defaultConn = data.connections.find(c => c.is_default) || data.connections[0];
-            setSelectedConnectionId(defaultConn.id);
-          }
+      try {
+        const response = await fetchConnections();
+        console.log("[DataSourcePanel] Fetched connections:", response);
+
+        // Make sure we're setting an array
+        const connectionsArray = Array.isArray(response) ? response :
+                               (response && Array.isArray(response.connections)) ?
+                               response.connections : [];
+
+        setConnections(connectionsArray);
+
+        // If no active connection but we have connections, set the first one as active
+        if (!activeConnection && connectionsArray.length > 0) {
+          const defaultConn = connectionsArray.find(c => c.is_default) || connectionsArray[0];
+          console.log("[DataSourcePanel] Setting default connection:", defaultConn);
+          setSelectedConnectionId(defaultConn.id);
+          setSelectedConnection(defaultConn);
+          onConnectionChange(defaultConn);
         }
-      } catch (err) {
-        setConnectionError(err.response?.data?.error || err.message || 'Failed to load connections.');
+      } catch (error) {
+        console.error("[DataSourcePanel] Error fetching connections:", error);
+        setConnectionError("Failed to load connections. Please try again.");
       } finally {
         setLoading(false);
       }
     };
+
     loadConnections();
+  }, [onConnectionChange]); // Only run when component mounts
+
+  // Fetch connection details if we only have an ID
+  useEffect(() => {
+    if (activeConnection && activeConnection.id && !activeConnection.connection_type) {
+      console.log("[DataSourcePanel] Have connection ID but no details, fetching:", activeConnection.id);
+      setConnectionDetailsLoading(true);
+
+      fetchConnectionById(activeConnection.id)
+        .then(details => {
+          console.log("[DataSourcePanel] Fetched full connection details:", details);
+          // Extract the connection from the response
+          if (details && details.connection) {
+            onConnectionChange(details.connection); // Update with the actual connection object
+          } else {
+            throw new Error("Invalid connection response format");
+          }
+        })
+        .catch(err => {
+          console.error("[DataSourcePanel] Error fetching connection details:", err);
+          setConnectionError("Failed to load connection details. Please try again.");
+        })
+        .finally(() => {
+          setConnectionDetailsLoading(false);
+        });
+    }
+  }, [activeConnection, onConnectionChange]);
+
+  // Update selected connection when activeConnection changes
+  useEffect(() => {
+    if (activeConnection) {
+      console.log("[DataSourcePanel] Active connection changed:", activeConnection);
+
+      if (typeof activeConnection === 'object') {
+        // If it's an object with connection details
+        setSelectedConnection(activeConnection);
+        if (activeConnection.id) {
+          setSelectedConnectionId(activeConnection.id);
+        }
+      } else {
+        // If it's a connection string
+        setSelectedConnection(activeConnection);
+      }
+    }
   }, [activeConnection]);
 
-  // Load tables when selected connection changes
+  // Update selected table when tableName changes
   useEffect(() => {
-    if (!selectedConnection) return;
+    if (tableName) {
+      console.log("[DataSourcePanel] Table name changed:", tableName);
+      setSelectedTable(tableName);
+    }
+  }, [tableName]);
 
+  // Fetch tables when connection changes
+  useEffect(() => {
     const loadTables = async () => {
+      if (!selectedConnection) return;
+
+      setTablesLoading(true);
+      setTableError(null);
+
       try {
-        setTablesLoading(true);
-        setTableError(null);
+        console.log("[DataSourcePanel] Fetching tables for connection:", selectedConnection);
+        const tablesList = await fetchTables(selectedConnection);
+        console.log("[DataSourcePanel] Fetched tables:", tablesList);
+        setTables(tablesList);
 
-        // Handle case where connection might be a string
-        const connectionString = typeof selectedConnection === 'string'
-          ? selectedConnection
-          : buildConnectionString(selectedConnection);
-
-        if (!connectionString) {
-          setTableError('Invalid connection information');
-          return;
+        // If we have tables but no selected table, select the first one
+        if (tablesList.length > 0 && !selectedTable) {
+          const firstTable = tablesList[0];
+          console.log("[DataSourcePanel] Setting default table:", firstTable);
+          setSelectedTable(firstTable);
+          onTableChange(firstTable);
+        } else if (tablesList.length > 0 && selectedTable) {
+          // Check if current selectedTable exists in new tables list
+          if (!tablesList.includes(selectedTable)) {
+            const firstTable = tablesList[0];
+            console.log("[DataSourcePanel] Selected table not found in new list, setting default:", firstTable);
+            setSelectedTable(firstTable);
+            onTableChange(firstTable);
+          }
         }
-
-        const response = await fetchTables(connectionString);
-        setTables(response.tables || []);
-      } catch (err) {
-        setTableError(err.response?.data?.error || err.message || 'Failed to load tables.');
+      } catch (error) {
+        console.error("[DataSourcePanel] Error fetching tables:", error);
+        setTableError("Failed to load tables. Please check your connection settings.");
       } finally {
         setTablesLoading(false);
       }
     };
+
     loadTables();
-  }, [selectedConnection]);
+  }, [selectedConnection, onTableChange]);
 
-  // Notify parent when connection changes
-  useEffect(() => {
-    if (selectedConnection && onConnectionChange) {
-      onConnectionChange(selectedConnection);
+  // Handle connection change from dropdown
+  const handleConnectionChange = (event) => {
+    const connId = event.target.value;
+    console.log("[DataSourcePanel] Connection dropdown changed to:", connId);
+
+    if (connId) {
+      const conn = connections.find(c => c.id === connId);
+      if (conn) {
+        console.log("[DataSourcePanel] Found connection:", conn);
+        setSelectedConnectionId(connId);
+        setSelectedConnection(conn);
+        onConnectionChange(conn);
+      }
     }
-  }, [selectedConnection, onConnectionChange]);
+  };
 
-  // Notify parent when table changes
-  useEffect(() => {
-    if (selectedTable && onTableChange) {
-      onTableChange(selectedTable);
-    }
-  }, [selectedTable, onTableChange]);
+  // Handle refresh connection button
+  const handleRefreshConnection = () => {
+    console.log("[DataSourcePanel] Refresh connection clicked");
 
-  useEffect(() => {
-    // Clean up any direct connection strings in localStorage when component mounts
-    const storedConnId = localStorage.getItem('connectionId');
-      if (storedConnId && connections && connections.length > 0) {
-        // Find connection by ID
-        const storedConnection = connections.find(c => c.id === storedConnId);
-        if (storedConnection) {
-          setSelectedConnectionId(storedConnection.id);
-          // Notify parent without setting localStorage (to avoid loops)
-          if (onConnectionChange) {
-            onConnectionChange(storedConnection);
+    // Refresh connections list
+    setLoading(true);
+    fetchConnections()
+      .then(response => {
+        console.log("[DataSourcePanel] Refreshed connections:", response);
+
+        // Make sure we're setting an array
+        const connectionsArray = Array.isArray(response) ? response :
+                               (response && Array.isArray(response.connections)) ?
+                               response.connections : [];
+
+        setConnections(connectionsArray);
+
+        // If we have an active connection ID, find it in the refreshed list
+        if (selectedConnectionId && connectionsArray.length > 0) {
+          const refreshedConn = connectionsArray.find(c => c.id === selectedConnectionId);
+          if (refreshedConn) {
+            console.log("[DataSourcePanel] Refreshed current connection:", refreshedConn);
+            setSelectedConnection(refreshedConn);
+            onConnectionChange(refreshedConn);
           }
         }
-      }
-  }, []);
-
-  // Handle connection selection change
-  const handleConnectionChange = (e) => {
-    const connId = e.target.value;
-    setSelectedConnectionId(connId);
-
-    // Find the selected connection and notify parent
-    if (onConnectionChange && connections.length > 0) {
-      const newConnection = connections.find(c => c.id === connId);
-      if (newConnection) {
-        // Store connection ID, not the full object
-        localStorage.setItem('connectionId', connId);
-        if (localStorage.getItem('connectionString')) {
-          localStorage.removeItem('connectionString');
-        }
-        onConnectionChange(newConnection);
-      }
-    }
+      })
+      .catch(error => {
+        console.error("[DataSourcePanel] Error refreshing connections:", error);
+        setConnectionError("Failed to refresh connections. Please try again.");
+      })
+      .finally(() => {
+        setLoading(false);
+      });
   };
 
-  // Utility function to build connection string
-  const buildConnectionString = (connection) => {
-    if (!connection) return '';
-
-    // If connection is already a string (from localStorage), return it directly
-    if (typeof connection === 'string') {
-      return connection;
-    }
-
-    const { connection_type, connection_details } = connection;
-    const encode = (str) => encodeURIComponent(str || '');
-
-    switch (connection_type) {
-      case 'snowflake':
-        return connection_details.useEnvVars
-          ? `snowflake://${connection_details.envVarPrefix}_CONNECTION`
-          : `snowflake://${encode(connection_details.username)}:${encode(connection_details.password)}@${connection_details.account}/${connection_details.database}/${connection_details.schema}?warehouse=${connection_details.warehouse}`;
-      case 'duckdb':
-        return `duckdb:///${connection_details.path}`;
-      case 'postgresql':
-        return `postgresql://${encode(connection_details.username)}:${encode(connection_details.password)}@${connection_details.host}:${connection_details.port}/${connection_details.database}`;
-      default:
-        return '';
-    }
-  };
-
-  const handleRefreshConnection = () => {
-    if (!selectedConnection || !selectedTable) {
-      return;
-    }
-
-    // Set loading state
-    setLoading(true);
-
-    // Notify parent about refreshing the connection
-    if (onConnectionChange) {
-      // Pass the same connection object to trigger a refresh
-      onConnectionChange(selectedConnection);
-    }
-
-    // Notify parent about the current table (to ensure it's loaded)
-    if (onTableChange) {
-      onTableChange(selectedTable);
-    }
-
-    // Reset loading state after a short delay
-    setTimeout(() => {
-      setLoading(false);
-    }, 500);
-  };
+  const isLoading = loading || connectionDetailsLoading;
 
   return (
     <div className="card mb-4 shadow-sm">
@@ -222,9 +205,9 @@ function DataSourcePanel({ tableName, onTableChange, onConnectionChange, activeC
         </h5>
         <div>
           <button
-              className="btn btn-sm btn-outline-secondary me-2"
-              onClick={handleRefreshConnection}
-              disabled={loading}
+            className="btn btn-sm btn-outline-secondary me-2"
+            onClick={handleRefreshConnection}
+            disabled={isLoading}
           >
             <i className="bi bi-arrow-repeat me-1"></i>
             Refresh Connection
@@ -237,19 +220,19 @@ function DataSourcePanel({ tableName, onTableChange, onConnectionChange, activeC
       </div>
 
       <div className="card-body pb-2">
-        {loading ? (
-            <div className="d-flex justify-content-center my-3">
-              <div className="spinner-border text-primary" role="status">
-                <span className="visually-hidden">Loading connections...</span>
-              </div>
+        {isLoading ? (
+          <div className="d-flex justify-content-center my-3">
+            <div className="spinner-border text-primary" role="status">
+              <span className="visually-hidden">Loading connections...</span>
             </div>
+          </div>
         ) : connectionError ? (
-            <div className="alert alert-danger">
-              <i className="bi bi-exclamation-triangle-fill me-2"></i>
-              {connectionError}
-            </div>
+          <div className="alert alert-danger">
+            <i className="bi bi-exclamation-triangle-fill me-2"></i>
+            {connectionError}
+          </div>
         ) : connections.length === 0 ? (
-            <div className="alert alert-warning">
+          <div className="alert alert-warning">
             <i className="bi bi-info-circle-fill me-2"></i>
             No database connections found. <Link to="/connections">Click here</Link> to add a connection.
           </div>
@@ -268,11 +251,12 @@ function DataSourcePanel({ tableName, onTableChange, onConnectionChange, activeC
                     {typeof activeConnection === 'string' ? (
                       <option value="">Using direct connection string</option>
                     ) : (
-                      connections.map(conn => (
+                      // Make sure connections is an array before trying to map over it
+                      Array.isArray(connections) ? connections.map(conn => (
                         <option key={conn.id} value={conn.id}>
                           {conn.name} {conn.is_default ? '(Default)' : ''}
                         </option>
-                      ))
+                      )) : <option value="">Loading connections...</option>
                     )}
                   </select>
                 </div>
@@ -346,7 +330,15 @@ function DataSourcePanel({ tableName, onTableChange, onConnectionChange, activeC
                 <i className="bi bi-info-circle me-2"></i>
                 Using connection string: {selectedConnection.substring(0, 20)}...
               </div>
-            ) : null}
+            ) : (
+              // Add a message for when we have an ID but no full connection details yet
+              activeConnection && activeConnection.id && !activeConnection.connection_type && (
+                <div className="alert alert-info mb-3 py-2">
+                  <i className="bi bi-info-circle me-2"></i>
+                  Loading connection details...
+                </div>
+              )
+            )}
           </>
         )}
       </div>

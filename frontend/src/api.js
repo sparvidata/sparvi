@@ -342,5 +342,6 @@ export default {
   updateConnection,
   deleteConnection,
   testConnection,
-  setDefaultConnection
+  setDefaultConnection,
+  fetchConnectionById
 };

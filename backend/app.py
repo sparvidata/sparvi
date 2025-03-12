@@ -1145,6 +1145,38 @@ def get_connections(current_user, organization_id):
         logger.error(traceback.format_exc())
         return jsonify({"error": str(e)}), 500
 
+@app.route("/api/connections/<connection_id>", methods=["GET"])
+@token_required
+def get_connection_by_id(current_user, organization_id, connection_id):
+    """Get a specific connection by ID for the organization"""
+    try:
+        # Initialize Supabase manager
+        supabase_mgr = SupabaseManager()
+
+        # Query the specific connection
+        connection_response = supabase_mgr.supabase.table("database_connections") \
+            .select("*") \
+            .eq("organization_id", organization_id) \
+            .eq("id", connection_id) \
+            .single() \
+            .execute()
+
+        connection = connection_response.data
+
+        if not connection:
+            return jsonify({"error": "Connection not found"}), 404
+
+        # Remove password before returning
+        if 'connection_details' in connection and 'password' in connection['connection_details']:
+            connection['connection_details'].pop('password', None)
+
+        return jsonify({"connection": connection})
+    except Exception as e:
+        logger.error(f"Error fetching connection {connection_id}: {str(e)}")
+        logger.error(traceback.format_exc())
+        return jsonify({"error": str(e)}), 500
+
+
 
 @app.route("/api/connections", methods=["POST"])
 @token_required
