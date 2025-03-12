@@ -136,17 +136,32 @@ function Dashboard({ onStoreRefreshHandler }) {
       setLoading(true);
 
       // Connections
-      const storedConnString = localStorage.getItem('connectionString');
       const storedTable = localStorage.getItem('tableName');
+      // Check for connection ID first (new way)
+      const storedConnId = localStorage.getItem('connectionId');
+      // Check for old connection string (should be cleaned up)
+      const storedConnString = localStorage.getItem('connectionString');
 
       console.log("%c[Dashboard] Connection info from localStorage:", "color: green", {
-        storedConnString: storedConnString ? (storedConnString.substring(0, 20) + "...") : null,
-        storedTable
+        storedConnId,
+        storedTable,
+        hasOldConnString: !!storedConnString
       });
 
-      if (storedConnString && storedTable) {
-        console.log("%c[Dashboard] Setting connection state values", "color: orange");
-        setActiveConnection(storedConnString);
+      // Clean up any old full connection strings in localStorage
+      if (storedConnString) {
+        console.warn("Found old connection string in localStorage - removing for security");
+        localStorage.removeItem('connectionString');
+        // If no connection ID is stored, save a reference to indicate we had a connection
+        if (!storedConnId) {
+          localStorage.setItem('connectionReference', 'prior-connection');
+        }
+      }
+
+      if (storedConnId && storedTable) {
+        console.log("%c[Dashboard] Loading connection by ID:", "color: orange", storedConnId);
+        // We'll load the actual connection in DataSourcePanel by ID
+        setActiveConnection({ id: storedConnId });
         setTableName(storedTable);
 
         try {

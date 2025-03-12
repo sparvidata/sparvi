@@ -127,6 +127,22 @@ function DataSourcePanel({ tableName, onTableChange, onConnectionChange, activeC
     }
   }, [selectedTable, onTableChange]);
 
+  useEffect(() => {
+    // Clean up any direct connection strings in localStorage when component mounts
+    const storedConnId = localStorage.getItem('connectionId');
+      if (storedConnId && connections && connections.length > 0) {
+        // Find connection by ID
+        const storedConnection = connections.find(c => c.id === storedConnId);
+        if (storedConnection) {
+          setSelectedConnectionId(storedConnection.id);
+          // Notify parent without setting localStorage (to avoid loops)
+          if (onConnectionChange) {
+            onConnectionChange(storedConnection);
+          }
+        }
+      }
+  }, []);
+
   // Handle connection selection change
   const handleConnectionChange = (e) => {
     const connId = e.target.value;
@@ -136,6 +152,11 @@ function DataSourcePanel({ tableName, onTableChange, onConnectionChange, activeC
     if (onConnectionChange && connections.length > 0) {
       const newConnection = connections.find(c => c.id === connId);
       if (newConnection) {
+        // Store connection ID, not the full object
+        localStorage.setItem('connectionId', connId);
+        if (localStorage.getItem('connectionString')) {
+          localStorage.removeItem('connectionString');
+        }
         onConnectionChange(newConnection);
       }
     }
