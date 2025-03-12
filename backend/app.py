@@ -558,31 +558,74 @@ def get_tables(current_user, organization_id):
     """Get all tables for a connection"""
     try:
         connection_string = request.args.get("connection_string")
+        connection_id = request.args.get("connection_id")
 
-        if not connection_string:
-            return jsonify({"error": "Connection string is required"}), 400
+        # Handle either JSON connection object or connection_id
+        if connection_id:
+            # Get connection by ID
+            supabase_mgr = SupabaseManager()
+            connection_response = supabase_mgr.supabase.table("database_connections") \
+                .select("*") \
+                .eq("organization_id", organization_id) \
+                .eq("id", connection_id) \
+                .execute()
 
-        # Parse connection string to extract components
-        parts = connection_string.replace('snowflake://', '').split('@')
-        username = parts[0].split(':')[0]  # Get username
-        connection_details = parts[1]
+            if not connection_response.data:
+                return jsonify({"error": f"Connection with ID {connection_id} not found"}), 404
 
-        # Get connection details from Supabase
-        supabase_mgr = SupabaseManager()
-        db_connections = supabase_mgr.supabase.table("database_connections") \
-            .select("*") \
-            .eq("organization_id", organization_id) \
-            .execute()
+            connection_details = connection_response.data[0]["connection_details"]
+        elif connection_string:
+            # Parse the JSON string into an object
+            try:
+                connection_obj = json.loads(connection_string)
 
-        if not db_connections.data:
-            return jsonify({"error": "Connection not found"}), 404
+                # Handle both formats: {"connection": {...}} or direct object
+                if "connection" in connection_obj:
+                    connection_obj = connection_obj["connection"]
 
-        # Get credentials from connection_details JSON
-        conn_details = db_connections.data[0]["connection_details"]
-        password = conn_details["password"]
+                # Extract connection details
+                if "connection_details" in connection_obj:
+                    connection_details = connection_obj["connection_details"]
+                else:
+                    return jsonify({"error": "Invalid connection format"}), 400
+            except json.JSONDecodeError:
+                return jsonify({"error": "Invalid JSON in connection_string"}), 400
+        else:
+            return jsonify({"error": "Either connection_string or connection_id is required"}), 400
 
-        # Build proper connection string with password
-        proper_connection_string = f"snowflake://{username}:{password}@{connection_details}"
+        # Build Snowflake connection string
+        username = connection_details.get("username")
+        account = connection_details.get("account")
+        warehouse = connection_details.get("warehouse")
+        database = connection_details.get("database")
+        schema = connection_details.get("schema", "PUBLIC")
+
+        # Get the password from stored connection details
+        if "password" not in connection_details and not connection_id:
+            # If no password in request and no connection_id to look it up,
+            # we need to get it from Supabase based on username/account
+            supabase_mgr = SupabaseManager()
+            db_connections = supabase_mgr.supabase.table("database_connections") \
+                .select("*") \
+                .eq("organization_id", organization_id) \
+                .execute()
+
+            # Find matching connection
+            password = None
+            for conn in db_connections.data:
+                conn_details = conn["connection_details"]
+                if conn_details.get("username") == username and conn_details.get("account") == account:
+                    password = conn_details.get("password")
+                    break
+
+            if not password:
+                return jsonify({"error": "Could not find password for connection"}), 400
+        else:
+            # Password provided in connection_details
+            password = connection_details.get("password")
+
+        # Build proper Snowflake connection string
+        proper_connection_string = f"snowflake://{username}:{password}@{account}/{database}/{schema}?warehouse={warehouse}"
 
         # Create engine with complete connection string
         engine = create_engine(proper_connection_string)

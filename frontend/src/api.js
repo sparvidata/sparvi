@@ -76,11 +76,34 @@ export const fetchProfile = async (connectionString, table) => {
 };
 
 // Fetch all tables for a given connection string
-export const fetchTables = async (connectionString) => {
-  const response = await apiClient.get('/api/tables', {
-    params: { connection_string: connectionString }
-  });
-  return response.data;
+export const fetchTables = async (connection) => {
+  console.log(`[API] Fetching tables for connection:`, connection);
+
+  try {
+    let response;
+
+    if (connection && connection.id) {
+      // If we have a connection object with ID, use that
+      response = await apiClient.get('/api/tables', {
+        params: {
+          connection_id: connection.id
+        }
+      });
+    } else {
+      // Otherwise send the whole connection object
+      response = await apiClient.get('/api/tables', {
+        params: {
+          connection_string: JSON.stringify(connection)
+        }
+      });
+    }
+
+    console.log(`[API] Tables response:`, response.data);
+    return response.data.tables || [];
+  } catch (error) {
+    console.error(`[API] Error fetching tables:`, error);
+    throw error;
+  }
 };
 
 // Fetch validation rules for a table
