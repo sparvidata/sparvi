@@ -135,8 +135,8 @@ function Dashboard({ onStoreRefreshHandler }) {
       setLoading(true);
 
       // Connections
-      const storedConnString = activeConnection;
-      const storedTable = tableName;
+      const storedConnString = localStorage.getItem('connectionString');
+      const storedTable = localStorage.getItem('tableName');
 
       console.log("%c[Dashboard] Connection info from localStorage:", "color: green", {
         storedConnString: storedConnString ? (storedConnString.substring(0, 20) + "...") : null,
@@ -145,7 +145,7 @@ function Dashboard({ onStoreRefreshHandler }) {
 
       if (storedConnString && storedTable) {
         console.log("%c[Dashboard] Setting connection state values", "color: orange");
-        setConnectionString(storedConnString);
+        setActiveConnection(storedConnString);
         setTableName(storedTable);
 
         try {
