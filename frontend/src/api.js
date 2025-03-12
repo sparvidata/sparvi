@@ -153,11 +153,24 @@ export const generateDefaultValidations = async (connectionString, table) => {
   return response.data;
 };
 
-export const fetchProfileHistory = async (table, limit = 10) => {
-  const response = await apiClient.get('/api/profile-history', {
-    params: { table, limit }
-  });
-  return response.data;
+export const fetchProfileHistory = async (tableName, limit = 15) => {
+  console.log(`[API] fetchProfileHistory called with table: ${tableName}, limit: ${limit}`);
+
+  try {
+    // Use the correct endpoint with query parameters
+    const response = await apiClient.get(`/api/profile-history`, {
+      params: {
+        table: tableName,
+        limit: limit
+      }
+    });
+
+    console.log(`[API] fetchProfileHistory response:`, response.data);
+    return response.data;
+  } catch (error) {
+    console.error(`[API] fetchProfileHistory error:`, error);
+    throw error;
+  }
 };
 
 // Export the signOut function
@@ -286,6 +299,18 @@ export const testConnection = async (connectionData) => {
 export const setDefaultConnection = async (id) => {
   const response = await apiClient.put(`/api/connections/${id}/default`);
   return response.data;
+};
+
+export const fetchConnectionById = async (connectionId) => {
+  console.log(`[API] Fetching connection details for ID: ${connectionId}`);
+  try {
+    const response = await apiClient.get(`/api/connections/${connectionId}`);
+    console.log(`[API] Connection details response:`, response.data);
+    return response.data;
+  } catch (error) {
+    console.error(`[API] Error fetching connection details:`, error);
+    throw error;
+  }
 };
 
 // Export the default functions
