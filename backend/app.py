@@ -1,3 +1,4 @@
+import json
 import urllib
 import psutil
 import supabase
@@ -7,6 +8,10 @@ import os
 import traceback
 import logging
 import sys
+from concurrent.futures import ThreadPoolExecutor
+import threading
+import queue
+import uuid
 from functools import wraps
 from dotenv import load_dotenv
 from flask_cors import CORS
@@ -15,8 +20,9 @@ from supabase import create_client, Client
 from sparvi.profiler.profile_engine import profile_table
 from sparvi.validations.default_validations import get_default_validations
 from sparvi.validations.validator import run_validations as sparvi_run_validations
-
-# Import from our cloud service components
+from core.metadata.connectors import SnowflakeConnector
+from core.metadata.collector import MetadataCollector
+from core.metadata.storage import MetadataStorage
 from core.storage.supabase_manager import SupabaseManager
 from core.validations.supabase_validation_manager import SupabaseValidationManager
 from core.history.supabase_profile_history import SupabaseProfileHistoryManager
@@ -98,6 +104,11 @@ app.config["SECRET_KEY"] = os.getenv("SECRET_KEY", "default_secret_key")
 validation_manager = SupabaseValidationManager()
 
 run_validations_after_profile = True  # Set to True to automatically run validations after profiling
+
+metadata_storage = MetadataStorage()
+
+task_executor = ThreadPoolExecutor(max_workers=5)
+metadata_task_queue = queue.Queue()
 
 # Decorator to require a valid token for protected routes
 def token_required(f):
@@ -283,6 +294,294 @@ def force_gc():
     collected = gc.collect()
     logger.debug(f"Garbage collection: collected {collected} objects")
     return collected
+
+def get_connector_for_connection(connection_details):
+    """Create the appropriate connector based on connection type"""
+    connection_type = connection_details.get("connection_type")
+
+    if connection_type == "snowflake":
+        return SnowflakeConnector(connection_details.get("connection_details", {}))
+    else:
+        raise ValueError(f"Unsupported connection type: {connection_type}")
+
+# Add task worker function for background processing
+def metadata_task_worker():
+    """Background worker that processes metadata collection tasks"""
+    while True:
+        try:
+            # Get task from queue (blocking)
+            task = metadata_task_queue.get()
+
+            if task["task"] == "full_metadata_collection":
+                # Process full metadata collection
+                connection_id = task["connection_id"]
+                logger.info(f"Processing full metadata collection for connection {connection_id}")
+
+                # Get connection details
+                connection = task.get("connection")
+                if not connection:
+                    supabase_mgr = SupabaseManager()
+                    connection_check = supabase_mgr.supabase.table("database_connections") \
+                        .select("*") \
+                        .eq("id", connection_id) \
+                        .execute()
+
+                    if not connection_check.data or len(connection_check.data) == 0:
+                        logger.error(f"Connection not found for background task: {connection_id}")
+                        metadata_task_queue.task_done()
+                        continue
+
+                    connection = connection_check.data[0]
+
+                try:
+                    # Create connector
+                    connector = get_connector_for_connection(connection)
+
+                    # Create metadata collector
+                    collector = MetadataCollector(connection_id, connector)
+
+                    # Collect metadata synchronously (since we're in a background thread)
+                    metadata = collector.collect_immediate_metadata_sync()
+
+                    # Store table list
+                    store_table_list(connection_id, metadata.get("table_list", []))
+
+                    # Process tables in batches
+                    tables = metadata.get("table_list", [])
+                    table_limit = task.get("table_limit", 50)  # Default limit 50 tables
+
+                    # Process only up to the limit
+                    for i, table in enumerate(tables[:table_limit]):
+                        if i % 10 == 0:
+                            logger.info(f"Background collection progress: {i}/{min(len(tables), table_limit)} tables")
+
+                        table_metadata = collector.collect_table_metadata_sync(table)
+                        store_table_metadata(connection_id, table, table_metadata)
+
+                    logger.info(f"Completed full metadata collection for connection {connection_id}")
+                except Exception as e:
+                    logger.error(f"Error in background metadata collection: {str(e)}")
+
+            # Mark task as done
+            metadata_task_queue.task_done()
+
+        except Exception as e:
+            logger.error(f"Error in metadata task worker: {str(e)}")
+
+
+# Start the background worker thread
+metadata_worker_thread = threading.Thread(target=metadata_task_worker, daemon=True)
+metadata_worker_thread.start()
+
+
+# Helper functions for storage
+def store_table_list(connection_id, tables):
+    """Store table list in metadata storage"""
+    try:
+        # Use synchronous methods inside background thread
+        # Create object for the connection
+        storage = MetadataStorage()
+
+        # Get metadata type ID for schema
+        type_response = storage.supabase.table("metadata_types").select("id").eq("type_name", "schema").execute()
+        if not type_response.data or len(type_response.data) == 0:
+            logger.error("Schema metadata type not found")
+            return False
+
+        metadata_type_id = type_response.data[0]["id"]
+
+        # Get property ID for table_list
+        property_response = storage.supabase.table("metadata_properties").select("id").eq("property_name",
+                                                                                          "table_list").execute()
+        if not property_response.data or len(property_response.data) == 0:
+            logger.error("table_list property not found")
+            return False
+
+        property_id = property_response.data[0]["id"]
+
+        # Store as object first
+        object_data = {
+            "connection_id": connection_id,
+            "object_type": "database",
+            "object_name": "tables",
+            "created_at": datetime.now().isoformat(),
+            "updated_at": datetime.now().isoformat()
+        }
+
+        object_response = storage.supabase.table("metadata_objects").upsert(object_data).execute()
+        if not object_response.data or len(object_response.data) == 0:
+            logger.error("Failed to create/update metadata object for table list")
+            return False
+
+        object_id = object_response.data[0]["id"]
+
+        # Now store the fact
+        fact_data = {
+            "connection_id": connection_id,
+            "metadata_type_id": metadata_type_id,
+            "object_id": object_id,
+            "property_id": property_id,
+            "value_json": json.dumps(tables),
+            "collected_at": datetime.now().isoformat(),
+            "refresh_frequency": "1 day"
+        }
+
+        fact_response = storage.supabase.table("metadata_facts").upsert(fact_data).execute()
+        if not fact_response.data:
+            logger.error("Failed to store table list metadata")
+            return False
+
+        logger.info(f"Stored table list with {len(tables)} tables for connection {connection_id}")
+        return True
+
+    except Exception as e:
+        logger.error(f"Error storing table list: {str(e)}")
+        return False
+
+
+def store_table_metadata(connection_id, table_name, metadata):
+    """Store detailed table metadata"""
+    try:
+        storage = MetadataStorage()
+
+        # Get metadata type ID for schema
+        type_response = storage.supabase.table("metadata_types").select("id").eq("type_name", "schema").execute()
+        if not type_response.data or len(type_response.data) == 0:
+            logger.error("Schema metadata type not found")
+            return False
+
+        metadata_type_id = type_response.data[0]["id"]
+
+        # Create object for the table
+        object_data = {
+            "connection_id": connection_id,
+            "object_type": "table",
+            "object_name": table_name,
+            "created_at": datetime.now().isoformat(),
+            "updated_at": datetime.now().isoformat()
+        }
+
+        object_response = storage.supabase.table("metadata_objects").upsert(object_data).execute()
+        if not object_response.data or len(object_response.data) == 0:
+            logger.error(f"Failed to create/update metadata object for table {table_name}")
+            return False
+
+        table_object_id = object_response.data[0]["id"]
+
+        # Store each property
+        properties_to_store = {
+            "columns": metadata.get("columns", []),
+            "row_count": metadata.get("row_count", 0),
+            "primary_key": metadata.get("primary_keys", [])
+        }
+
+        for property_name, value in properties_to_store.items():
+            # Get property ID
+            property_response = storage.supabase.table("metadata_properties").select("id").eq("property_name",
+                                                                                              property_name).execute()
+            if not property_response.data or len(property_response.data) == 0:
+                logger.warning(f"Property {property_name} not found, skipping")
+                continue
+
+            property_id = property_response.data[0]["id"]
+
+            # Prepare fact data
+            fact_data = {
+                "connection_id": connection_id,
+                "metadata_type_id": metadata_type_id,
+                "object_id": table_object_id,
+                "property_id": property_id,
+                "collected_at": datetime.now().isoformat(),
+                "refresh_frequency": "1 day"
+            }
+
+            # Set the appropriate value field
+            if property_name == "row_count":
+                fact_data["value_numeric"] = value
+            elif isinstance(value, (list, dict)):
+                fact_data["value_json"] = json.dumps(value)
+            else:
+                fact_data["value_text"] = str(value)
+
+            # Store the fact
+            fact_response = storage.supabase.table("metadata_facts").upsert(fact_data).execute()
+            if not fact_response.data:
+                logger.error(f"Failed to store {property_name} for table {table_name}")
+
+        logger.info(f"Stored metadata for table {table_name}")
+        return True
+
+    except Exception as e:
+        logger.error(f"Error storing table metadata: {str(e)}")
+        return False
+
+
+# Now update the MetadataCollector class to add synchronous versions of the async methods
+# Add these to backend/core/metadata/collector.py
+
+def collect_immediate_metadata_sync(self):
+    """Synchronous version of collect_immediate_metadata"""
+    logger.info(f"Collecting immediate metadata for connection {self.connection_id}")
+
+    # Connect to the database
+    self.connector.connect()
+
+    # Collect table list (Tier 1)
+    tables = self.collect_table_list()
+
+    # Only collect columns for the first few tables to avoid overloading
+    column_metadata = {}
+    for table in tables[:10]:  # Limit to first 10 tables for immediate collection
+        column_metadata[table] = self.collect_columns(table)
+
+    # Return just the essential metadata
+    return {
+        "table_list": tables,
+        "column_metadata": column_metadata
+    }
+
+
+def collect_table_metadata_sync(self, table_name):
+    """Synchronous version of collect_table_metadata"""
+    logger.info(f"Collecting detailed metadata for table {table_name}")
+
+    # If not already connected, connect
+    if not self.connector.inspector:
+        self.connector.connect()
+
+    try:
+        # Basic table information
+        columns = self.collect_columns(table_name)
+        primary_keys = self.connector.get_primary_keys(table_name)
+
+        # Row count - use a query
+        row_count = 0
+        try:
+            result = self.connector.execute_query(f"SELECT COUNT(*) FROM {table_name}")
+            if result and len(result) > 0:
+                row_count = result[0][0]
+        except Exception as e:
+            logger.error(f"Error getting row count for {table_name}: {str(e)}")
+
+        # Compile table metadata
+        table_metadata = {
+            "table_name": table_name,
+            "column_count": len(columns),
+            "columns": columns,
+            "primary_keys": primary_keys,
+            "row_count": row_count,
+            "collected_at": datetime.now().isoformat()
+        }
+
+        logger.info(f"Successfully collected metadata for table {table_name}")
+        return table_metadata
+    except Exception as e:
+        logger.error(f"Error collecting table metadata for {table_name}: {str(e)}")
+        return {
+            "table_name": table_name,
+            "error": str(e),
+            "collected_at": datetime.now().isoformat()
+        }
 
 @app.route('/', defaults={'path': ''}, methods=['OPTIONS'])
 
@@ -1674,6 +1973,133 @@ def get_validation_history_by_profile(current_user, organization_id, profile_id)
         return jsonify({"results": response.data})
     except Exception as e:
         logger.error(f"Error getting validation history: {str(e)}")
+        logger.error(traceback.format_exc())
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/connections/<connection_id>/metadata", methods=["GET"])
+@token_required
+def get_connection_metadata(current_user, organization_id, connection_id):
+    """Get cached metadata for a connection"""
+    try:
+        # Check if user has access to this connection
+        connection_check = supabase_mgr.supabase.table("database_connections") \
+            .select("*") \
+            .eq("id", connection_id) \
+            .eq("organization_id", organization_id) \
+            .execute()
+
+        if not connection_check.data or len(connection_check.data) == 0:
+            logger.error(f"Connection not found or access denied: {connection_id}")
+            return jsonify({"error": "Connection not found or access denied"}), 404
+
+        # Get query parameters
+        metadata_types = request.args.get("type", "schema")  # Default to schema metadata
+        object_type = request.args.get("object_type")  # Optional filter by object type
+
+        # Convert to list if comma-separated
+        if "," in metadata_types:
+            metadata_types = metadata_types.split(",")
+        else:
+            metadata_types = [metadata_types]
+
+        # Create storage instance
+        storage = MetadataStorage()
+
+        # Get metadata for each requested type
+        result = {}
+        for metadata_type in metadata_types:
+            # This now runs synchronously since it doesn't use await
+            metadata = storage.get_metadata_sync(connection_id, metadata_type, object_type)
+            result[metadata_type] = metadata
+
+        return jsonify({"metadata": result})
+
+    except Exception as e:
+        logger.error(f"Error retrieving connection metadata: {str(e)}")
+        logger.error(traceback.format_exc())
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/connections/<connection_id>/metadata/collect", methods=["POST"])
+@token_required
+def collect_connection_metadata(current_user, organization_id, connection_id):
+    """Collect metadata for a connection"""
+    try:
+        # Check if user has access to this connection
+        connection_check = supabase_mgr.supabase.table("database_connections") \
+            .select("*") \
+            .eq("id", connection_id) \
+            .eq("organization_id", organization_id) \
+            .execute()
+
+        if not connection_check.data or len(connection_check.data) == 0:
+            logger.error(f"Connection not found or access denied: {connection_id}")
+            return jsonify({"error": "Connection not found or access denied"}), 404
+
+        connection = connection_check.data[0]
+
+        # Create connector for this connection
+        try:
+            connector = get_connector_for_connection(connection)
+        except ValueError as e:
+            return jsonify({"error": str(e)}), 400
+
+        # Create metadata collector
+        collector = MetadataCollector(connection_id, connector)
+
+        # Determine collection type from request parameters
+        collection_type = request.json.get("collection_type", "immediate")
+        table_limit = request.json.get("table_limit", 50)
+
+        # For immediate collection, do it directly here
+        # For full collection, queue it as background task
+        if collection_type == "immediate":
+            # Collect only immediate metadata (fast)
+            # Wrap in executor to avoid blocking the API
+            metadata = task_executor.submit(collector.collect_immediate_metadata_sync).result()
+
+            # Enqueue full collection as background task
+            task = {
+                "task": "full_metadata_collection",
+                "connection_id": connection_id,
+                "connection": connection,
+                "priority": "high",
+                "table_limit": table_limit
+            }
+
+            metadata_task_queue.put(task)
+            logger.info(f"Enqueued full metadata collection for connection {connection_id}")
+
+            return jsonify({
+                "message": "Immediate metadata collection completed, full collection scheduled",
+                "metadata": metadata,
+                "task_id": str(uuid.uuid4())  # Return a task ID for reference
+            })
+        else:
+            # For explicit comprehensive collection request,
+            # We still do basic collection immediately and queue the rest
+            metadata = task_executor.submit(collector.collect_immediate_metadata_sync).result()
+
+            # Queue a high priority full collection
+            task = {
+                "task": "full_metadata_collection",
+                "connection_id": connection_id,
+                "connection": connection,
+                "priority": "high",
+                "table_limit": table_limit
+            }
+
+            metadata_task_queue.put(task)
+
+            return jsonify({
+                "message": "Comprehensive metadata collection scheduled",
+                "metadata": metadata,  # Return immediate results
+                "task_id": str(uuid.uuid4())
+            })
+
+    except Exception as e:
+        logger.error(f"Error collecting connection metadata: {str(e)}")
         logger.error(traceback.format_exc())
         return jsonify({"error": str(e)}), 500
 
