@@ -404,8 +404,8 @@ def store_table_list(connection_id, tables):
             "connection_id": connection_id,
             "object_type": "database",
             "object_name": "tables",
-            "created_at": datetime.now().isoformat(),
-            "updated_at": datetime.now().isoformat()
+            "created_at": datetime.datetime.now().isoformat(),
+            "updated_at": datetime.datetime.now().isoformat()
         }
 
         object_response = storage.supabase.table("metadata_objects").upsert(object_data).execute()
@@ -422,7 +422,7 @@ def store_table_list(connection_id, tables):
             "object_id": object_id,
             "property_id": property_id,
             "value_json": json.dumps(tables),
-            "collected_at": datetime.now().isoformat(),
+            "collected_at": datetime.datetime.now().isoformat(),
             "refresh_frequency": "1 day"
         }
 
@@ -457,8 +457,8 @@ def store_table_metadata(connection_id, table_name, metadata):
             "connection_id": connection_id,
             "object_type": "table",
             "object_name": table_name,
-            "created_at": datetime.now().isoformat(),
-            "updated_at": datetime.now().isoformat()
+            "created_at": datetime.datetime.now().isoformat(),
+            "updated_at": datetime.datetime.now().isoformat()
         }
 
         object_response = storage.supabase.table("metadata_objects").upsert(object_data).execute()
@@ -491,7 +491,7 @@ def store_table_metadata(connection_id, table_name, metadata):
                 "metadata_type_id": metadata_type_id,
                 "object_id": table_object_id,
                 "property_id": property_id,
-                "collected_at": datetime.now().isoformat(),
+                "collected_at": datetime.datetime.now().isoformat(),
                 "refresh_frequency": "1 day"
             }
 
@@ -570,7 +570,7 @@ def collect_table_metadata_sync(self, table_name):
             "columns": columns,
             "primary_keys": primary_keys,
             "row_count": row_count,
-            "collected_at": datetime.now().isoformat()
+            "collected_at": datetime.datetime.now().isoformat()
         }
 
         logger.info(f"Successfully collected metadata for table {table_name}")
@@ -580,7 +580,7 @@ def collect_table_metadata_sync(self, table_name):
         return {
             "table_name": table_name,
             "error": str(e),
-            "collected_at": datetime.now().isoformat()
+            "collected_at": datetime.datetime.now().isoformat()
         }
 
 @app.route('/', defaults={'path': ''}, methods=['OPTIONS'])
@@ -1983,6 +1983,7 @@ def get_connection_metadata(current_user, organization_id, connection_id):
     """Get cached metadata for a connection"""
     try:
         # Check if user has access to this connection
+        supabase_mgr = SupabaseManager()
         connection_check = supabase_mgr.supabase.table("database_connections") \
             .select("*") \
             .eq("id", connection_id) \
@@ -2026,6 +2027,9 @@ def get_connection_metadata(current_user, organization_id, connection_id):
 def collect_connection_metadata(current_user, organization_id, connection_id):
     """Collect metadata for a connection"""
     try:
+        # Initialize SupabaseManager
+        supabase_mgr = SupabaseManager()
+
         # Check if user has access to this connection
         connection_check = supabase_mgr.supabase.table("database_connections") \
             .select("*") \
@@ -2038,26 +2042,138 @@ def collect_connection_metadata(current_user, organization_id, connection_id):
             return jsonify({"error": "Connection not found or access denied"}), 404
 
         connection = connection_check.data[0]
+        logger.info(f"Retrieved connection details for {connection_id}: {connection['name']}")
 
         # Create connector for this connection
         try:
             connector = get_connector_for_connection(connection)
+            logger.info(f"Created connector of type: {connection['connection_type']}")
         except ValueError as e:
             return jsonify({"error": str(e)}), 400
 
         # Create metadata collector
         collector = MetadataCollector(connection_id, connector)
+        logger.info(f"Created metadata collector for connection {connection_id}")
 
         # Determine collection type from request parameters
         collection_type = request.json.get("collection_type", "immediate")
         table_limit = request.json.get("table_limit", 50)
+        logger.info(f"Collection type: {collection_type}, table limit: {table_limit}")
 
         # For immediate collection, do it directly here
         # For full collection, queue it as background task
         if collection_type == "immediate":
             # Collect only immediate metadata (fast)
-            # Wrap in executor to avoid blocking the API
+            logger.info("Starting immediate metadata collection")
             metadata = task_executor.submit(collector.collect_immediate_metadata_sync).result()
+            logger.info(f"Immediate collection completed, found {len(metadata.get('table_list', []))} tables")
+
+            # Check what tables were found
+            logger.info(f"Tables found: {metadata.get('table_list', [])[:5]}...")
+
+            # Store table list immediately to verify storage is working
+            logger.info("Attempting to store table list")
+            storage = MetadataStorage()
+
+            # Get metadata type ID for schema
+            type_response = storage.supabase.table("metadata_types").select("id").eq("type_name", "schema").execute()
+            logger.info(f"Metadata type response: {type_response.data}")
+
+            if not type_response.data or len(type_response.data) == 0:
+                logger.error("Schema metadata type not found - check if metadata_types table is populated")
+                # Try to insert the required metadata types
+                try:
+                    logger.info("Attempting to insert metadata types")
+                    storage.supabase.table("metadata_types").insert([
+                        {"type_name": "schema", "description": "Database schema information"},
+                        {"type_name": "statistics", "description": "Statistical information about objects"},
+                        {"type_name": "validation", "description": "Validation context and history"}
+                    ]).execute()
+                    logger.info("Inserted basic metadata types")
+
+                    # Try again to get the schema type ID
+                    type_response = storage.supabase.table("metadata_types").select("id").eq("type_name",
+                                                                                             "schema").execute()
+                    logger.info(f"Metadata type response after insert: {type_response.data}")
+                except Exception as insert_error:
+                    logger.error(f"Error inserting metadata types: {str(insert_error)}")
+
+            # Get property ID for table_list
+            property_response = storage.supabase.table("metadata_properties").select("id").eq("property_name",
+                                                                                              "table_list").execute()
+            logger.info(f"Metadata property response: {property_response.data}")
+
+            if not property_response.data or len(property_response.data) == 0:
+                logger.error("table_list property not found - check if metadata_properties table is populated")
+                # Try to insert the basic properties
+                try:
+                    logger.info("Attempting to insert basic metadata properties")
+                    storage.supabase.table("metadata_properties").insert([
+                        {"property_name": "table_list", "value_type": "json", "description": "List of tables"},
+                        {"property_name": "columns", "value_type": "json", "description": "Column information"},
+                        {"property_name": "row_count", "value_type": "numeric",
+                         "description": "Number of rows in table"}
+                    ]).execute()
+                    logger.info("Inserted basic metadata properties")
+
+                    # Try again to get the table_list property ID
+                    property_response = storage.supabase.table("metadata_properties").select("id").eq("property_name",
+                                                                                                      "table_list").execute()
+                    logger.info(f"Metadata property response after insert: {property_response.data}")
+                except Exception as insert_error:
+                    logger.error(f"Error inserting metadata properties: {str(insert_error)}")
+
+            # If we have both type ID and property ID, create a metadata object for the table list
+            if type_response.data and len(type_response.data) > 0 and property_response.data and len(
+                    property_response.data) > 0:
+                metadata_type_id = type_response.data[0]["id"]
+                property_id = property_response.data[0]["id"]
+
+                try:
+                    # Store as object first
+                    object_data = {
+                        "connection_id": connection_id,
+                        "object_type": "database",
+                        "object_name": "tables",
+                        "created_at": datetime.datetime.now().isoformat(),
+                        "updated_at": datetime.datetime.now().isoformat()
+                    }
+
+                    logger.info(f"Creating metadata object with data: {object_data}")
+                    object_response = storage.supabase.table("metadata_objects").upsert(object_data).execute()
+                    logger.info(f"Object creation response: {object_response.data}")
+
+                    if object_response.data and len(object_response.data) > 0:
+                        object_id = object_response.data[0]["id"]
+                        logger.info(f"Created metadata object with ID: {object_id}")
+
+                        # Now store the fact
+                        fact_data = {
+                            "connection_id": connection_id,
+                            "metadata_type_id": metadata_type_id,
+                            "object_id": object_id,
+                            "property_id": property_id,
+                            "value_json": json.dumps(metadata.get('table_list', [])),
+                            "collected_at": datetime.datetime.now().isoformat(),
+                            "refresh_frequency": "1 day"
+                        }
+
+                        logger.info(f"Storing metadata fact with data: {fact_data}")
+                        fact_response = storage.supabase.table("metadata_facts").upsert(fact_data).execute()
+                        logger.info(f"Fact storage response: {fact_response.data}")
+
+                        if fact_response.data and len(fact_response.data) > 0:
+                            logger.info(
+                                f"Successfully stored table list metadata with ID: {fact_response.data[0]['id']}")
+                        else:
+                            logger.error("Failed to store table list metadata: No data returned")
+                    else:
+                        logger.error("Failed to create metadata object: No data returned")
+                except Exception as e:
+                    logger.error(f"Error storing metadata: {str(e)}")
+                    logger.error(traceback.format_exc())
+            else:
+                logger.error("Cannot store metadata: Missing type ID or property ID")
 
             # Enqueue full collection as background task
             task = {
@@ -2079,7 +2195,9 @@ def collect_connection_metadata(current_user, organization_id, connection_id):
         else:
             # For explicit comprehensive collection request,
             # We still do basic collection immediately and queue the rest
+            logger.info("Starting immediate metadata collection for comprehensive request")
             metadata = task_executor.submit(collector.collect_immediate_metadata_sync).result()
+            logger.info(f"Immediate collection completed, found {len(metadata.get('table_list', []))} tables")
 
             # Queue a high priority full collection
             task = {
@@ -2091,6 +2209,7 @@ def collect_connection_metadata(current_user, organization_id, connection_id):
             }
 
             metadata_task_queue.put(task)
+            logger.info(f"Enqueued comprehensive metadata collection for connection {connection_id}")
 
             return jsonify({
                 "message": "Comprehensive metadata collection scheduled",

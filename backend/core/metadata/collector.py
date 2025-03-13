@@ -116,3 +116,66 @@ class MetadataCollector:
                 "error": str(e),
                 "collected_at": datetime.now().isoformat()
             }
+
+    def collect_immediate_metadata_sync(self):
+        """Synchronous version of collect_immediate_metadata"""
+        logger.info(f"Collecting immediate metadata for connection {self.connection_id}")
+
+        # Connect to the database
+        self.connector.connect()
+
+        # Collect table list (Tier 1)
+        tables = self.collect_table_list()
+
+        # Only collect columns for the first few tables to avoid overloading
+        column_metadata = {}
+        for table in tables[:10]:  # Limit to first 10 tables for immediate collection
+            column_metadata[table] = self.collect_columns(table)
+
+        # Return just the essential metadata
+        return {
+            "table_list": tables,
+            "column_metadata": column_metadata
+        }
+
+    def collect_table_metadata_sync(self, table_name):
+        """Synchronous version of collect_table_metadata"""
+        logger.info(f"Collecting detailed metadata for table {table_name}")
+
+        # If not already connected, connect
+        if not self.connector.inspector:
+            self.connector.connect()
+
+        try:
+            # Basic table information
+            columns = self.collect_columns(table_name)
+            primary_keys = self.connector.get_primary_keys(table_name)
+
+            # Row count - use a query
+            row_count = 0
+            try:
+                result = self.connector.execute_query(f"SELECT COUNT(*) FROM {table_name}")
+                if result and len(result) > 0:
+                    row_count = result[0][0]
+            except Exception as e:
+                logger.error(f"Error getting row count for {table_name}: {str(e)}")
+
+            # Compile table metadata
+            table_metadata = {
+                "table_name": table_name,
+                "column_count": len(columns),
+                "columns": columns,
+                "primary_keys": primary_keys,
+                "row_count": row_count,
+                "collected_at": datetime.now().isoformat()
+            }
+
+            logger.info(f"Successfully collected metadata for table {table_name}")
+            return table_metadata
+        except Exception as e:
+            logger.error(f"Error collecting table metadata for {table_name}: {str(e)}")
+            return {
+                "table_name": table_name,
+                "error": str(e),
+                "collected_at": datetime.now().isoformat()
+            }

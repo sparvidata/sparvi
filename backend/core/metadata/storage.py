@@ -223,29 +223,61 @@ class MetadataStorage:
             object_type: Optional type of database object to filter by
         """
         try:
-            # Start with basic query
-            query = self.supabase.table("metadata_facts").select("""
-                *,
-                metadata_types(type_name),
-                metadata_objects(object_type, object_name, object_schema),
-                metadata_properties(property_name, value_type)
-            """).eq("connection_id", connection_id)
-
-            # Add filters if provided
+            # First, if metadata_type is specified, get its ID
+            metadata_type_id = None
             if metadata_type:
-                query = query.eq("metadata_types.type_name", metadata_type)
+                type_response = self.supabase.table("metadata_types").select("id").eq("type_name",
+                                                                                      metadata_type).execute()
+                if type_response.data and len(type_response.data) > 0:
+                    metadata_type_id = type_response.data[0]["id"]
+                else:
+                    # If no metadata type found, return empty result
+                    return []
 
-            if object_type:
-                query = query.eq("metadata_objects.object_type", object_type)
+            # Build the facts query
+            facts_query = self.supabase.table("metadata_facts").select("*").eq("connection_id", connection_id)
 
-            # Execute query
-            response = query.execute()
+            # Apply metadata type filter if specified
+            if metadata_type_id:
+                facts_query = facts_query.eq("metadata_type_id", metadata_type_id)
 
-            if not response.data:
+            # Execute the query
+            facts_response = facts_query.execute()
+
+            if not facts_response.data:
                 return []
 
-            # Process and return the data
-            return response.data
+            # Now get the related data for each fact
+            result = []
+            for fact in facts_response.data:
+                # Get the metadata type info
+                type_info = self.supabase.table("metadata_types").select("*").eq("id",
+                                                                                 fact["metadata_type_id"]).execute()
+
+                # Get the object info
+                object_info = self.supabase.table("metadata_objects").select("*").eq("id", fact["object_id"]).execute()
+
+                # Apply object_type filter if specified
+                if object_type and (not object_info.data or not object_info.data[0] or object_info.data[0].get(
+                        "object_type") != object_type):
+                    continue
+
+                # Get the property info
+                property_info = self.supabase.table("metadata_properties").select("*").eq("id",
+                                                                                          fact["property_id"]).execute()
+
+                # Build the enriched fact object
+                enriched_fact = fact.copy()
+                if type_info.data and len(type_info.data) > 0:
+                    enriched_fact["metadata_type"] = type_info.data[0]
+                if object_info.data and len(object_info.data) > 0:
+                    enriched_fact["metadata_object"] = object_info.data[0]
+                if property_info.data and len(property_info.data) > 0:
+                    enriched_fact["metadata_property"] = property_info.data[0]
+
+                result.append(enriched_fact)
+
+            return result
 
         except Exception as e:
             logger.error(f"Error retrieving metadata: {str(e)}")
