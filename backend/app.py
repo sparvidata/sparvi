@@ -91,7 +91,7 @@ load_dotenv()
 
 app = Flask(__name__, template_folder="templates")
 CORS(app,
-     resources={r"/api/*": {"origins": ["https://cloud.sparvi.io", "http://localhost:3000"]}},
+     resources={r"/*": {"origins": ["https://cloud.sparvi.io", "http://localhost:3000"]}},
      supports_credentials=True,
      allow_headers=["Content-Type", "Authorization", "X-Requested-With"],
      expose_headers=["Content-Type", "Authorization"],
@@ -440,7 +440,7 @@ def store_table_list(connection_id, tables):
 
 
 def store_table_metadata(connection_id, table_name, metadata):
-    """Store detailed table metadata"""
+    """Store detailed table metadata with proper parent-child relationships"""
     try:
         storage = MetadataStorage()
 
@@ -452,7 +452,7 @@ def store_table_metadata(connection_id, table_name, metadata):
 
         metadata_type_id = type_response.data[0]["id"]
 
-        # Create object for the table
+        # 1. Create object for the table
         object_data = {
             "connection_id": connection_id,
             "object_type": "table",
@@ -467,57 +467,126 @@ def store_table_metadata(connection_id, table_name, metadata):
             return False
 
         table_object_id = object_response.data[0]["id"]
+        logger.info(f"Created/updated table metadata object with ID: {table_object_id}")
 
-        # Store each property
-        properties_to_store = {
-            "columns": metadata.get("columns", []),
-            "row_count": metadata.get("row_count", 0),
-            "primary_key": metadata.get("primary_keys", [])
-        }
+        # 2. Get property IDs for the table properties we want to store
+        property_ids = {}
+        table_property_names = ["row_count", "primary_key", "column_count"]
 
-        for property_name, value in properties_to_store.items():
-            # Get property ID
+        for name in table_property_names:
             property_response = storage.supabase.table("metadata_properties").select("id").eq("property_name",
-                                                                                              property_name).execute()
-            if not property_response.data or len(property_response.data) == 0:
-                logger.warning(f"Property {property_name} not found, skipping")
-                continue
+                                                                                              name).execute()
+            if property_response.data and len(property_response.data) > 0:
+                property_ids[name] = property_response.data[0]["id"]
 
-            property_id = property_response.data[0]["id"]
-
-            # Prepare fact data
+        # 3. Store table properties as facts
+        for prop_name, prop_id in property_ids.items():
             fact_data = {
                 "connection_id": connection_id,
                 "metadata_type_id": metadata_type_id,
                 "object_id": table_object_id,
-                "property_id": property_id,
+                "property_id": prop_id,
                 "collected_at": datetime.datetime.now().isoformat(),
                 "refresh_frequency": "1 day"
             }
 
             # Set the appropriate value field
-            if property_name == "row_count":
-                fact_data["value_numeric"] = value
-            elif isinstance(value, (list, dict)):
-                fact_data["value_json"] = json.dumps(value)
-            else:
-                fact_data["value_text"] = str(value)
+            if prop_name == "row_count":
+                fact_data["value_numeric"] = metadata.get("row_count", 0)
+            elif prop_name == "column_count":
+                fact_data["value_numeric"] = len(metadata.get("columns", []))
+            elif prop_name == "primary_key":
+                fact_data["value_json"] = json.dumps(metadata.get("primary_keys", []))
 
             # Store the fact
             fact_response = storage.supabase.table("metadata_facts").upsert(fact_data).execute()
             if not fact_response.data:
-                logger.error(f"Failed to store {property_name} for table {table_name}")
+                logger.error(f"Failed to store {prop_name} for table {table_name}")
 
-        logger.info(f"Stored metadata for table {table_name}")
+        # 4. Now handle columns - create metadata objects for each column with parent_id
+        if "columns" in metadata and metadata["columns"]:
+            columns = metadata["columns"]
+            logger.info(f"Processing {len(columns)} columns for table {table_name}")
+
+            # Get column-related property IDs
+            column_property_ids = {}
+            column_properties = ["data_type", "is_nullable", "default"]
+
+            for name in column_properties:
+                property_response = storage.supabase.table("metadata_properties").select("id").eq("property_name",
+                                                                                                  name).execute()
+                if property_response.data and len(property_response.data) > 0:
+                    column_property_ids[name] = property_response.data[0]["id"]
+
+            # Process each column
+            for column in columns:
+                column_name = column.get("name", "unknown")
+
+                # Create metadata object for this column
+                column_data = {
+                    "connection_id": connection_id,
+                    "object_type": "column",
+                    "object_name": column_name,
+                    "parent_id": table_object_id,  # Link to parent table
+                    "created_at": datetime.datetime.now().isoformat(),
+                    "updated_at": datetime.datetime.now().isoformat()
+                }
+
+                col_response = storage.supabase.table("metadata_objects").upsert(column_data).execute()
+                if not col_response.data or len(col_response.data) == 0:
+                    logger.error(f"Failed to create metadata object for column {column_name}")
+                    continue
+
+                column_object_id = col_response.data[0]["id"]
+                logger.info(f"Created column metadata object: {column_name} with ID: {column_object_id}")
+
+                # Now store column properties as facts
+                for prop_name, prop_id in column_property_ids.items():
+                    if prop_name == "data_type" and "type" in column:
+                        # Handle the mismatch between property name and column attribute
+                        fact_data = {
+                            "connection_id": connection_id,
+                            "metadata_type_id": metadata_type_id,
+                            "object_id": column_object_id,
+                            "property_id": prop_id,
+                            "value_text": str(column.get("type", "")),
+                            "collected_at": datetime.datetime.now().isoformat(),
+                            "refresh_frequency": "1 day"
+                        }
+                        storage.supabase.table("metadata_facts").upsert(fact_data).execute()
+
+                    elif prop_name == "is_nullable" and "nullable" in column:
+                        # Handle the mismatch between property name and column attribute
+                        fact_data = {
+                            "connection_id": connection_id,
+                            "metadata_type_id": metadata_type_id,
+                            "object_id": column_object_id,
+                            "property_id": prop_id,
+                            "value_text": str(column.get("nullable", "")),
+                            "collected_at": datetime.datetime.now().isoformat(),
+                            "refresh_frequency": "1 day"
+                        }
+                        storage.supabase.table("metadata_facts").upsert(fact_data).execute()
+
+                    elif prop_name in column:
+                        fact_data = {
+                            "connection_id": connection_id,
+                            "metadata_type_id": metadata_type_id,
+                            "object_id": column_object_id,
+                            "property_id": prop_id,
+                            "value_text": str(column.get(prop_name, "")),
+                            "collected_at": datetime.datetime.now().isoformat(),
+                            "refresh_frequency": "1 day"
+                        }
+                        storage.supabase.table("metadata_facts").upsert(fact_data).execute()
+
+        logger.info(f"Successfully stored complete metadata for table {table_name}")
         return True
 
     except Exception as e:
         logger.error(f"Error storing table metadata: {str(e)}")
+        logger.error(traceback.format_exc())
         return False
-
-
-# Now update the MetadataCollector class to add synchronous versions of the async methods
-# Add these to backend/core/metadata/collector.py
 
 def collect_immediate_metadata_sync(self):
     """Synchronous version of collect_immediate_metadata"""
@@ -584,7 +653,6 @@ def collect_table_metadata_sync(self, table_name):
         }
 
 @app.route('/', defaults={'path': ''}, methods=['OPTIONS'])
-
 @app.route('/<path:path>', methods=['OPTIONS'])
 def options_handler(path):
     return app.make_default_options_response()
@@ -2221,6 +2289,22 @@ def collect_connection_metadata(current_user, organization_id, connection_id):
         logger.error(f"Error collecting connection metadata: {str(e)}")
         logger.error(traceback.format_exc())
         return jsonify({"error": str(e)}), 500
+
+
+@app.after_request
+def after_request(response):
+    origin = request.headers.get('Origin', '')
+
+    # Allow both your production and development environments
+    if origin in ['https://cloud.sparvi.io', 'http://localhost:3000']:
+        response.headers.add('Access-Control-Allow-Origin', origin)
+    else:
+        response.headers.add('Access-Control-Allow-Origin', 'https://cloud.sparvi.io')
+
+    response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization')
+    response.headers.add('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS')
+    response.headers.add('Access-Control-Allow-Credentials', 'true')
+    return response
 
 # @app.before_request
 # def log_memory_before():
