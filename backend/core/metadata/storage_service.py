@@ -104,11 +104,30 @@ class MetadataStorageService:
     def store_statistics_metadata(self, connection_id: str, stats_by_table: Dict[str, Dict]) -> bool:
         """Store statistical metadata for tables"""
         try:
+            logger.info(f"Storing statistics for {len(stats_by_table)} tables for connection {connection_id}")
+
             # Format data for storage
             metadata = {
                 "statistics_by_table": stats_by_table,
                 "table_count": len(stats_by_table)
             }
+
+            # Convert Decimal objects to float for JSON serialization
+            import decimal
+            import json
+
+            class CustomJSONEncoder(json.JSONEncoder):
+                def default(self, obj):
+                    if isinstance(obj, decimal.Decimal):
+                        return float(obj)
+                    if hasattr(obj, 'isoformat'):  # Handle datetime objects
+                        return obj.isoformat()
+                    return super(CustomJSONEncoder, self).default(obj)
+
+            # First convert to JSON string with custom encoder, then parse back to dict
+            # This effectively replaces all Decimal objects with floats
+            metadata_json = json.dumps(metadata, cls=CustomJSONEncoder)
+            metadata = json.loads(metadata_json)
 
             # Upsert into connection_metadata
             response = self.supabase.table("connection_metadata").upsert({

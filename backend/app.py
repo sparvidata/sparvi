@@ -2378,6 +2378,904 @@ def after_request(response):
     response.headers.add('Access-Control-Allow-Credentials', 'true')
     return response
 
+@app.route("/api/connections/<connection_id>/tables/<table_name>/columns", methods=["GET"])
+@token_required
+def get_table_columns(current_user, organization_id, connection_id, table_name):
+    """Get detailed information about a table's columns"""
+    try:
+        # Check access to connection
+        supabase_mgr = SupabaseManager()
+        connection_check = supabase_mgr.supabase.table("database_connections") \
+            .select("*") \
+            .eq("id", connection_id) \
+            .eq("organization_id", organization_id) \
+            .execute()
+
+        if not connection_check.data or len(connection_check.data) == 0:
+            logger.error(f"Connection not found or access denied: {connection_id}")
+            return jsonify({"error": "Connection not found or access denied"}), 404
+
+        connection = connection_check.data[0]
+
+        # First try to get from cache
+        storage_service = MetadataStorageService()
+
+        # Get columns cache if it exists
+        columns_metadata = storage_service.get_metadata(connection_id, "columns")
+
+        if columns_metadata and "metadata" in columns_metadata:
+            # If we have table columns cached for this specific table
+            columns_by_table = columns_metadata["metadata"].get("columns_by_table", {})
+            if table_name in columns_by_table:
+                logger.info(f"Returning cached column data for {table_name}")
+                columns = columns_by_table[table_name]
+
+                # Include freshness information
+                result = {
+                    "columns": columns,
+                    "count": len(columns),
+                    "freshness": columns_metadata.get("freshness", {"status": "unknown"})
+                }
+                return jsonify(result)
+
+        # If not cached or cache miss, collect fresh data
+        logger.info(f"No cached column data, collecting fresh data for {table_name}")
+
+        # Create connector for this connection
+        try:
+            connector = get_connector_for_connection(connection)
+            connector.connect()
+        except Exception as e:
+            logger.error(f"Failed to connect to database: {str(e)}")
+            return jsonify({"error": f"Failed to connect to database: {str(e)}"}), 500
+
+        # Create metadata collector
+        collector = MetadataCollector(connection_id, connector)
+
+        # Get column information
+        columns = collector.collect_columns(table_name)
+
+        # Update cache with new column data - store in an optimized way
+        # that doesn't require replacing entire columns cache
+        if not columns_metadata or "metadata" not in columns_metadata:
+            # Need to initialize columns metadata structure
+            columns_by_table = {table_name: columns}
+            storage_service.store_columns_metadata(connection_id, columns_by_table)
+        else:
+            # Update existing columns metadata
+            columns_by_table = columns_metadata["metadata"].get("columns_by_table", {})
+            columns_by_table[table_name] = columns
+            storage_service.store_columns_metadata(connection_id, columns_by_table)
+
+        # Return result
+        result = {
+            "columns": columns,
+            "count": len(columns),
+            "freshness": {
+                "status": "fresh",
+                "age_seconds": 0
+            }
+        }
+
+        return jsonify(result)
+
+    except Exception as e:
+        logger.error(f"Error getting table columns: {str(e)}")
+        logger.error(traceback.format_exc())
+        return jsonify({"error": str(e)}), 500
+
+
+# In backend/app.py - add this new route
+
+@app.route("/api/connections/<connection_id>/tables/<table_name>/statistics", methods=["GET"])
+@token_required
+def get_table_statistics(current_user, organization_id, connection_id, table_name):
+    """Get detailed statistical information about a table and its columns"""
+    try:
+        # Check access to connection
+        supabase_mgr = SupabaseManager()
+        connection_check = supabase_mgr.supabase.table("database_connections") \
+            .select("*") \
+            .eq("id", connection_id) \
+            .eq("organization_id", organization_id) \
+            .execute()
+
+        if not connection_check.data or len(connection_check.data) == 0:
+            logger.error(f"Connection not found or access denied: {connection_id}")
+            return jsonify({"error": "Connection not found or access denied"}), 404
+
+        connection = connection_check.data[0]
+
+        # Parse query parameters
+        force_refresh = request.args.get("refresh", "false").lower() == "true"
+
+        # Check if stats are cached and not forcing refresh
+        if not force_refresh:
+            storage_service = MetadataStorageService()
+            stats_metadata = storage_service.get_metadata(connection_id, "statistics")
+
+            if stats_metadata and "metadata" in stats_metadata:
+                stats_by_table = stats_metadata["metadata"].get("statistics_by_table", {})
+                if table_name in stats_by_table:
+                    logger.info(f"Returning cached statistics for {table_name}")
+                    stats = stats_by_table[table_name]
+
+                    result = {
+                        "statistics": stats,
+                        "freshness": stats_metadata.get("freshness", {"status": "unknown"})
+                    }
+                    return jsonify(result)
+
+        # If no cache, cache miss, or forcing refresh, collect fresh statistics
+        logger.info(f"Collecting fresh statistics for {table_name}")
+
+        # Create connector for this connection
+        try:
+            connector = get_connector_for_connection(connection)
+            connector.connect()
+        except Exception as e:
+            logger.error(f"Failed to connect to database: {str(e)}")
+            return jsonify({"error": f"Failed to connect to database: {str(e)}"}), 500
+
+        # Create metadata collector
+        collector = MetadataCollector(connection_id, connector)
+
+        # Get column information first (needed for statistics)
+        columns = collector.collect_columns(table_name)
+
+        # Initialize comprehensive table statistics
+        table_stats = {
+            "general": {
+                "row_count": 0,
+                "column_count": len(columns),
+                "size_bytes": None,
+                "last_updated": None,
+            },
+            "collection_metadata": {
+                "collected_at": datetime.datetime.now().isoformat(),
+                "collection_duration_ms": 0
+            },
+            "column_statistics": {}
+        }
+
+        start_time = datetime.datetime.now()
+
+        # Get row count
+        try:
+            result = connector.execute_query(f"SELECT COUNT(*) FROM {table_name}")
+            if result and len(result) > 0:
+                table_stats["general"]["row_count"] = result[0][0]
+        except Exception as e:
+            logger.warning(f"Could not get row count for {table_name}: {str(e)}")
+
+        # Get table size if supported by the database
+        try:
+            if 'snowflake' in connection["connection_type"].lower():
+                # Snowflake-specific query to get table size
+                size_query = f"""
+                    SELECT TABLE_NAME, ACTIVE_BYTES, DELETED_BYTES, TIME_TRAVEL_BYTES 
+                    FROM INFORMATION_SCHEMA.TABLE_STORAGE_METRICS 
+                    WHERE TABLE_NAME = '{table_name.upper()}'
+                """
+                result = connector.execute_query(size_query)
+                if result and len(result) > 0:
+                    active_bytes = result[0][1] or 0
+                    deleted_bytes = result[0][2] or 0
+                    time_travel_bytes = result[0][3] or 0
+                    table_stats["general"]["size_bytes"] = active_bytes
+                    table_stats["general"]["total_storage_bytes"] = active_bytes + deleted_bytes + time_travel_bytes
+            elif 'postgresql' in connection["connection_type"].lower():
+                # PostgreSQL query to get table size
+                size_query = f"""
+                    SELECT pg_total_relation_size('{table_name}')
+                """
+                result = connector.execute_query(size_query)
+                if result and len(result) > 0:
+                    table_stats["general"]["size_bytes"] = result[0][0]
+        except Exception as e:
+            logger.warning(f"Could not get table size for {table_name}: {str(e)}")
+
+        # Get last updated timestamp if supported
+        try:
+            if 'snowflake' in connection["connection_type"].lower():
+                # Snowflake-specific query to get last modified time
+                last_updated_query = f"""
+                    SELECT LAST_ALTERED FROM INFORMATION_SCHEMA.TABLES 
+                    WHERE TABLE_NAME = '{table_name.upper()}'
+                """
+                result = connector.execute_query(last_updated_query)
+                if result and len(result) > 0 and result[0][0]:
+                    table_stats["general"]["last_updated"] = result[0][0].isoformat()
+        except Exception as e:
+            logger.warning(f"Could not get last updated timestamp for {table_name}: {str(e)}")
+
+        # Process each column to get comprehensive statistics
+        for column in columns:
+            column_name = column["name"]
+            column_type = column["type"].lower() if isinstance(column["type"], str) else str(column["type"]).lower()
+
+            # Initialize column statistics with basic info
+            column_stats = {
+                "type": column["type"],
+                "nullable": column.get("nullable", True),
+                "basic": {
+                    "null_count": None,
+                    "null_percentage": None,
+                    "empty_count": None,
+                    "empty_percentage": None,
+                    "distinct_count": None,
+                    "distinct_percentage": None,
+                    "is_unique": None,
+                    "min_length": None,
+                    "max_length": None,
+                    "avg_length": None
+                },
+                "numeric": {
+                    "min": None,
+                    "max": None,
+                    "avg": None,
+                    "median": None,
+                    "stddev": None,
+                    "sum": None,
+                    "zero_count": None,
+                    "negative_count": None,
+                    "positive_count": None
+                },
+                "datetime": {
+                    "min": None,
+                    "max": None,
+                    "future_count": None,
+                    "past_count": None
+                },
+                "string": {
+                    "min_length": None,
+                    "max_length": None,
+                    "avg_length": None,
+                    "empty_count": None,
+                    "pattern_analysis": None
+                },
+                "top_values": []
+            }
+
+            # Get null count
+            try:
+                null_query = f"SELECT COUNT(*) FROM {table_name} WHERE {column_name} IS NULL"
+                result = connector.execute_query(null_query)
+                if result and len(result) > 0:
+                    column_stats["basic"]["null_count"] = result[0][0]
+                    if table_stats["general"]["row_count"] > 0:
+                        column_stats["basic"]["null_percentage"] = (column_stats["basic"]["null_count"] /
+                                                                    table_stats["general"]["row_count"]) * 100
+            except Exception as e:
+                logger.warning(f"Could not get null count for column {column_name}: {str(e)}")
+
+            # Get distinct count
+            try:
+                distinct_query = f"SELECT COUNT(DISTINCT {column_name}) FROM {table_name}"
+                result = connector.execute_query(distinct_query)
+                if result and len(result) > 0:
+                    column_stats["basic"]["distinct_count"] = result[0][0]
+                    # Calculate distinct percentage only if there are non-null values
+                    non_null_count = table_stats["general"]["row_count"] - (column_stats["basic"]["null_count"] or 0)
+                    if non_null_count > 0:
+                        column_stats["basic"]["distinct_percentage"] = (column_stats["basic"][
+                                                                            "distinct_count"] / non_null_count) * 100
+                    # Determine if column is unique
+                    column_stats["basic"]["is_unique"] = (
+                        column_stats["basic"]["distinct_count"] == non_null_count
+                        if column_stats["basic"]["distinct_count"] is not None and non_null_count > 0
+                        else None
+                    )
+            except Exception as e:
+                logger.warning(f"Could not get distinct count for column {column_name}: {str(e)}")
+
+            # Get top N values with counts and percentages
+            try:
+                top_n = 10  # Number of top values to retrieve
+                top_values_query = f"""
+                    SELECT {column_name}, COUNT(*) as count
+                    FROM {table_name}
+                    WHERE {column_name} IS NOT NULL
+                    GROUP BY {column_name}
+                    ORDER BY count DESC
+                    LIMIT {top_n}
+                """
+                result = connector.execute_query(top_values_query)
+                if result:
+                    top_values = []
+                    for row in result:
+                        value = row[0]
+                        count = row[1]
+                        percentage = (count / table_stats["general"]["row_count"]) * 100 if table_stats["general"][
+                                                                                                "row_count"] > 0 else 0
+
+                        # Format value for display (truncate long strings)
+                        display_value = str(value)
+                        if isinstance(value, str) and len(display_value) > 100:
+                            display_value = display_value[:97] + "..."
+
+                        top_values.append({
+                            "value": display_value,
+                            "count": count,
+                            "percentage": percentage
+                        })
+                    column_stats["top_values"] = top_values
+            except Exception as e:
+                logger.warning(f"Could not get top values for column {column_name}: {str(e)}")
+
+            # Type-specific statistics
+            is_numeric = ('int' in column_type or 'float' in column_type or
+                          'numeric' in column_type or 'decimal' in column_type or
+                          'double' in column_type or 'real' in column_type)
+
+            is_date = ('date' in column_type or 'time' in column_type)
+
+            is_string = ('char' in column_type or 'text' in column_type or 'string' in column_type)
+
+            # Get numeric statistics
+            if is_numeric:
+                try:
+                    numeric_query = f"""
+                        SELECT 
+                            MIN({column_name}), 
+                            MAX({column_name}),
+                            AVG({column_name}),
+                            STDDEV({column_name}),
+                            SUM({column_name}),
+                            COUNT(CASE WHEN {column_name} = 0 THEN 1 END),
+                            COUNT(CASE WHEN {column_name} < 0 THEN 1 END),
+                            COUNT(CASE WHEN {column_name} > 0 THEN 1 END)
+                        FROM {table_name}
+                        WHERE {column_name} IS NOT NULL
+                    """
+                    result = connector.execute_query(numeric_query)
+                    if result and len(result) > 0:
+                        column_stats["numeric"]["min"] = result[0][0]
+                        column_stats["numeric"]["max"] = result[0][1]
+                        column_stats["numeric"]["avg"] = result[0][2]
+                        column_stats["numeric"]["stddev"] = result[0][3]
+                        column_stats["numeric"]["sum"] = result[0][4]
+                        column_stats["numeric"]["zero_count"] = result[0][5]
+                        column_stats["numeric"]["negative_count"] = result[0][6]
+                        column_stats["numeric"]["positive_count"] = result[0][7]
+
+                    # Try to get median (database-specific)
+                    try:
+                        if 'snowflake' in connection["connection_type"].lower():
+                            median_query = f"""
+                                SELECT MEDIAN({column_name})
+                                FROM {table_name}
+                                WHERE {column_name} IS NOT NULL
+                            """
+                            median_result = connector.execute_query(median_query)
+                            if median_result and len(median_result) > 0:
+                                column_stats["numeric"]["median"] = median_result[0][0]
+                    except Exception as e:
+                        logger.warning(f"Could not get median for column {column_name}: {str(e)}")
+
+                except Exception as e:
+                    logger.warning(f"Could not get numeric statistics for column {column_name}: {str(e)}")
+
+            # Get date/time statistics
+            if is_date:
+                try:
+                    date_query = f"""
+                        SELECT 
+                            MIN({column_name}), 
+                            MAX({column_name})
+                        FROM {table_name}
+                        WHERE {column_name} IS NOT NULL
+                    """
+                    result = connector.execute_query(date_query)
+                    if result and len(result) > 0:
+                        min_date = result[0][0]
+                        max_date = result[0][1]
+
+                        # Format dates as ISO strings if they're datetime objects
+                        column_stats["datetime"]["min"] = min_date.isoformat() if hasattr(min_date,
+                                                                                          'isoformat') else min_date
+                        column_stats["datetime"]["max"] = max_date.isoformat() if hasattr(max_date,
+                                                                                          'isoformat') else max_date
+
+                    # Get future date count
+                    future_query = f"""
+                        SELECT COUNT(*)
+                        FROM {table_name}
+                        WHERE {column_name} > CURRENT_DATE()
+                    """
+                    future_result = connector.execute_query(future_query)
+                    if future_result and len(future_result) > 0:
+                        column_stats["datetime"]["future_count"] = future_result[0][0]
+
+                    # Get past date count
+                    past_query = f"""
+                        SELECT COUNT(*)
+                        FROM {table_name}
+                        WHERE {column_name} <= CURRENT_DATE()
+                    """
+                    past_result = connector.execute_query(past_query)
+                    if past_result and len(past_result) > 0:
+                        column_stats["datetime"]["past_count"] = past_result[0][0]
+
+                except Exception as e:
+                    logger.warning(f"Could not get date statistics for column {column_name}: {str(e)}")
+
+            # Get string statistics
+            if is_string:
+                try:
+                    # Get length statistics
+                    length_query = f"""
+                        SELECT 
+                            MIN(LENGTH({column_name})), 
+                            MAX(LENGTH({column_name})),
+                            AVG(LENGTH({column_name}))
+                        FROM {table_name}
+                        WHERE {column_name} IS NOT NULL
+                    """
+                    result = connector.execute_query(length_query)
+                    if result and len(result) > 0:
+                        column_stats["string"]["min_length"] = result[0][0]
+                        column_stats["string"]["max_length"] = result[0][1]
+                        column_stats["string"]["avg_length"] = result[0][2]
+
+                        # Also set these in the basic stats
+                        column_stats["basic"]["min_length"] = result[0][0]
+                        column_stats["basic"]["max_length"] = result[0][1]
+                        column_stats["basic"]["avg_length"] = result[0][2]
+
+                    # Get empty string count
+                    empty_query = f"""
+                        SELECT COUNT(*)
+                        FROM {table_name}
+                        WHERE {column_name} = ''
+                    """
+                    empty_result = connector.execute_query(empty_query)
+                    if empty_result and len(empty_result) > 0:
+                        column_stats["string"]["empty_count"] = empty_result[0][0]
+                        column_stats["basic"]["empty_count"] = empty_result[0][0]
+
+                        if table_stats["general"]["row_count"] > 0:
+                            empty_percentage = (column_stats["string"]["empty_count"] / table_stats["general"][
+                                "row_count"]) * 100
+                            column_stats["string"]["empty_percentage"] = empty_percentage
+                            column_stats["basic"]["empty_percentage"] = empty_percentage
+
+                    # Try to detect patterns for common column names
+                    pattern_analysis = {}
+
+                    # Email pattern check
+                    if "email" in column_name.lower():
+                        email_pattern_query = f"""
+                            SELECT COUNT(*)
+                            FROM {table_name}
+                            WHERE {column_name} IS NOT NULL
+                            AND {column_name} LIKE '%@%.%'
+                        """
+                        valid_email_result = connector.execute_query(email_pattern_query)
+                        if valid_email_result and len(valid_email_result) > 0:
+                            valid_count = valid_email_result[0][0]
+                            non_null_count = table_stats["general"]["row_count"] - (
+                                        column_stats["basic"]["null_count"] or 0)
+                            invalid_count = non_null_count - valid_count - (column_stats["string"]["empty_count"] or 0)
+
+                            pattern_analysis["email_pattern"] = {
+                                "valid_count": valid_count,
+                                "invalid_count": invalid_count,
+                                "valid_percentage": (valid_count / non_null_count * 100) if non_null_count > 0 else 0
+                            }
+
+                    # Phone pattern check
+                    if any(phone_term in column_name.lower() for phone_term in ["phone", "mobile", "tel", "fax"]):
+                        # Simple pattern: contains only digits, spaces, dashes, parentheses, and plus
+                        phone_pattern_query = f"""
+                            SELECT COUNT(*)
+                            FROM {table_name}
+                            WHERE {column_name} IS NOT NULL
+                            AND REGEXP_LIKE({column_name}, '^[0-9\\+\\-\\(\\)\\s]+$')
+                        """
+                        try:
+                            valid_phone_result = connector.execute_query(phone_pattern_query)
+                            if valid_phone_result and len(valid_phone_result) > 0:
+                                valid_count = valid_phone_result[0][0]
+                                non_null_count = table_stats["general"]["row_count"] - (
+                                            column_stats["basic"]["null_count"] or 0)
+                                invalid_count = non_null_count - valid_count - (
+                                            column_stats["string"]["empty_count"] or 0)
+
+                                pattern_analysis["phone_pattern"] = {
+                                    "valid_count": valid_count,
+                                    "invalid_count": invalid_count,
+                                    "valid_percentage": (
+                                                valid_count / non_null_count * 100) if non_null_count > 0 else 0
+                                }
+                        except Exception:
+                            # REGEXP_LIKE might not be supported in all databases
+                            pass
+
+                    # Add pattern analysis if we found anything
+                    if pattern_analysis:
+                        column_stats["string"]["pattern_analysis"] = pattern_analysis
+
+                except Exception as e:
+                    logger.warning(f"Could not get string statistics for column {column_name}: {str(e)}")
+
+            # Add to column statistics
+            table_stats["column_statistics"][column_name] = column_stats
+
+        # Calculate collection duration
+        end_time = datetime.datetime.now()
+        duration_ms = (end_time - start_time).total_seconds() * 1000
+        table_stats["collection_metadata"]["collection_duration_ms"] = duration_ms
+
+        # Store statistics in cache
+        storage_service = MetadataStorageService()
+        stats_metadata = storage_service.get_metadata(connection_id, "statistics")
+
+        if not stats_metadata or "metadata" not in stats_metadata:
+            # Initialize statistics structure
+            stats_by_table = {table_name: table_stats}
+            storage_service.store_statistics_metadata(connection_id, stats_by_table)
+        else:
+            # Update existing statistics
+            stats_by_table = stats_metadata["metadata"].get("statistics_by_table", {})
+            stats_by_table[table_name] = table_stats
+            storage_service.store_statistics_metadata(connection_id, stats_by_table)
+
+        # Return result
+        result = {
+            "statistics": table_stats,
+            "freshness": {
+                "status": "fresh",
+                "age_seconds": 0
+            }
+        }
+
+        return jsonify(result)
+
+    except Exception as e:
+        logger.error(f"Error getting table statistics: {str(e)}")
+        logger.error(traceback.format_exc())
+        return jsonify({"error": str(e)}), 500
+
+
+# In backend/app.py - add this new route
+
+@app.route("/api/connections/<connection_id>/changes", methods=["GET"])
+@token_required
+def get_schema_changes(current_user, organization_id, connection_id):
+    """Get schema changes since a specific timestamp"""
+    try:
+        # Parse query parameters
+        since_timestamp = request.args.get("since")
+        if not since_timestamp:
+            # Default to 24 hours ago if not specified
+            since_timestamp = (datetime.datetime.now() - datetime.timedelta(days=1)).isoformat()
+
+        # Check access to connection
+        supabase_mgr = SupabaseManager()
+        connection_check = supabase_mgr.supabase.table("database_connections") \
+            .select("*") \
+            .eq("id", connection_id) \
+            .eq("organization_id", organization_id) \
+            .execute()
+
+        if not connection_check.data or len(connection_check.data) == 0:
+            logger.error(f"Connection not found or access denied: {connection_id}")
+            return jsonify({"error": "Connection not found or access denied"}), 404
+
+        connection = connection_check.data[0]
+
+        # Query connection_metadata to find metadata updated since the timestamp
+        # We want to query both table and column metadata types
+
+        try:
+            # Direct query to Supabase for metadata changes
+            import os
+            from supabase import create_client
+
+            # Get credentials from environment
+            supabase_url = os.getenv("SUPABASE_URL")
+            supabase_key = os.getenv("SUPABASE_SERVICE_KEY")
+
+            # Create direct client for more complex query
+            direct_client = create_client(supabase_url, supabase_key)
+
+            # Query connection_metadata for changes since the timestamp
+            response = direct_client.table("connection_metadata") \
+                .select("metadata_type, collected_at, metadata") \
+                .eq("connection_id", connection_id) \
+                .gte("collected_at", since_timestamp) \
+                .in_("metadata_type", ["tables", "columns"]) \
+                .order("collected_at", {'ascending': False}) \
+                .execute()
+
+            if not response.data:
+                return jsonify({
+                    "changes": [],
+                    "since": since_timestamp,
+                    "message": "No schema changes detected"
+                })
+
+            # Process changes - need to compare with previous state
+            changes = []
+
+            # Get previous state (prior to since_timestamp)
+            previous_state_response = direct_client.table("connection_metadata") \
+                .select("metadata_type, collected_at, metadata") \
+                .eq("connection_id", connection_id) \
+                .lt("collected_at", since_timestamp) \
+                .in_("metadata_type", ["tables", "columns"]) \
+                .order("collected_at", {'ascending': False}) \
+                .execute()
+
+            previous_tables = None
+            previous_columns_by_table = None
+
+            # Extract previous state
+            if previous_state_response.data:
+                for item in previous_state_response.data:
+                    if item["metadata_type"] == "tables" and previous_tables is None:
+                        previous_tables = item["metadata"].get("tables", [])
+                    elif item["metadata_type"] == "columns" and previous_columns_by_table is None:
+                        previous_columns_by_table = item["metadata"].get("columns_by_table", {})
+
+            # If no previous state, we can't detect changes
+            if previous_tables is None:
+                return jsonify({
+                    "changes": [],
+                    "since": since_timestamp,
+                    "message": "No baseline schema found for comparison"
+                })
+
+            # Process current state
+            current_tables = None
+            current_columns_by_table = None
+
+            for item in response.data:
+                if item["metadata_type"] == "tables" and current_tables is None:
+                    current_tables = item["metadata"].get("tables", [])
+                elif item["metadata_type"] == "columns" and current_columns_by_table is None:
+                    current_columns_by_table = item["metadata"].get("columns_by_table", {})
+
+            # Detect added/removed tables
+            previous_table_names = {table["name"] for table in previous_tables}
+            current_table_names = {table["name"] for table in current_tables} if current_tables else set()
+
+            # Tables that were added
+            for table_name in current_table_names - previous_table_names:
+                changes.append({
+                    "type": "table_added",
+                    "table": table_name,
+                    "timestamp": next(
+                        (item["collected_at"] for item in response.data if item["metadata_type"] == "tables"), None)
+                })
+
+            # Tables that were removed
+            for table_name in previous_table_names - current_table_names:
+                changes.append({
+                    "type": "table_removed",
+                    "table": table_name,
+                    "timestamp": next(
+                        (item["collected_at"] for item in response.data if item["metadata_type"] == "tables"), None)
+                })
+
+            # For tables that exist in both, check for column changes
+            for table_name in previous_table_names & current_table_names:
+                # Skip if we don't have column information
+                if (not current_columns_by_table or table_name not in current_columns_by_table or
+                        not previous_columns_by_table or table_name not in previous_columns_by_table):
+                    continue
+
+                previous_columns = previous_columns_by_table[table_name]
+                current_columns = current_columns_by_table[table_name]
+
+                previous_column_names = {col["name"] for col in previous_columns}
+                current_column_names = {col["name"] for col in current_columns}
+
+                # Columns that were added
+                for col_name in current_column_names - previous_column_names:
+                    col_info = next((col for col in current_columns if col["name"] == col_name), {})
+                    changes.append({
+                        "type": "column_added",
+                        "table": table_name,
+                        "column": col_name,
+                        "details": {
+                            "type": col_info.get("type", "unknown"),
+                            "nullable": col_info.get("nullable", True)
+                        },
+                        "timestamp": next(
+                            (item["collected_at"] for item in response.data if item["metadata_type"] == "columns"),
+                            None)
+                    })
+
+                # Columns that were removed
+                for col_name in previous_column_names - current_column_names:
+                    col_info = next((col for col in previous_columns if col["name"] == col_name), {})
+                    changes.append({
+                        "type": "column_removed",
+                        "table": table_name,
+                        "column": col_name,
+                        "details": {
+                            "type": col_info.get("type", "unknown")
+                        },
+                        "timestamp": next(
+                            (item["collected_at"] for item in response.data if item["metadata_type"] == "columns"),
+                            None)
+                    })
+
+                # For columns that exist in both, check for type changes
+                for col_name in previous_column_names & current_column_names:
+                    prev_col = next((col for col in previous_columns if col["name"] == col_name), {})
+                    curr_col = next((col for col in current_columns if col["name"] == col_name), {})
+
+                    # Check for type changes
+                    if prev_col.get("type") != curr_col.get("type"):
+                        changes.append({
+                            "type": "column_type_changed",
+                            "table": table_name,
+                            "column": col_name,
+                            "details": {
+                                "previous_type": prev_col.get("type", "unknown"),
+                                "new_type": curr_col.get("type", "unknown")
+                            },
+                            "timestamp": next(
+                                (item["collected_at"] for item in response.data if item["metadata_type"] == "columns"),
+                                None)
+                        })
+
+                    # Check for nullability changes
+                    if prev_col.get("nullable") != curr_col.get("nullable"):
+                        changes.append({
+                            "type": "column_nullability_changed",
+                            "table": table_name,
+                            "column": col_name,
+                            "details": {
+                                "previous_nullable": prev_col.get("nullable", True),
+                                "new_nullable": curr_col.get("nullable", True)
+                            },
+                            "timestamp": next(
+                                (item["collected_at"] for item in response.data if item["metadata_type"] == "columns"),
+                                None)
+                        })
+
+            # Sort changes by timestamp
+            changes.sort(key=lambda x: x.get("timestamp", ""), reverse=True)
+
+            return jsonify({
+                "changes": changes,
+                "since": since_timestamp,
+                "count": len(changes)
+            })
+
+        except Exception as e:
+            logger.error(f"Error detecting schema changes: {str(e)}")
+            logger.error(traceback.format_exc())
+            return jsonify({"error": f"Error detecting schema changes: {str(e)}"}), 500
+
+    except Exception as e:
+        logger.error(f"Error in schema change detection: {str(e)}")
+        logger.error(traceback.format_exc())
+        return jsonify({"error": str(e)}), 500
+
+
+# In backend/app.py - add this new route
+
+@app.route("/api/connections/<connection_id>/schema", methods=["GET"])
+@token_required
+def get_combined_schema(current_user, organization_id, connection_id):
+    """Get a combined view of the database schema"""
+    try:
+        # Check access to connection
+        supabase_mgr = SupabaseManager()
+        connection_check = supabase_mgr.supabase.table("database_connections") \
+            .select("*") \
+            .eq("id", connection_id) \
+            .eq("organization_id", organization_id) \
+            .execute()
+
+        if not connection_check.data or len(connection_check.data) == 0:
+            logger.error(f"Connection not found or access denied: {connection_id}")
+            return jsonify({"error": "Connection not found or access denied"}), 404
+
+        connection = connection_check.data[0]
+
+        # Get all available metadata for this connection
+        storage_service = MetadataStorageService()
+
+        # Get tables metadata
+        tables_metadata = storage_service.get_metadata(connection_id, "tables")
+        if not tables_metadata or "metadata" not in tables_metadata:
+            logger.error(f"No table metadata found for connection {connection_id}")
+            return jsonify({"error": "No schema information available"}), 404
+
+        # Get columns metadata
+        columns_metadata = storage_service.get_metadata(connection_id, "columns")
+
+        # Get statistics metadata
+        statistics_metadata = storage_service.get_metadata(connection_id, "statistics")
+
+        # Build combined schema
+        schema = {
+            "tables": [],
+            "connection_id": connection_id,
+            "connection_name": connection.get("name", "Unknown"),
+            "metadata_freshness": {
+                "tables": tables_metadata.get("freshness", {"status": "unknown"}),
+                "columns": columns_metadata.get("freshness", {"status": "unknown"}) if columns_metadata else {
+                    "status": "unknown"},
+                "statistics": statistics_metadata.get("freshness", {"status": "unknown"}) if statistics_metadata else {
+                    "status": "unknown"}
+            }
+        }
+
+        # Extract tables
+        tables = tables_metadata["metadata"].get("tables", [])
+
+        # Extract columns by table (if available)
+        columns_by_table = {}
+        if columns_metadata and "metadata" in columns_metadata:
+            columns_by_table = columns_metadata["metadata"].get("columns_by_table", {})
+
+        # Extract statistics by table (if available)
+        statistics_by_table = {}
+        if statistics_metadata and "metadata" in statistics_metadata:
+            statistics_by_table = statistics_metadata["metadata"].get("statistics_by_table", {})
+
+        # Process each table with its columns and statistics
+        for table in tables:
+            table_name = table.get("name")
+
+            # Build table entry with available information
+            table_entry = {
+                "name": table_name,
+                "row_count": table.get("row_count"),
+                "column_count": table.get("column_count"),
+                "primary_key": table.get("primary_key", []),
+                "columns": []
+            }
+
+            # Add columns if available
+            if table_name in columns_by_table:
+                for column in columns_by_table[table_name]:
+                    column_entry = {
+                        "name": column.get("name"),
+                        "type": column.get("type"),
+                        "nullable": column.get("nullable"),
+                    }
+
+                    # Add statistics if available
+                    if (table_name in statistics_by_table and
+                            "column_statistics" in statistics_by_table[table_name] and
+                            column.get("name") in statistics_by_table[table_name]["column_statistics"]):
+                        column_stats = statistics_by_table[table_name]["column_statistics"][column.get("name")]
+                        column_entry.update({
+                            "null_count": column_stats.get("null_count"),
+                            "null_percentage": column_stats.get("null_percentage"),
+                            "distinct_count": column_stats.get("distinct_count"),
+                            "min_value": column_stats.get("min_value"),
+                            "max_value": column_stats.get("max_value"),
+                            "avg_value": column_stats.get("avg_value")
+                        })
+
+                    table_entry["columns"].append(column_entry)
+
+            # Add table to schema
+            schema["tables"].append(table_entry)
+
+        # Sort tables by name for consistent output
+        schema["tables"].sort(key=lambda x: x["name"])
+
+        # Add counts and collection timestamp
+        schema["table_count"] = len(schema["tables"])
+        schema["collected_at"] = tables_metadata.get("collected_at", datetime.datetime.now().isoformat())
+
+        return jsonify(schema)
+
+    except Exception as e:
+        logger.error(f"Error getting combined schema: {str(e)}")
+        logger.error(traceback.format_exc())
+        return jsonify({"error": str(e)}), 500
+
 # @app.before_request
 # def log_memory_before():
 #     memory_usage = psutil.virtual_memory()

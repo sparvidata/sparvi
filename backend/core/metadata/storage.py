@@ -3,6 +3,7 @@ import json
 import uuid
 from datetime import datetime, timedelta
 import os
+from typing import Optional, List, Dict, Any
 from dotenv import load_dotenv
 from supabase import create_client
 
@@ -281,4 +282,70 @@ class MetadataStorage:
 
         except Exception as e:
             logger.error(f"Error retrieving metadata: {str(e)}")
+            return []
+
+    # In backend/core/metadata/storage_service.py - add these methods
+
+    def get_table_columns(self, connection_id: str, table_name: str) -> Optional[List[Dict]]:
+        """Get columns for a specific table"""
+        try:
+            # Get columns metadata
+            columns_metadata = self.get_metadata(connection_id, "columns")
+            if not columns_metadata or "metadata" not in columns_metadata:
+                return None
+
+            # Extract columns for the specified table
+            columns_by_table = columns_metadata["metadata"].get("columns_by_table", {})
+            if table_name not in columns_by_table:
+                return None
+
+            return columns_by_table[table_name]
+        except Exception as e:
+            logger.error(f"Error getting table columns: {str(e)}")
+            return None
+
+    def get_table_statistics(self, connection_id: str, table_name: str) -> Optional[Dict]:
+        """Get statistics for a specific table"""
+        try:
+            # Get statistics metadata
+            statistics_metadata = self.get_metadata(connection_id, "statistics")
+            if not statistics_metadata or "metadata" not in statistics_metadata:
+                return None
+
+            # Extract statistics for the specified table
+            statistics_by_table = statistics_metadata["metadata"].get("statistics_by_table", {})
+            if table_name not in statistics_by_table:
+                return None
+
+            return statistics_by_table[table_name]
+        except Exception as e:
+            logger.error(f"Error getting table statistics: {str(e)}")
+            return None
+
+    def get_metadata_history(self, connection_id: str, metadata_type: str, limit: int = 10) -> List[Dict]:
+        """Get historical metadata records for a specific type"""
+        try:
+            # Create direct Supabase client
+            import os
+            from supabase import create_client
+
+            # Get credentials from environment
+            supabase_url = os.getenv("SUPABASE_URL")
+            supabase_key = os.getenv("SUPABASE_SERVICE_KEY")
+
+            # Create client
+            direct_client = create_client(supabase_url, supabase_key)
+
+            # Query historical metadata
+            response = direct_client.table("connection_metadata") \
+                .select("metadata, collected_at") \
+                .eq("connection_id", connection_id) \
+                .eq("metadata_type", metadata_type) \
+                .order("collected_at", {'ascending': False}) \
+                .limit(limit) \
+                .execute()
+
+            return response.data if response.data else []
+        except Exception as e:
+            logger.error(f"Error getting metadata history: {str(e)}")
             return []
