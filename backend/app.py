@@ -2855,7 +2855,7 @@ def get_table_statistics(current_user, organization_id, connection_id, table_nam
                         if valid_email_result and len(valid_email_result) > 0:
                             valid_count = valid_email_result[0][0]
                             non_null_count = table_stats["general"]["row_count"] - (
-                                        column_stats["basic"]["null_count"] or 0)
+                                    column_stats["basic"]["null_count"] or 0)
                             invalid_count = non_null_count - valid_count - (column_stats["string"]["empty_count"] or 0)
 
                             pattern_analysis["email_pattern"] = {
@@ -2878,18 +2878,113 @@ def get_table_statistics(current_user, organization_id, connection_id, table_nam
                             if valid_phone_result and len(valid_phone_result) > 0:
                                 valid_count = valid_phone_result[0][0]
                                 non_null_count = table_stats["general"]["row_count"] - (
-                                            column_stats["basic"]["null_count"] or 0)
+                                        column_stats["basic"]["null_count"] or 0)
                                 invalid_count = non_null_count - valid_count - (
-                                            column_stats["string"]["empty_count"] or 0)
+                                        column_stats["string"]["empty_count"] or 0)
 
                                 pattern_analysis["phone_pattern"] = {
                                     "valid_count": valid_count,
                                     "invalid_count": invalid_count,
                                     "valid_percentage": (
-                                                valid_count / non_null_count * 100) if non_null_count > 0 else 0
+                                            valid_count / non_null_count * 100) if non_null_count > 0 else 0
                                 }
                         except Exception:
                             # REGEXP_LIKE might not be supported in all databases
+                            pass
+
+                    # Add ZIP/Postal code pattern check
+                    if any(zip_term in column_name.lower() for zip_term in ["zip", "postal", "postcode", "post_code"]):
+                        # US zip code pattern (5 digits, optionally followed by dash and 4 more digits)
+                        try:
+                            us_zip_pattern_query = f"""
+                                SELECT COUNT(*)
+                                FROM {table_name}
+                                WHERE {column_name} IS NOT NULL
+                                AND REGEXP_LIKE({column_name}, '^[0-9]{{5}}(-[0-9]{{4}})?$')
+                            """
+                            us_zip_result = connector.execute_query(us_zip_pattern_query)
+                            if us_zip_result and len(us_zip_result) > 0:
+                                us_valid_count = us_zip_result[0][0]
+                                non_null_count = table_stats["general"]["row_count"] - (
+                                        column_stats["basic"]["null_count"] or 0)
+                                pattern_analysis["us_zip_pattern"] = {
+                                    "valid_count": us_valid_count,
+                                    "valid_percentage": (
+                                                us_valid_count / non_null_count * 100) if non_null_count > 0 else 0
+                                }
+                        except Exception:
+                            pass
+
+                        # Canadian postal code pattern (A1A 1A1 format)
+                        try:
+                            canada_postal_pattern_query = f"""
+                                SELECT COUNT(*)
+                                FROM {table_name}
+                                WHERE {column_name} IS NOT NULL
+                                AND REGEXP_LIKE({column_name}, '^[A-Za-z][0-9][A-Za-z]\\s?[0-9][A-Za-z][0-9]$')
+                            """
+                            canada_postal_result = connector.execute_query(canada_postal_pattern_query)
+                            if canada_postal_result and len(canada_postal_result) > 0:
+                                canada_valid_count = canada_postal_result[0][0]
+                                non_null_count = table_stats["general"]["row_count"] - (
+                                        column_stats["basic"]["null_count"] or 0)
+                                pattern_analysis["canada_postal_pattern"] = {
+                                    "valid_count": canada_valid_count,
+                                    "valid_percentage": (
+                                                canada_valid_count / non_null_count * 100) if non_null_count > 0 else 0
+                                }
+                        except Exception:
+                            pass
+
+                    # Add Credit Card pattern check
+                    if any(cc_term in column_name.lower() for cc_term in
+                           ["credit", "card", "cc", "creditcard", "payment"]):
+                        try:
+                            # Basic Luhn algorithm validation would be better but too complex for SQL
+                            # This checks for typical credit card formats (13-19 digits, possibly with spaces/dashes)
+                            cc_pattern_query = f"""
+                                SELECT COUNT(*)
+                                FROM {table_name}
+                                WHERE {column_name} IS NOT NULL
+                                AND REGEXP_LIKE(REPLACE(REPLACE({column_name}, '-', ''), ' ', ''), '^[0-9]{{13,19}}$')
+                            """
+                            cc_result = connector.execute_query(cc_pattern_query)
+                            if cc_result and len(cc_result) > 0:
+                                cc_valid_count = cc_result[0][0]
+                                non_null_count = table_stats["general"]["row_count"] - (
+                                        column_stats["basic"]["null_count"] or 0)
+                                pattern_analysis["credit_card_pattern"] = {
+                                    "valid_count": cc_valid_count,
+                                    "valid_percentage": (
+                                                cc_valid_count / non_null_count * 100) if non_null_count > 0 else 0
+                                }
+                        except Exception:
+                            pass
+
+                    # Add URL pattern check
+                    if any(url_term in column_name.lower() for url_term in ["url", "website", "web", "site", "link"]):
+                        try:
+                            url_pattern_query = f"""
+                                SELECT COUNT(*)
+                                FROM {table_name}
+                                WHERE {column_name} IS NOT NULL
+                                AND (
+                                    {column_name} LIKE 'http://%' OR
+                                    {column_name} LIKE 'https://%' OR
+                                    {column_name} LIKE 'www.%'
+                                )
+                            """
+                            url_result = connector.execute_query(url_pattern_query)
+                            if url_result and len(url_result) > 0:
+                                url_valid_count = url_result[0][0]
+                                non_null_count = table_stats["general"]["row_count"] - (
+                                        column_stats["basic"]["null_count"] or 0)
+                                pattern_analysis["url_pattern"] = {
+                                    "valid_count": url_valid_count,
+                                    "valid_percentage": (
+                                                url_valid_count / non_null_count * 100) if non_null_count > 0 else 0
+                                }
+                        except Exception:
                             pass
 
                     # Add pattern analysis if we found anything
@@ -2906,6 +3001,127 @@ def get_table_statistics(current_user, organization_id, connection_id, table_nam
         end_time = datetime.datetime.now()
         duration_ms = (end_time - start_time).total_seconds() * 1000
         table_stats["collection_metadata"]["collection_duration_ms"] = duration_ms
+
+        # Save key metrics to historical statistics
+        def save_historical_statistics(connection_id, organization_id, table_name, table_stats):
+            """Save key metrics to historical statistics table"""
+            try:
+                # Create direct Supabase client
+                import os
+                import json
+                import decimal
+                from supabase import create_client
+
+                # Define a custom encoder for Decimal and datetime objects
+                class CustomJSONEncoder(json.JSONEncoder):
+                    def default(self, obj):
+                        if isinstance(obj, decimal.Decimal):
+                            return float(obj)
+                        if hasattr(obj, 'isoformat'):  # Handle datetime objects
+                            return obj.isoformat()
+                        return super(CustomJSONEncoder, self).default(obj)
+
+                # Get credentials from environment
+                supabase_url = os.getenv("SUPABASE_URL")
+                supabase_key = os.getenv("SUPABASE_SERVICE_KEY")
+
+                # Create client
+                direct_client = create_client(supabase_url, supabase_key)
+
+                # Current timestamp
+                now = datetime.datetime.now().isoformat()
+
+                # Table-level metrics to track
+                historical_records = []
+
+                # Add table-level metrics
+                row_count = table_stats["general"]["row_count"]
+                # Convert Decimal to float if needed
+                if isinstance(row_count, decimal.Decimal):
+                    row_count = float(row_count)
+
+                historical_records.append({
+                    "connection_id": connection_id,
+                    "organization_id": organization_id,
+                    "table_name": table_name,
+                    "column_name": None,  # None for table-level metrics
+                    "metric_name": "row_count",
+                    "metric_value": row_count,
+                    "collected_at": now
+                })
+
+                # Add column-level metrics
+                for column_name, column_stats in table_stats["column_statistics"].items():
+                    # Track null percentage
+                    null_percentage = column_stats["basic"]["null_percentage"]
+                    if null_percentage is not None:
+                        # Convert Decimal to float if needed
+                        if isinstance(null_percentage, decimal.Decimal):
+                            null_percentage = float(null_percentage)
+
+                        historical_records.append({
+                            "connection_id": connection_id,
+                            "organization_id": organization_id,
+                            "table_name": table_name,
+                            "column_name": column_name,
+                            "metric_name": "null_percentage",
+                            "metric_value": null_percentage,
+                            "collected_at": now
+                        })
+
+                    # Track distinct percentage
+                    distinct_percentage = column_stats["basic"]["distinct_percentage"]
+                    if distinct_percentage is not None:
+                        # Convert Decimal to float if needed
+                        if isinstance(distinct_percentage, decimal.Decimal):
+                            distinct_percentage = float(distinct_percentage)
+
+                        historical_records.append({
+                            "connection_id": connection_id,
+                            "organization_id": organization_id,
+                            "table_name": table_name,
+                            "column_name": column_name,
+                            "metric_name": "distinct_percentage",
+                            "metric_value": distinct_percentage,
+                            "collected_at": now
+                        })
+
+                    # Track numeric stats if available
+                    avg_value = column_stats["numeric"]["avg"]
+                    if avg_value is not None:
+                        # Convert Decimal to float if needed
+                        if isinstance(avg_value, decimal.Decimal):
+                            avg_value = float(avg_value)
+
+                        historical_records.append({
+                            "connection_id": connection_id,
+                            "organization_id": organization_id,
+                            "table_name": table_name,
+                            "column_name": column_name,
+                            "metric_name": "avg_value",
+                            "metric_value": avg_value,
+                            "collected_at": now
+                        })
+
+                # Insert historical records in batches
+                batch_size = 50
+                for i in range(0, len(historical_records), batch_size):
+                    batch = historical_records[i:i + batch_size]
+                    # Convert any remaining Decimal objects
+                    batch_json = json.dumps(batch, cls=CustomJSONEncoder)
+                    batch_clean = json.loads(batch_json)
+                    direct_client.table("historical_statistics").insert(batch_clean).execute()
+
+                logger.info(f"Saved {len(historical_records)} historical metrics for {table_name}")
+                return True
+
+            except Exception as e:
+                logger.error(f"Error saving historical statistics: {str(e)}")
+                logger.error(traceback.format_exc())
+                return False
+
+        # Call the function after collecting statistics
+        save_historical_statistics(connection_id, organization_id, table_name, table_stats)
 
         # Store statistics in cache
         storage_service = MetadataStorageService()
@@ -3273,6 +3489,204 @@ def get_combined_schema(current_user, organization_id, connection_id):
 
     except Exception as e:
         logger.error(f"Error getting combined schema: {str(e)}")
+        logger.error(traceback.format_exc())
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/connections/<connection_id>/tables/<table_name>/columns/<column_name>/pattern", methods=["POST"])
+@token_required
+def check_custom_pattern(current_user, organization_id, connection_id, table_name, column_name):
+    """Check a column against a custom pattern"""
+    try:
+        # Get the pattern from the request
+        data = request.get_json()
+        if not data or "pattern" not in data:
+            return jsonify({"error": "Pattern is required"}), 400
+
+        pattern = data["pattern"]
+        pattern_name = data.get("name", "custom_pattern")
+
+        # Check access to connection
+        supabase_mgr = SupabaseManager()
+        connection_check = supabase_mgr.supabase.table("database_connections") \
+            .select("*") \
+            .eq("id", connection_id) \
+            .eq("organization_id", organization_id) \
+            .execute()
+
+        if not connection_check.data or len(connection_check.data) == 0:
+            return jsonify({"error": "Connection not found or access denied"}), 404
+
+        connection = connection_check.data[0]
+
+        # Create connector
+        try:
+            connector = get_connector_for_connection(connection)
+            connector.connect()
+        except Exception as e:
+            return jsonify({"error": f"Failed to connect to database: {str(e)}"}), 500
+
+        # Execute pattern check query
+        try:
+            pattern_query = f"""
+                SELECT 
+                    COUNT(*) as total_count,
+                    COUNT(CASE WHEN REGEXP_LIKE({column_name}, '{pattern}') THEN 1 END) as matching_count
+                FROM {table_name}
+                WHERE {column_name} IS NOT NULL
+            """
+            result = connector.execute_query(pattern_query)
+
+            if result and len(result) > 0:
+                total_count = result[0][0]
+                matching_count = result[0][1]
+
+                # Calculate percentages
+                matching_percentage = (matching_count / total_count * 100) if total_count > 0 else 0
+                non_matching_percentage = 100 - matching_percentage
+
+                return jsonify({
+                    "pattern_name": pattern_name,
+                    "pattern": pattern,
+                    "total_count": total_count,
+                    "matching_count": matching_count,
+                    "non_matching_count": total_count - matching_count,
+                    "matching_percentage": matching_percentage,
+                    "non_matching_percentage": non_matching_percentage
+                })
+
+        except Exception as e:
+            return jsonify({"error": f"Error checking pattern: {str(e)}"}), 500
+
+    except Exception as e:
+        logger.error(f"Error in custom pattern check: {str(e)}")
+        logger.error(traceback.format_exc())
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/connections/<connection_id>/tables/<table_name>/trends", methods=["GET"])
+@token_required
+def get_historical_trends(current_user, organization_id, connection_id, table_name):
+    """Get historical trends for a table"""
+    try:
+        # Get query parameters
+        days = int(request.args.get("days", 30))  # Default to 30 days
+        column_name = request.args.get("column")  # Optional column filter
+        metric = request.args.get("metric")  # Optional metric filter
+
+        # Check access to connection
+        supabase_mgr = SupabaseManager()
+        connection_check = supabase_mgr.supabase.table("database_connections") \
+            .select("*") \
+            .eq("id", connection_id) \
+            .eq("organization_id", organization_id) \
+            .execute()
+
+        if not connection_check.data or len(connection_check.data) == 0:
+            return jsonify({"error": "Connection not found or access denied"}), 404
+
+        # Calculate the start date
+        start_date = (datetime.datetime.now() - datetime.timedelta(days=days)).isoformat()
+
+        # Query historical statistics
+        try:
+            # Create direct Supabase client
+            import os
+            from supabase import create_client
+
+            # Get credentials from environment
+            supabase_url = os.getenv("SUPABASE_URL")
+            supabase_key = os.getenv("SUPABASE_SERVICE_KEY")
+
+            # Create direct client
+            direct_client = create_client(supabase_url, supabase_key)
+
+            # Start building the query
+            query = direct_client.table("historical_statistics") \
+                .select("column_name, metric_name, metric_value, collected_at") \
+                .eq("connection_id", connection_id) \
+                .eq("table_name", table_name) \
+                .gte("collected_at", start_date)
+
+            # NOTE: The order syntax appears to have changed in the Supabase library
+            # Try with the simpler version
+            query = query.order("collected_at")
+
+            # Add column filter if specified
+            if column_name:
+                query = query.eq("column_name", column_name)
+
+            # Add metric filter if specified
+            if metric:
+                query = query.eq("metric_name", metric)
+
+            # Execute the query
+            response = query.execute()
+
+            if not response.data:
+                return jsonify({
+                    "trends": [],
+                    "message": "No historical data found"
+                })
+
+            # Process the data into a more usable format
+            trends = {}
+
+            for record in response.data:
+                # Create the metric key
+                col_name = record["column_name"] or "table"  # Use "table" for table-level metrics
+                metric_name = record["metric_name"]
+                key = f"{col_name}.{metric_name}"
+
+                # Initialize the metric if not already present
+                if key not in trends:
+                    trends[key] = {
+                        "column": col_name,
+                        "metric": metric_name,
+                        "values": [],
+                        "timestamps": []
+                    }
+
+                # Add the value and timestamp
+                trends[key]["values"].append(record["metric_value"])
+                trends[key]["timestamps"].append(record["collected_at"])
+
+            # Convert to a list and return
+            trend_list = list(trends.values())
+
+            # Calculate stats for each trend
+            for trend in trend_list:
+                if trend["values"]:
+                    trend["current_value"] = trend["values"][-1]
+                    trend["min_value"] = min(trend["values"])
+                    trend["max_value"] = max(trend["values"])
+
+                    # Calculate change metrics if we have at least 2 points
+                    if len(trend["values"]) >= 2:
+                        first_value = trend["values"][0]
+                        last_value = trend["values"][-1]
+
+                        if first_value != 0:  # Avoid division by zero
+                            trend["percent_change"] = ((last_value - first_value) / first_value) * 100
+                        else:
+                            trend["percent_change"] = None
+
+                        trend["absolute_change"] = last_value - first_value
+
+            return jsonify({
+                "trends": trend_list,
+                "table_name": table_name,
+                "days": days,
+                "count": len(trend_list)
+            })
+
+        except Exception as e:
+            logger.error(f"Error retrieving historical trends: {str(e)}")
+            logger.error(traceback.format_exc())
+            return jsonify({"error": f"Error retrieving historical trends: {str(e)}"}), 500
+
+    except Exception as e:
+        logger.error(f"Error in historical trends: {str(e)}")
         logger.error(traceback.format_exc())
         return jsonify({"error": str(e)}), 500
 
