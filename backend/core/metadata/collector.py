@@ -179,3 +179,70 @@ class MetadataCollector:
                 "error": str(e),
                 "collected_at": datetime.now().isoformat()
             }
+
+
+    def collect_metadata_for_storage(self):
+        """Collect metadata in an efficient format for JSON storage"""
+        # Connect to the database if not already connected
+        if not self.connector.inspector:
+            self.connector.connect()
+
+        results = {
+            "tables": [],
+            "columns_by_table": {},
+            "statistics_by_table": {}
+        }
+
+        # Get all tables
+        tables = self.collect_table_list()
+
+        # Collect basic table info
+        for table in tables:
+            table_info = {
+                "name": table,
+                "schema": None,  # Could be populated if available
+                "collected_at": datetime.now().isoformat()
+            }
+
+            # Try to get row count
+            try:
+                count_result = self.connector.execute_query(f"SELECT COUNT(*) FROM {table}")
+                if count_result and len(count_result) > 0:
+                    table_info["row_count"] = count_result[0][0]
+            except Exception as e:
+                logger.warning(f"Could not get row count for {table}: {str(e)}")
+                table_info["row_count"] = None
+
+            # Get primary keys
+            try:
+                primary_keys = self.connector.get_primary_keys(table)
+                table_info["primary_keys"] = primary_keys
+            except Exception as e:
+                logger.warning(f"Could not get primary keys for {table}: {str(e)}")
+                table_info["primary_keys"] = []
+
+            # Add to results
+            results["tables"].append(table_info)
+
+            # Collect column information
+            try:
+                columns = self.collect_columns(table)
+                results["columns_by_table"][table] = columns
+            except Exception as e:
+                logger.warning(f"Could not get columns for {table}: {str(e)}")
+                results["columns_by_table"][table] = []
+
+            # Collect basic statistics
+            try:
+                # Add basic table statistics
+                results["statistics_by_table"][table] = {
+                    "row_count": table_info.get("row_count"),
+                    "column_count": len(columns),
+                    "has_primary_key": len(primary_keys) > 0,
+                    "collected_at": datetime.now().isoformat()
+                }
+            except Exception as e:
+                logger.warning(f"Could not get statistics for {table}: {str(e)}")
+                results["statistics_by_table"][table] = {}
+
+        return results

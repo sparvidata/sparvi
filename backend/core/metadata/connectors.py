@@ -70,7 +70,7 @@ class SnowflakeConnector(DatabaseConnector):
 
         except Exception as e:
             logger.error(f"Failed to connect to Snowflake: {str(e)}")
-            raise
+            raise  # Re-raise the exception to be handled by the caller
 
     def get_tables(self):
         """Get list of tables from Snowflake"""
