@@ -21,13 +21,37 @@ from sparvi.profiler.profile_engine import profile_table
 from sparvi.validations.default_validations import get_default_validations
 from sparvi.validations.validator import run_validations as sparvi_run_validations
 
-from core.metadata.storage_service import MetadataStorageService
-from core.metadata.connectors import SnowflakeConnector
-from core.metadata.collector import MetadataCollector
-from core.metadata.storage import MetadataStorage
-from core.storage.supabase_manager import SupabaseManager
-from core.validations.supabase_validation_manager import SupabaseValidationManager
-from core.history.supabase_profile_history import SupabaseProfileHistoryManager
+from backend.core.metadata.storage_service import MetadataStorageService
+from backend.core.metadata.connectors import SnowflakeConnector
+from backend.core.metadata.collector import MetadataCollector
+from backend.core.metadata.storage import MetadataStorage
+from backend.core.storage.supabase_manager import SupabaseManager
+from backend.core.validations.supabase_validation_manager import SupabaseValidationManager
+from backend.core.history.supabase_profile_history import SupabaseProfileHistoryManager
+from backend.core.metadata.manager import MetadataTaskManager
+import threading
+
+# Initialize global task manager
+metadata_task_manager = None
+
+
+# Add this function after your other initializations
+def init_metadata_task_manager():
+    global metadata_task_manager
+    if metadata_task_manager is None:
+        try:
+            from backend.core.metadata.storage_service import MetadataStorageService
+
+            logger.info("Initializing metadata task manager...")
+            storage_service = MetadataStorageService()
+            supabase_mgr = SupabaseManager()
+
+            metadata_task_manager = MetadataTaskManager.get_instance(storage_service, supabase_mgr)
+            logger.info("Metadata task manager initialized successfully")
+        except Exception as e:
+            logger.error(f"Error initializing metadata task manager: {str(e)}")
+            logger.error(traceback.format_exc())
+
 
 
 def setup_comprehensive_logging():
@@ -111,11 +135,21 @@ metadata_storage = MetadataStorage()
 
 task_executor = ThreadPoolExecutor(max_workers=5)
 metadata_task_queue = queue.Queue()
+threading.Timer(5.0, init_metadata_task_manager).start()  # 5-second delay to ensure other services are ready
 
 # Decorator to require a valid token for protected routes
+import os
+
+# Modify your token_required decorator to include a testing bypass
 def token_required(f):
     @wraps(f)
     def decorated(*args, **kwargs):
+        # Special case for testing
+        if os.environ.get('TESTING') == 'True' and request.headers.get('Authorization') == 'Bearer test-token':
+            logger.debug("Test token detected, bypassing authentication")
+            return f("test-user-id", "test-org-id", *args, **kwargs)
+
+        # Normal token check (your existing code)
         token = None
         auth_header = request.headers.get("Authorization", None)
         if auth_header:
@@ -1125,7 +1159,7 @@ def get_profile(current_user, organization_id):
             return jsonify({"error": "Invalid connection string format"}), 400
 
         # Resolve any environment variable references in connection string
-        from core.utils.connection_utils import resolve_connection_string, detect_connection_type
+        from backend.core.utils.connection_utils import resolve_connection_string, detect_connection_type
         resolved_connection = resolve_connection_string(connection_string)
         db_type = detect_connection_type(resolved_connection)
         logger.info(f"Database type detected: {db_type}")
@@ -1188,7 +1222,7 @@ def get_profile(current_user, organization_id):
                 del result[field]
 
         # Save the profile to Supabase - use original connection string to avoid storing credentials
-        from core.utils.connection_utils import sanitize_connection_string
+        from backend.core.utils.connection_utils import sanitize_connection_string
         sanitized_connection = sanitize_connection_string(connection_string)
         logger.info("About to save profile to Supabase")
 
@@ -1903,7 +1937,7 @@ def test_connection(current_user, organization_id):
                 # Use environment variables
                 prefix = details.get("envVarPrefix", "SNOWFLAKE")
                 # Create connection string using environment variables
-                from core.utils.connection_utils import get_snowflake_connection_from_env
+                from backend.core.utils.connection_utils import get_snowflake_connection_from_env
                 connection_string = get_snowflake_connection_from_env(prefix)
 
                 if not connection_string:
@@ -3687,6 +3721,360 @@ def get_historical_trends(current_user, organization_id, connection_id, table_na
 
     except Exception as e:
         logger.error(f"Error in historical trends: {str(e)}")
+        logger.error(traceback.format_exc())
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/connections/<connection_id>/metadata/tasks", methods=["POST"])
+@token_required
+def schedule_metadata_task(current_user, organization_id, connection_id):
+    """Schedule a metadata collection task"""
+    try:
+        # Make sure task manager is initialized
+        if metadata_task_manager is None:
+            init_metadata_task_manager()
+
+        # Get task parameters from request
+        data = request.get_json() or {}
+        task_type = data.get("task_type", "full_collection")
+        priority = data.get("priority", "medium")
+        table_name = data.get("table_name")
+
+        # Check access to connection
+        supabase_mgr = SupabaseManager()
+        connection_check = supabase_mgr.supabase.table("database_connections") \
+            .select("*") \
+            .eq("id", connection_id) \
+            .eq("organization_id", organization_id) \
+            .execute()
+
+        if not connection_check.data or len(connection_check.data) == 0:
+            logger.error(f"Connection not found or access denied: {connection_id}")
+            return jsonify({"error": "Connection not found or access denied"}), 404
+
+        # Submit appropriate task based on type
+        task_id = None
+
+        if task_type == "full_collection":
+            # Full collection task
+            params = {
+                "depth": data.get("depth", "medium"),
+                "table_limit": data.get("table_limit", 50)
+            }
+
+            task_id = metadata_task_manager.submit_collection_task(connection_id, params, priority)
+
+        elif task_type == "table_metadata":
+            # Table metadata task
+            if not table_name:
+                return jsonify({"error": "table_name is required for table_metadata task"}), 400
+
+            task_id = metadata_task_manager.submit_table_metadata_task(connection_id, table_name, priority)
+
+        elif task_type == "refresh_statistics":
+            # Statistics refresh task
+            if not table_name:
+                return jsonify({"error": "table_name is required for refresh_statistics task"}), 400
+
+            task_id = metadata_task_manager.submit_statistics_refresh_task(connection_id, table_name, priority)
+
+        elif task_type == "update_usage":
+            # Usage update task
+            if not table_name:
+                return jsonify({"error": "table_name is required for update_usage task"}), 400
+
+            task_id = metadata_task_manager.submit_usage_update_task(connection_id, table_name, priority)
+
+        else:
+            return jsonify({"error": f"Unknown task type: {task_type}"}), 400
+
+        return jsonify({
+            "task_id": task_id,
+            "status": "scheduled",
+            "message": f"Scheduled {task_type} task for connection {connection_id}"
+        })
+
+    except Exception as e:
+        logger.error(f"Error scheduling metadata task: {str(e)}")
+        logger.error(traceback.format_exc())
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/connections/<connection_id>/metadata/tasks", methods=["GET"])
+@token_required
+def get_metadata_tasks(current_user, organization_id, connection_id):
+    """Get recent metadata tasks for a connection"""
+    try:
+        # Make sure task manager is initialized
+        if metadata_task_manager is None:
+            init_metadata_task_manager()
+
+        # Check access to connection
+        supabase_mgr = SupabaseManager()
+        connection_check = supabase_mgr.supabase.table("database_connections") \
+            .select("*") \
+            .eq("id", connection_id) \
+            .eq("organization_id", organization_id) \
+            .execute()
+
+        if not connection_check.data or len(connection_check.data) == 0:
+            logger.error(f"Connection not found or access denied: {connection_id}")
+            return jsonify({"error": "Connection not found or access denied"}), 404
+
+        # Get recent tasks
+        limit = request.args.get("limit", 10, type=int)
+        tasks = metadata_task_manager.get_recent_tasks(limit)
+
+        # Filter tasks for this connection
+        connection_tasks = [
+            task for task in tasks
+            if task.get("task", {}).get("connection_id") == connection_id
+        ]
+
+        return jsonify({
+            "tasks": connection_tasks,
+            "count": len(connection_tasks)
+        })
+
+    except Exception as e:
+        logger.error(f"Error getting metadata tasks: {str(e)}")
+        logger.error(traceback.format_exc())
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/connections/<connection_id>/metadata/refresh", methods=["POST"])
+@token_required
+def refresh_metadata(current_user, organization_id, connection_id):
+    """Trigger a metadata refresh based on event or user request"""
+    try:
+        # Make sure task manager is initialized
+        if metadata_task_manager is None:
+            init_metadata_task_manager()
+
+        # Get refresh parameters
+        data = request.get_json() or {}
+        event_type = data.get("event_type", "user_request")
+        metadata_type = data.get("metadata_type", "schema")
+        table_name = data.get("table_name")
+
+        # Check access to connection
+        supabase_mgr = SupabaseManager()
+        connection_check = supabase_mgr.supabase.table("database_connections") \
+            .select("*") \
+            .eq("id", connection_id) \
+            .eq("organization_id", organization_id) \
+            .execute()
+
+        if not connection_check.data or len(connection_check.data) == 0:
+            logger.error(f"Connection not found or access denied: {connection_id}")
+            return jsonify({"error": "Connection not found or access denied"}), 404
+
+        # Prepare event details
+        details = {
+            "metadata_type": metadata_type,
+            "table_name": table_name
+        }
+
+        # Handle the metadata event
+        task_id = metadata_task_manager.handle_metadata_event(event_type, connection_id, details)
+
+        if task_id:
+            return jsonify({
+                "task_id": task_id,
+                "status": "scheduled",
+                "message": f"Scheduled metadata refresh for {metadata_type}"
+            })
+        else:
+            return jsonify({
+                "status": "no_action",
+                "message": "No refresh action taken"
+            })
+
+    except Exception as e:
+        logger.error(f"Error refreshing metadata: {str(e)}")
+        logger.error(traceback.format_exc())
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/connections/<connection_id>/metadata/status", methods=["GET"])
+@token_required
+def get_metadata_status(current_user, organization_id, connection_id):
+    """Get metadata freshness status for a connection"""
+    try:
+        # Make sure task manager is initialized
+        if metadata_task_manager is None:
+            init_metadata_task_manager()
+
+        # Check access to connection
+        supabase_mgr = SupabaseManager()
+        connection_check = supabase_mgr.supabase.table("database_connections") \
+            .select("*") \
+            .eq("id", connection_id) \
+            .eq("organization_id", organization_id) \
+            .execute()
+
+        if not connection_check.data or len(connection_check.data) == 0:
+            logger.error(f"Connection not found or access denied: {connection_id}")
+            return jsonify({"error": "Connection not found or access denied"}), 404
+
+        # Get metadata status
+        storage_service = MetadataStorageService()
+
+        # Get all metadata types
+        metadata_types = ["tables", "columns", "statistics"]
+        status = {}
+
+        for metadata_type in metadata_types:
+            metadata = storage_service.get_metadata(connection_id, metadata_type)
+
+            if metadata:
+                status[metadata_type] = {
+                    "available": True,
+                    "freshness": metadata.get("freshness", {"status": "unknown"}),
+                    "last_updated": metadata.get("collected_at")
+                }
+            else:
+                status[metadata_type] = {
+                    "available": False,
+                    "freshness": {"status": "unknown"},
+                    "last_updated": None
+                }
+
+        # Get any pending tasks
+        tasks = metadata_task_manager.get_recent_tasks(5)
+        pending_tasks = [
+            task for task in tasks
+            if task.get("task", {}).get("connection_id") == connection_id and
+               task.get("task", {}).get("status") == "pending"
+        ]
+
+        # Add to status
+        status["pending_tasks"] = pending_tasks
+
+        return jsonify(status)
+
+    except Exception as e:
+        logger.error(f"Error getting metadata status: {str(e)}")
+        logger.error(traceback.format_exc())
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/metadata/worker/stats", methods=["GET"])
+@token_required
+def get_worker_stats(current_user, organization_id):
+    """Get metadata worker statistics - admin only endpoint"""
+    try:
+        # Check if user is an admin
+        supabase_mgr = SupabaseManager()
+        user_role = supabase_mgr.get_user_role(current_user)
+
+        if user_role != 'admin':
+            logger.warning(f"Non-admin user {current_user} attempted to access admin endpoint")
+            return jsonify({"error": "Admin access required"}), 403
+
+        # Make sure task manager is initialized
+        if metadata_task_manager is None:
+            init_metadata_task_manager()
+
+        # Get worker stats
+        stats = metadata_task_manager.get_worker_stats()
+
+        return jsonify(stats)
+
+    except Exception as e:
+        logger.error(f"Error getting worker stats: {str(e)}")
+        logger.error(traceback.format_exc())
+        return jsonify({"error": str(e)}), 500
+        supabase_mgr = SupabaseManager()
+        connection_check = supabase_mgr.supabase.table("database_connections") \
+            .select("*") \
+            .eq("id", connection_id) \
+            .eq("organization_id", organization_id) \
+            .execute()
+
+        if not connection_check.data or len(connection_check.data) == 0:
+            logger.error(f"Connection not found or access denied: {connection_id}")
+            return jsonify({"error": "Connection not found or access denied"}), 404
+
+        # Submit appropriate task based on type
+        task_id = None
+
+        if task_type == "full_collection":
+            # Full collection task
+            params = {
+                "depth": data.get("depth", "medium"),
+                "table_limit": data.get("table_limit", 50)
+            }
+
+            task_id = metadata_task_manager.submit_collection_task(connection_id, params, priority)
+
+        elif task_type == "table_metadata":
+            # Table metadata task
+            if not table_name:
+                return jsonify({"error": "table_name is required for table_metadata task"}), 400
+
+            task_id = metadata_task_manager.submit_table_metadata_task(connection_id, table_name, priority)
+
+        elif task_type == "refresh_statistics":
+            # Statistics refresh task
+            if not table_name:
+                return jsonify({"error": "table_name is required for refresh_statistics task"}), 400
+
+            task_id = metadata_task_manager.submit_statistics_refresh_task(connection_id, table_name, priority)
+
+        elif task_type == "update_usage":
+            # Usage update task
+            if not table_name:
+                return jsonify({"error": "table_name is required for update_usage task"}), 400
+
+            task_id = metadata_task_manager.submit_usage_update_task(connection_id, table_name, priority)
+
+        else:
+            return jsonify({"error": f"Unknown task type: {task_type}"}), 400
+
+        return jsonify({
+            "task_id": task_id,
+            "status": "scheduled",
+            "message": f"Scheduled {task_type} task for connection {connection_id}"
+        })
+
+    except Exception as e:
+        logger.error(f"Error scheduling metadata task: {str(e)}")
+        logger.error(traceback.format_exc())
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/connections/<connection_id>/metadata/tasks/<task_id>", methods=["GET"])
+@token_required
+def get_metadata_task_status(current_user, organization_id, connection_id, task_id):
+    """Get status of a metadata collection task"""
+    try:
+        # Make sure task manager is initialized
+        if metadata_task_manager is None:
+            init_metadata_task_manager()
+
+        # Check access to connection
+        supabase_mgr = SupabaseManager()
+        connection_check = supabase_mgr.supabase.table("database_connections") \
+            .select("*") \
+            .eq("id", connection_id) \
+            .eq("organization_id", organization_id) \
+            .execute()
+
+        if not connection_check.data or len(connection_check.data) == 0:
+            logger.error(f"Connection not found or access denied: {connection_id}")
+            return jsonify({"error": "Connection not found or access denied"}), 404
+
+        # Get task status
+        task_status = metadata_task_manager.get_task_status(task_id)
+
+        if "error" in task_status:
+            return jsonify({"error": task_status["error"]}), 404
+
+        return jsonify(task_status)
+
+    except Exception as e:
+        logger.error(f"Error getting metadata task status: {str(e)}")
         logger.error(traceback.format_exc())
         return jsonify({"error": str(e)}), 500
 
