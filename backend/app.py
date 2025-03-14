@@ -21,14 +21,14 @@ from sparvi.profiler.profile_engine import profile_table
 from sparvi.validations.default_validations import get_default_validations
 from sparvi.validations.validator import run_validations as sparvi_run_validations
 
-from backend.core.metadata.storage_service import MetadataStorageService
-from backend.core.metadata.connectors import SnowflakeConnector
-from backend.core.metadata.collector import MetadataCollector
-from backend.core.metadata.storage import MetadataStorage
-from backend.core.storage.supabase_manager import SupabaseManager
-from backend.core.validations.supabase_validation_manager import SupabaseValidationManager
-from backend.core.history.supabase_profile_history import SupabaseProfileHistoryManager
-from backend.core.metadata.manager import MetadataTaskManager
+from core.metadata.storage_service import MetadataStorageService
+from core.metadata.connectors import SnowflakeConnector
+from core.metadata.collector import MetadataCollector
+from core.metadata.storage import MetadataStorage
+from core.storage.supabase_manager import SupabaseManager
+from core.validations.supabase_validation_manager import SupabaseValidationManager
+from core.history.supabase_profile_history import SupabaseProfileHistoryManager
+from core.metadata.manager import MetadataTaskManager
 import threading
 
 # Initialize global task manager
@@ -40,7 +40,7 @@ def init_metadata_task_manager():
     global metadata_task_manager
     if metadata_task_manager is None:
         try:
-            from backend.core.metadata.storage_service import MetadataStorageService
+            from core.metadata.storage_service import MetadataStorageService
 
             logger.info("Initializing metadata task manager...")
             storage_service = MetadataStorageService()
@@ -1159,7 +1159,7 @@ def get_profile(current_user, organization_id):
             return jsonify({"error": "Invalid connection string format"}), 400
 
         # Resolve any environment variable references in connection string
-        from backend.core.utils.connection_utils import resolve_connection_string, detect_connection_type
+        from core.utils.connection_utils import resolve_connection_string, detect_connection_type
         resolved_connection = resolve_connection_string(connection_string)
         db_type = detect_connection_type(resolved_connection)
         logger.info(f"Database type detected: {db_type}")
@@ -1222,7 +1222,7 @@ def get_profile(current_user, organization_id):
                 del result[field]
 
         # Save the profile to Supabase - use original connection string to avoid storing credentials
-        from backend.core.utils.connection_utils import sanitize_connection_string
+        from core.utils.connection_utils import sanitize_connection_string
         sanitized_connection = sanitize_connection_string(connection_string)
         logger.info("About to save profile to Supabase")
 
@@ -1937,7 +1937,7 @@ def test_connection(current_user, organization_id):
                 # Use environment variables
                 prefix = details.get("envVarPrefix", "SNOWFLAKE")
                 # Create connection string using environment variables
-                from backend.core.utils.connection_utils import get_snowflake_connection_from_env
+                from core.utils.connection_utils import get_snowflake_connection_from_env
                 connection_string = get_snowflake_connection_from_env(prefix)
 
                 if not connection_string:
