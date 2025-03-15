@@ -1,5 +1,5 @@
 import json
-import urllib
+import urllib.parse
 import psutil
 import supabase
 from flask import Flask, render_template, jsonify, request
@@ -12,6 +12,7 @@ from concurrent.futures import ThreadPoolExecutor
 import threading
 import queue
 import uuid
+import threading
 from functools import wraps
 from dotenv import load_dotenv
 from flask_cors import CORS
@@ -29,7 +30,7 @@ from core.storage.supabase_manager import SupabaseManager
 from core.validations.supabase_validation_manager import SupabaseValidationManager
 from core.history.supabase_profile_history import SupabaseProfileHistoryManager
 from core.metadata.manager import MetadataTaskManager
-import threading
+from core.metadata.events import MetadataEventType, publish_metadata_event
 
 # Initialize global task manager
 metadata_task_manager = None
@@ -38,9 +39,10 @@ metadata_task_manager = None
 # Add this function after your other initializations
 def init_metadata_task_manager():
     global metadata_task_manager
-    if metadata_task_manager is None:
-        try:
+    try:
+        if metadata_task_manager is None:
             from core.metadata.storage_service import MetadataStorageService
+            from core.metadata.manager import MetadataTaskManager
 
             logger.info("Initializing metadata task manager...")
             storage_service = MetadataStorageService()
@@ -48,9 +50,20 @@ def init_metadata_task_manager():
 
             metadata_task_manager = MetadataTaskManager.get_instance(storage_service, supabase_mgr)
             logger.info("Metadata task manager initialized successfully")
-        except Exception as e:
-            logger.error(f"Error initializing metadata task manager: {str(e)}")
-            logger.error(traceback.format_exc())
+
+            # Connect to event system if available
+            try:
+                from core.metadata.events import event_publisher
+                event_publisher.set_task_manager(metadata_task_manager)
+                logger.info("Connected event publisher to metadata task manager")
+            except ImportError:
+                logger.warning("Could not import event publisher")
+            except Exception as e:
+                logger.error(f"Error connecting to event system: {str(e)}")
+    except Exception as e:
+        logger.error(f"Error initializing metadata task manager: {str(e)}")
+        logger.error(traceback.format_exc())
+        metadata_task_manager = None  # Ensure it's set to None if initialization fails
 
 
 
@@ -922,6 +935,7 @@ def run_validation_rules(current_user, organization_id):
         return jsonify({"error": "Table name is required"}), 400
 
     connection_string = data.get("connection_string", os.getenv("DEFAULT_CONNECTION_STRING"))
+    connection_id = data.get("connection_id")  # Add this to capture connection_id
     table_name = data["table"]
     profile_history_id = data.get("profile_history_id")  # Get profile_history_id if provided
 
@@ -952,9 +966,24 @@ def run_validation_rules(current_user, organization_id):
         if validation_rules:
             results = sparvi_run_validations(connection_string, validation_rules)
 
+            # Flag to track if any validation failed
+            had_failures = False
+            schema_mismatch = False
+
             # Store results in Supabase
             for i, result in enumerate(results):
-                # Check if actual_value exists in the result
+                # Check if validation failed
+                if not result.get("is_valid", True):
+                    had_failures = True
+
+                    # Check if this might be a schema mismatch
+                    error_msg = str(result.get("error", "")).lower()
+                    if "column not found" in error_msg or \
+                            "table not found" in error_msg or \
+                            ("relation" in error_msg and "does not exist" in error_msg):
+                        schema_mismatch = True
+
+                # Store actual_value if available
                 actual_value = result.get("actual_value", None)
 
                 validation_manager.store_validation_result(
@@ -964,6 +993,30 @@ def run_validation_rules(current_user, organization_id):
                     actual_value,
                     profile_history_id  # Pass the profile_history_id
                 )
+
+            # If any validations failed and we have a connection_id, publish an event
+            if had_failures and connection_id:
+                try:
+                    from core.metadata.events import MetadataEventType, publish_metadata_event
+                    # Publish validation failure event
+                    publish_metadata_event(
+                        event_type=MetadataEventType.VALIDATION_FAILURE,
+                        connection_id=connection_id,
+                        details={
+                            "table_name": table_name,
+                            "reason": "schema_mismatch" if schema_mismatch else "data_issue",
+                            "validation_count": len(results),
+                            "failure_count": sum(1 for r in results if not r.get("is_valid", True))
+                        },
+                        organization_id=organization_id,
+                        user_id=current_user
+                    )
+                    logger.info(f"Published validation failure event for table {table_name}")
+                except ImportError:
+                    logger.warning("Could not import event system, skipping event publication")
+                except Exception as e:
+                    logger.error(f"Error publishing validation failure event: {str(e)}")
+                    logger.error(traceback.format_exc())
 
             log_memory_usage()
             logger.info(f"Validation execution complete, got {len(results)} results")
@@ -976,6 +1029,31 @@ def run_validation_rules(current_user, organization_id):
     except Exception as e:
         logger.error(f"Error running validations: {str(e)}")
         traceback.print_exc()
+
+        # If exception suggests schema issues and we have connection_id
+        if connection_id and ("no such column" in str(e).lower() or
+                              "table not found" in str(e).lower() or
+                              "does not exist" in str(e).lower()):
+            try:
+                from core.metadata.events import MetadataEventType, publish_metadata_event
+                # Publish schema mismatch event
+                publish_metadata_event(
+                    event_type=MetadataEventType.VALIDATION_FAILURE,
+                    connection_id=connection_id,
+                    details={
+                        "table_name": table_name,
+                        "reason": "schema_mismatch",
+                        "error": str(e)
+                    },
+                    organization_id=organization_id,
+                    user_id=current_user
+                )
+                logger.info(f"Published schema mismatch event due to exception for table {table_name}")
+            except ImportError:
+                logger.warning("Could not import event system, skipping event publication")
+            except Exception as event_error:
+                logger.error(f"Error publishing schema mismatch event: {str(event_error)}")
+
         return jsonify({"error": str(e)}), 500
 
 
@@ -1132,14 +1210,12 @@ def index():
     return render_template("index.html", version=os.getenv("SPARVI_CORE_VERSION", "Unknown"))
 
 
-# In app.py, find the get_profile function (around line 245)
-# Update it with more detailed logging:
-
 @app.route("/api/profile", methods=["GET"])
 @token_required
 def get_profile(current_user, organization_id):
     connection_string = request.args.get("connection_string", os.getenv("DEFAULT_CONNECTION_STRING"))
     table_name = request.args.get("table", "employees")
+    connection_id = request.args.get("connection_id")  # Add this to capture connection_id
 
     # Explicitly set include_samples to false - no row data in profiles
     include_samples = False  # Override to always be false regardless of request
@@ -1235,6 +1311,28 @@ def get_profile(current_user, organization_id):
             logger.info(f"Profile save result: {profile_id}")
             force_gc()
 
+            # After successfully saving the profile, publish a PROFILE_COMPLETION event if we have connection_id
+            if profile_id and connection_id:
+                try:
+                    from core.metadata.events import MetadataEventType, publish_metadata_event
+                    # Publish event for metadata update
+                    publish_metadata_event(
+                        event_type=MetadataEventType.PROFILE_COMPLETION,
+                        connection_id=connection_id,
+                        details={
+                            "table_name": table_name,
+                            "profile_id": profile_id
+                        },
+                        organization_id=organization_id,
+                        user_id=current_user
+                    )
+                    logger.info(f"Published profile completion event for table {table_name}")
+                except ImportError:
+                    logger.warning("Could not import event system, skipping event publication")
+                except Exception as e:
+                    logger.error(f"Error publishing profile completion event: {str(e)}")
+                    logger.error(traceback.format_exc())
+
             # Now that we have the profile_id, we can run validations with it
             if profile_id and run_validations_after_profile:
                 logger.info(f"Automatically running validations for profile {profile_id}")
@@ -1242,6 +1340,7 @@ def get_profile(current_user, organization_id):
                     validation_data = {
                         "table": table_name,
                         "connection_string": connection_string,
+                        "connection_id": connection_id,  # Pass connection_id for event publishing
                         "profile_history_id": profile_id  # Pass the profile ID
                     }
                     validation_results = run_validation_rules_internal(current_user, organization_id, validation_data)
@@ -1273,7 +1372,8 @@ def get_profile(current_user, organization_id):
     except Exception as e:
         logger.error(f"Error profiling table: {str(e)}")
         traceback.print_exc()  # Print the full traceback to your console
-        return jsonify({"error": str(e)}), 500
+        logger.info(f"About to return response for profile of table {table_name}")
+        return jsonify(result)
 
 @app.route("/api/validations/<rule_id>", methods=["PUT"])
 @token_required
@@ -3847,13 +3947,8 @@ def get_metadata_tasks(current_user, organization_id, connection_id):
 def refresh_metadata(current_user, organization_id, connection_id):
     """Trigger a metadata refresh based on event or user request"""
     try:
-        # Make sure task manager is initialized
-        if metadata_task_manager is None:
-            init_metadata_task_manager()
-
         # Get refresh parameters
         data = request.get_json() or {}
-        event_type = data.get("event_type", "user_request")
         metadata_type = data.get("metadata_type", "schema")
         table_name = data.get("table_name")
 
@@ -3869,14 +3964,17 @@ def refresh_metadata(current_user, organization_id, connection_id):
             logger.error(f"Connection not found or access denied: {connection_id}")
             return jsonify({"error": "Connection not found or access denied"}), 404
 
-        # Prepare event details
-        details = {
-            "metadata_type": metadata_type,
-            "table_name": table_name
-        }
-
-        # Handle the metadata event
-        task_id = metadata_task_manager.handle_metadata_event(event_type, connection_id, details)
+        # Publish a USER_REQUEST event
+        task_id = publish_metadata_event(
+            event_type=MetadataEventType.USER_REQUEST,
+            connection_id=connection_id,
+            details={
+                "metadata_type": metadata_type,
+                "table_name": table_name
+            },
+            organization_id=organization_id,
+            user_id=current_user
+        )
 
         if task_id:
             return jsonify({
@@ -3885,10 +3983,30 @@ def refresh_metadata(current_user, organization_id, connection_id):
                 "message": f"Scheduled metadata refresh for {metadata_type}"
             })
         else:
-            return jsonify({
-                "status": "no_action",
-                "message": "No refresh action taken"
-            })
+            # If event publishing didn't create a task, try direct method
+            if metadata_task_manager is None:
+                init_metadata_task_manager()
+
+            # Prepare event details
+            details = {
+                "metadata_type": metadata_type,
+                "table_name": table_name
+            }
+
+            # Try to handle the event directly
+            task_id = metadata_task_manager.handle_metadata_event("USER_REQUEST", connection_id, details)
+
+            if task_id:
+                return jsonify({
+                    "task_id": task_id,
+                    "status": "scheduled",
+                    "message": f"Scheduled metadata refresh for {metadata_type}"
+                })
+            else:
+                return jsonify({
+                    "status": "no_action",
+                    "message": "No refresh action needed at this time"
+                })
 
     except Exception as e:
         logger.error(f"Error refreshing metadata: {str(e)}")
@@ -4075,6 +4193,201 @@ def get_metadata_task_status(current_user, organization_id, connection_id, task_
 
     except Exception as e:
         logger.error(f"Error getting metadata task status: {str(e)}")
+        logger.error(traceback.format_exc())
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/connections/<connection_id>/schema/detect-changes", methods=["POST"])
+@token_required
+def detect_schema_changes(current_user, organization_id, connection_id):
+    """Detect schema changes for a connection"""
+    try:
+        # Check access to connection
+        supabase_mgr = SupabaseManager()
+        connection_check = supabase_mgr.supabase.table("database_connections") \
+            .select("*") \
+            .eq("id", connection_id) \
+            .eq("organization_id", organization_id) \
+            .execute()
+
+        if not connection_check.data or len(connection_check.data) == 0:
+            logger.error(f"Connection not found or access denied: {connection_id}")
+            return jsonify({"error": "Connection not found or access denied"}), 404
+
+        connection = connection_check.data[0]
+
+        # Create connector for this connection
+        from core.metadata.connector_factory import ConnectorFactory
+        connector_factory = ConnectorFactory(supabase_mgr)
+
+        # Create collector and storage service
+        connector = connector_factory.create_connector(connection)
+        connector.connect()
+
+        from core.metadata.collector import MetadataCollector
+        from core.metadata.storage_service import MetadataStorageService
+
+        collector = MetadataCollector(connection_id, connector)
+        storage_service = MetadataStorageService()
+
+        # Collect current schema
+        current_schema = {
+            "tables": []
+        }
+
+        # Get table list (limited to 50 tables for performance)
+        tables = collector.collect_table_list()[:50]
+
+        # Collect column metadata for each table
+        for table_name in tables:
+            try:
+                columns = collector.collect_columns(table_name)
+                table_data = {
+                    "name": table_name,
+                    "columns": columns,
+                    "column_count": len(columns)
+                }
+                current_schema["tables"].append(table_data)
+            except Exception as e:
+                logger.warning(f"Error collecting columns for {table_name}: {str(e)}")
+
+        # Get previous schema from storage
+        previous_schema = None
+        stored_metadata = storage_service.get_metadata(connection_id, "tables")
+
+        if stored_metadata and "metadata" in stored_metadata:
+            previous_schema = stored_metadata["metadata"]
+
+            # Compare schemas to find changes
+            changes = []
+
+            # Extract table names from both schemas
+            current_tables = {table["name"]: table for table in current_schema["tables"]}
+            previous_tables = {}
+
+            if "tables" in previous_schema:
+                previous_tables = {table["name"]: table for table in previous_schema["tables"]}
+
+            # Find added tables
+            for table_name in set(current_tables.keys()) - set(previous_tables.keys()):
+                changes.append({
+                    "type": "table_added",
+                    "table": table_name,
+                    "timestamp": datetime.datetime.now().isoformat()
+                })
+
+            # Find removed tables
+            for table_name in set(previous_tables.keys()) - set(current_tables.keys()):
+                changes.append({
+                    "type": "table_removed",
+                    "table": table_name,
+                    "timestamp": datetime.datetime.now().isoformat()
+                })
+
+            # Check for column changes in common tables
+            for table_name in set(current_tables.keys()) & set(previous_tables.keys()):
+                # Get columns for this table in both schemas
+                current_columns = {col["name"]: col for col in current_tables[table_name].get("columns", [])}
+                previous_columns = {col["name"]: col for col in previous_tables[table_name].get("columns", [])}
+
+                # Find added columns
+                for col_name in set(current_columns.keys()) - set(previous_columns.keys()):
+                    col_info = current_columns[col_name]
+                    changes.append({
+                        "type": "column_added",
+                        "table": table_name,
+                        "column": col_name,
+                        "details": {
+                            "type": col_info.get("type", "unknown"),
+                            "nullable": col_info.get("nullable", None)
+                        },
+                        "timestamp": datetime.datetime.now().isoformat()
+                    })
+
+                # Find removed columns
+                for col_name in set(previous_columns.keys()) - set(current_columns.keys()):
+                    col_info = previous_columns[col_name]
+                    changes.append({
+                        "type": "column_removed",
+                        "table": table_name,
+                        "column": col_name,
+                        "details": {
+                            "type": col_info.get("type", "unknown")
+                        },
+                        "timestamp": datetime.datetime.now().isoformat()
+                    })
+
+                # Find column type or property changes
+                for col_name in set(current_columns.keys()) & set(previous_columns.keys()):
+                    current_col = current_columns[col_name]
+                    previous_col = previous_columns[col_name]
+
+                    # Check for type changes
+                    if str(current_col.get("type", "")) != str(previous_col.get("type", "")):
+                        changes.append({
+                            "type": "column_type_changed",
+                            "table": table_name,
+                            "column": col_name,
+                            "details": {
+                                "previous_type": previous_col.get("type", "unknown"),
+                                "new_type": current_col.get("type", "unknown")
+                            },
+                            "timestamp": datetime.datetime.now().isoformat()
+                        })
+
+            # If changes were detected, publish events and store new schema
+            if changes:
+                # Store the new schema
+                storage_service.store_tables_metadata(connection_id, current_schema["tables"])
+
+                # Publish events for each affected table
+                task_ids = []
+                affected_tables = set()
+
+                for change in changes:
+                    if "table" in change:
+                        affected_tables.add(change["table"])
+
+                for table_name in affected_tables:
+                    # Get changes for this table
+                    table_changes = [c for c in changes if c.get("table") == table_name]
+
+                    # Publish a schema change event
+                    task_id = publish_metadata_event(
+                        event_type=MetadataEventType.SCHEMA_CHANGE,
+                        connection_id=connection_id,
+                        details={
+                            "table_name": table_name,
+                            "changes": [c["type"] for c in table_changes]
+                        },
+                        organization_id=organization_id,
+                        user_id=current_user
+                    )
+
+                    if task_id:
+                        task_ids.append(task_id)
+
+                return jsonify({
+                    "changes_detected": len(changes),
+                    "changes": changes,
+                    "tasks_created": len(task_ids)
+                })
+            else:
+                return jsonify({
+                    "changes_detected": 0,
+                    "message": "No schema changes detected"
+                })
+        else:
+            # No previous schema to compare, just store current schema
+            storage_service.store_tables_metadata(connection_id, current_schema["tables"])
+
+            return jsonify({
+                "changes_detected": 0,
+                "message": "Initial schema collected, no changes to detect"
+            })
+
+    except Exception as e:
+        logger.error(f"Error detecting schema changes: {str(e)}")
         logger.error(traceback.format_exc())
         return jsonify({"error": str(e)}), 500
 

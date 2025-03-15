@@ -125,18 +125,40 @@ class MetadataStorageService:
                     return super(CustomJSONEncoder, self).default(obj)
 
             # First convert to JSON string with custom encoder, then parse back to dict
-            # This effectively replaces all Decimal objects with floats
             metadata_json = json.dumps(metadata, cls=CustomJSONEncoder)
             metadata = json.loads(metadata_json)
 
-            # Upsert into connection_metadata
-            response = self.supabase.table("connection_metadata").upsert({
-                "connection_id": connection_id,
-                "metadata_type": "statistics",
-                "metadata": metadata,
-                "collected_at": datetime.datetime.now().isoformat(),
-                "refresh_frequency": "1 day"
-            }).execute()
+            # Use upsert with ON CONFLICT DO UPDATE
+            try:
+                # Check if record exists first
+                check_response = self.supabase.table("connection_metadata") \
+                    .select("id") \
+                    .eq("connection_id", connection_id) \
+                    .eq("metadata_type", "statistics") \
+                    .execute()
+
+                if check_response.data and len(check_response.data) > 0:
+                    # Record exists, update it
+                    response = self.supabase.table("connection_metadata") \
+                        .update({
+                        "metadata": metadata,
+                        "collected_at": datetime.datetime.now().isoformat()
+                    }) \
+                        .eq("connection_id", connection_id) \
+                        .eq("metadata_type", "statistics") \
+                        .execute()
+                else:
+                    # Record doesn't exist, insert it
+                    response = self.supabase.table("connection_metadata").insert({
+                        "connection_id": connection_id,
+                        "metadata_type": "statistics",
+                        "metadata": metadata,
+                        "collected_at": datetime.datetime.now().isoformat(),
+                        "refresh_frequency": "1 day"
+                    }).execute()
+            except Exception as e:
+                logger.error(f"Error upserting statistics metadata: {str(e)}")
+                return False
 
             if not response.data:
                 logger.error("Failed to store statistics metadata")
