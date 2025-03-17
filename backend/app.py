@@ -4391,6 +4391,254 @@ def detect_schema_changes(current_user, organization_id, connection_id):
         logger.error(traceback.format_exc())
         return jsonify({"error": str(e)}), 500
 
+@app.route("/api/connections/<connection_id>/analytics/change-frequency", methods=["GET"])
+@token_required
+def get_change_frequency(current_user, organization_id, connection_id):
+    """Get change frequency analytics for metadata objects"""
+    try:
+        # Check access to connection
+        supabase_mgr = SupabaseManager()
+        connection_check = supabase_mgr.supabase.table("database_connections") \
+            .select("*") \
+            .eq("id", connection_id) \
+            .eq("organization_id", organization_id) \
+            .execute()
+
+        if not connection_check.data or len(connection_check.data) == 0:
+            logger.error(f"Connection not found or access denied: {connection_id}")
+            return jsonify({"error": "Connection not found or access denied"}), 404
+
+        # Get query parameters
+        object_type = request.args.get("object_type", "table_metadata")
+        object_name = request.args.get("object_name")
+        days = request.args.get("days", 30, type=int)
+
+        # Validate parameters
+        if not object_name:
+            return jsonify({"error": "object_name parameter is required"}), 400
+
+        # Create analytics service
+        from core.metadata.change_analytics import MetadataChangeAnalytics
+        analytics = MetadataChangeAnalytics(supabase_mgr)
+
+        # Get frequency data
+        frequency_data = analytics.get_change_frequency(
+            connection_id=connection_id,
+            object_type=object_type,
+            object_name=object_name,
+            time_period_days=days
+        )
+
+        return jsonify(frequency_data)
+
+    except Exception as e:
+        logger.error(f"Error getting change frequency: {str(e)}")
+        logger.error(traceback.format_exc())
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/connections/<connection_id>/analytics/refresh-suggestion", methods=["GET"])
+@token_required
+def get_refresh_suggestion(current_user, organization_id, connection_id):
+    """Get refresh interval suggestion based on change analytics"""
+    try:
+        # Check access to connection
+        supabase_mgr = SupabaseManager()
+        connection_check = supabase_mgr.supabase.table("database_connections") \
+            .select("*") \
+            .eq("id", connection_id) \
+            .eq("organization_id", organization_id) \
+            .execute()
+
+        if not connection_check.data or len(connection_check.data) == 0:
+            logger.error(f"Connection not found or access denied: {connection_id}")
+            return jsonify({"error": "Connection not found or access denied"}), 404
+
+        # Get query parameters
+        object_type = request.args.get("object_type", "table_metadata")
+        object_name = request.args.get("object_name")
+        current_interval = request.args.get("current_interval", 24, type=int)
+
+        # Validate parameters
+        if not object_name:
+            return jsonify({"error": "object_name parameter is required"}), 400
+
+        # Create analytics service
+        from core.metadata.change_analytics import MetadataChangeAnalytics
+        analytics = MetadataChangeAnalytics(supabase_mgr)
+
+        # Get suggestion
+        suggestion = analytics.suggest_refresh_interval(
+            connection_id=connection_id,
+            object_type=object_type,
+            object_name=object_name,
+            current_interval_hours=current_interval
+        )
+
+        return jsonify(suggestion)
+
+    except Exception as e:
+        logger.error(f"Error getting refresh suggestion: {str(e)}")
+        logger.error(traceback.format_exc())
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/connections/<connection_id>/analytics/high-impact", methods=["GET"])
+@token_required
+def get_high_impact_objects(current_user, organization_id, connection_id):
+    """Get objects with high change frequency"""
+    try:
+        # Check access to connection
+        supabase_mgr = SupabaseManager()
+        connection_check = supabase_mgr.supabase.table("database_connections") \
+            .select("*") \
+            .eq("id", connection_id) \
+            .eq("organization_id", organization_id) \
+            .execute()
+
+        if not connection_check.data or len(connection_check.data) == 0:
+            logger.error(f"Connection not found or access denied: {connection_id}")
+            return jsonify({"error": "Connection not found or access denied"}), 404
+
+        # Get query parameters
+        limit = request.args.get("limit", 10, type=int)
+
+        # Create analytics service
+        from core.metadata.change_analytics import MetadataChangeAnalytics
+        analytics = MetadataChangeAnalytics(supabase_mgr)
+
+        # Get high-impact objects
+        objects = analytics.get_high_impact_objects(
+            connection_id=connection_id,
+            limit=limit
+        )
+
+        return jsonify({"objects": objects, "count": len(objects)})
+
+    except Exception as e:
+        logger.error(f"Error getting high-impact objects: {str(e)}")
+        logger.error(traceback.format_exc())
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/connections/<connection_id>/analytics/dashboard", methods=["GET"])
+@token_required
+def get_change_analytics_dashboard(current_user, organization_id, connection_id):
+    """Get comprehensive analytics dashboard data"""
+    try:
+        # Check access to connection
+        supabase_mgr = SupabaseManager()
+        connection_check = supabase_mgr.supabase.table("database_connections") \
+            .select("*") \
+            .eq("id", connection_id) \
+            .eq("organization_id", organization_id) \
+            .execute()
+
+        if not connection_check.data or len(connection_check.data) == 0:
+            logger.error(f"Connection not found or access denied: {connection_id}")
+            return jsonify({"error": "Connection not found or access denied"}), 404
+
+        # Create analytics service
+        from core.metadata.change_analytics import MetadataChangeAnalytics
+        analytics = MetadataChangeAnalytics(supabase_mgr)
+
+        # Get high-impact objects
+        high_impact_objects = analytics.get_high_impact_objects(
+            connection_id=connection_id,
+            limit=5
+        )
+
+        # Get total checks and changes
+        sql = f"""
+        SELECT 
+            COUNT(*) as total_checks,
+            SUM(CASE WHEN change_detected = true THEN 1 ELSE 0 END) as total_changes,
+            COUNT(DISTINCT object_name) as unique_objects,
+            MAX(check_timestamp) as last_check
+        FROM metadata_change_analytics
+        WHERE connection_id = '{connection_id}'
+        AND check_timestamp > CURRENT_TIMESTAMP - INTERVAL '30 days';
+        """
+
+        stats_response = supabase_mgr.supabase.rpc("exec_sql", {"sql_query": sql}).execute()
+        overall_stats = stats_response.data[0] if stats_response.data else {
+            "total_checks": 0,
+            "total_changes": 0,
+            "unique_objects": 0,
+            "last_check": None
+        }
+
+        # Get change frequency distribution
+        sql = f"""
+        WITH object_changes AS (
+            SELECT 
+                object_name,
+                object_type,
+                COUNT(*) as checks,
+                SUM(CASE WHEN change_detected = true THEN 1 ELSE 0 END) as changes,
+                (SUM(CASE WHEN change_detected = true THEN 1 ELSE 0 END)::float / 
+                 NULLIF(COUNT(*), 0)::float) as change_ratio
+            FROM metadata_change_analytics
+            WHERE connection_id = '{connection_id}'
+            AND check_timestamp > CURRENT_TIMESTAMP - INTERVAL '30 days'
+            GROUP BY object_name, object_type
+            HAVING COUNT(*) >= 5
+        )
+        SELECT 
+            CASE 
+                WHEN change_ratio >= 0.5 THEN 'high'
+                WHEN change_ratio >= 0.1 THEN 'medium'
+                ELSE 'low'
+            END as frequency,
+            COUNT(*) as object_count
+        FROM object_changes
+        GROUP BY frequency
+        ORDER BY frequency;
+        """
+
+        freq_response = supabase_mgr.supabase.rpc("exec_sql", {"sql_query": sql}).execute()
+        frequency_distribution = freq_response.data if freq_response.data else []
+
+        # Get historical trend of changes
+        sql = f"""
+        WITH daily_changes AS (
+            SELECT 
+                DATE_TRUNC('day', check_timestamp) as day,
+                COUNT(*) as checks,
+                SUM(CASE WHEN change_detected = true THEN 1 ELSE 0 END) as changes
+            FROM metadata_change_analytics
+            WHERE connection_id = '{connection_id}'
+            AND check_timestamp > CURRENT_TIMESTAMP - INTERVAL '30 days'
+            GROUP BY day
+            ORDER BY day
+        )
+        SELECT 
+            TO_CHAR(day, 'YYYY-MM-DD') as date,
+            checks,
+            changes,
+            (changes::float / NULLIF(checks, 0)::float * 100) as change_percentage
+        FROM daily_changes
+        ORDER BY day;
+        """
+
+        trend_response = supabase_mgr.supabase.rpc("exec_sql", {"sql_query": sql}).execute()
+        change_trend = trend_response.data if trend_response.data else []
+
+        # Build dashboard data
+        dashboard = {
+            "high_impact_objects": high_impact_objects,
+            "overall_stats": overall_stats,
+            "frequency_distribution": frequency_distribution,
+            "change_trend": change_trend
+        }
+
+        return jsonify(dashboard)
+
+    except Exception as e:
+        logger.error(f"Error getting analytics dashboard: {str(e)}")
+        logger.error(traceback.format_exc())
+        return jsonify({"error": str(e)}), 500
+
 # @app.before_request
 # def log_memory_before():
 #     memory_usage = psutil.virtual_memory()

@@ -605,3 +605,151 @@ class MetadataWorker:
 
             # Task not found
             return {"error": "Task not found"}
+
+
+    def _record_changes(self, connection_id, object_type, object_name, changes, refresh_interval_hours=24):
+        """
+        Record changes for analytics purposes
+
+        Args:
+            connection_id: Connection ID
+            object_type: Type of metadata object
+            object_name: Name of the object
+            changes: Changes detected (or None if no changes)
+            refresh_interval_hours: Interval used for this refresh
+        """
+        try:
+            # Import dynamically to avoid circular imports
+            try:
+                from .change_analytics import MetadataChangeAnalytics
+                analytics = MetadataChangeAnalytics(self.connector_factory.supabase_manager)
+
+                # Get organization ID if possible
+                organization_id = None
+                if self.connector_factory and self.connector_factory.supabase_manager:
+                    try:
+                        connection = self.connector_factory.supabase_manager.get_connection(connection_id)
+                        if connection and 'organization_id' in connection:
+                            organization_id = connection['organization_id']
+                    except Exception as e:
+                        logger.warning(f"Could not get organization ID: {str(e)}")
+
+                # Record change detection
+                change_detected = changes is not None and len(changes) > 0
+
+                analytics.record_change_detection(
+                    connection_id=connection_id,
+                    object_type=object_type,
+                    object_name=object_name,
+                    change_detected=change_detected,
+                    refresh_interval_hours=refresh_interval_hours,
+                    organization_id=organization_id,
+                    details={"changes": changes} if changes else None
+                )
+
+                logger.info(f"Recorded change analytics for {object_type} {object_name}")
+
+            except ImportError:
+                logger.warning("MetadataChangeAnalytics not available, skipping change recording")
+            except Exception as e:
+                logger.warning(f"Could not record change analytics: {str(e)}")
+        except Exception as e:
+            logger.error(f"Error recording changes: {str(e)}")
+
+    # Add this to the _process_task method in your MetadataWorker
+    # Find the block that processes 'table_metadata' tasks and add this code:
+    """
+    elif task.task_type == "table_metadata":
+        # Collect metadata for specific table
+        table_name = task.params.get("table_name")
+        if not table_name:
+            raise ValueError("table_name parameter is required")
+
+        # Collect detailed table metadata
+        metadata = collector.collect_table_metadata_sync(table_name)
+
+        # Check for changes from previous metadata
+        previous_metadata = self.storage_service.get_table_metadata(connection_id, table_name)
+        changes = self._compare_metadata(metadata, previous_metadata)
+
+        # Record changes for analytics
+        self._record_changes(
+            connection_id=connection_id,
+            object_type="table_metadata",
+            object_name=table_name,
+            changes=changes,
+            refresh_interval_hours=24
+        )
+
+        # Store in database
+        self._store_table_metadata(connection_id, table_name, metadata)
+
+        return {
+            "table": table_name,
+            "columns": len(metadata.get("columns", [])),
+            "changes_detected": len(changes) if changes else 0
+        }
+    """
+
+    # Add a helper method to compare metadata:
+    def _compare_metadata(self, new_metadata, old_metadata):
+        """
+        Compare new and old metadata to detect changes
+
+        Args:
+            new_metadata: New metadata dictionary
+            old_metadata: Old metadata dictionary
+
+        Returns:
+            List of changes or None if no changes detected
+        """
+        if not old_metadata:
+            return ["initial_collection"]  # First time collection
+
+        changes = []
+
+        # Compare basic attributes
+        for attr in ["row_count", "column_count"]:
+            old_value = old_metadata.get(attr)
+            new_value = new_metadata.get(attr)
+
+            if old_value != new_value:
+                changes.append({
+                    "type": f"{attr}_changed",
+                    "old_value": old_value,
+                    "new_value": new_value
+                })
+
+        # Compare columns
+        old_columns = {col["name"]: col for col in old_metadata.get("columns", [])}
+        new_columns = {col["name"]: col for col in new_metadata.get("columns", [])}
+
+        # Find added columns
+        for col_name in set(new_columns.keys()) - set(old_columns.keys()):
+            changes.append({
+                "type": "column_added",
+                "column": col_name
+            })
+
+        # Find removed columns
+        for col_name in set(old_columns.keys()) - set(new_columns.keys()):
+            changes.append({
+                "type": "column_removed",
+                "column": col_name
+            })
+
+        # Find changed columns
+        for col_name in set(old_columns.keys()) & set(new_columns.keys()):
+            old_col = old_columns[col_name]
+            new_col = new_columns[col_name]
+
+            for attr in ["type", "nullable"]:
+                if old_col.get(attr) != new_col.get(attr):
+                    changes.append({
+                        "type": f"column_{attr}_changed",
+                        "column": col_name,
+                        "old_value": old_col.get(attr),
+                        "new_value": new_col.get(attr)
+                    })
+
+        return changes if changes else None

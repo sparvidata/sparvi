@@ -563,48 +563,96 @@ class MetadataTaskManager:
             logger.error(f"Error getting organizations: {str(e)}")
             return []
 
-    def determine_refresh_strategy(self, object_type, last_refreshed=None, change_frequency="medium"):
+    def determine_refresh_strategy(self, object_type, object_name=None, last_refreshed=None, change_frequency=None):
         """
         Determine optimal refresh strategy for metadata
 
         Args:
-            object_type: Type of metadata object (table_list, column_metadata, etc.)
-            last_refreshed: When the metadata was last refreshed
-            change_frequency: Historical change frequency (low, medium, high)
+            object_type: Type of metadata object (table_list, column_metadata, statistics, etc.)
+            object_name: Name of the object (optional)
+            last_refreshed: When the metadata was last refreshed (ISO format datetime string)
+            change_frequency: Historical change frequency (low, medium, high) or None to calculate dynamically
 
         Returns:
             Dictionary with schedule and priority
         """
         # Default strategies by object type
         strategies = {
-            "table_list": {"schedule": "daily", "priority": "high"},
-            "column_metadata": {"schedule": "weekly", "priority": "medium"},
-            "statistics": {"schedule": "weekly", "priority": "low"},
-            "relationships": {"schedule": "weekly", "priority": "medium"},
-            "usage_patterns": {"schedule": "monthly", "priority": "low"}
+            "table_list": {"schedule": "daily", "priority": "high", "hours": 24},
+            "column_metadata": {"schedule": "weekly", "priority": "medium", "hours": 168},
+            "statistics": {"schedule": "weekly", "priority": "low", "hours": 168},
+            "relationships": {"schedule": "weekly", "priority": "medium", "hours": 168},
+            "usage_patterns": {"schedule": "monthly", "priority": "low", "hours": 720}
         }
 
         # If object type is not recognized, use default strategy
         if object_type not in strategies:
-            return {"schedule": "weekly", "priority": "low"}
+            return {"schedule": "weekly", "priority": "low", "hours": 168}
 
         # Get base strategy
         strategy = strategies[object_type].copy()
+
+        # Try to dynamically determine change frequency if not provided
+        try:
+            if change_frequency is None and object_name and hasattr(self, 'connection_id'):
+                # Import dynamically to avoid circular imports
+                try:
+                    from .change_analytics import MetadataChangeAnalytics
+                    analytics = MetadataChangeAnalytics(self.supabase_manager)
+
+                    # Get current interval from strategy
+                    current_interval_hours = strategy.get("hours", 24)
+
+                    # Get refresh suggestion
+                    suggestion = analytics.suggest_refresh_interval(
+                        self.connection_id,
+                        object_type,
+                        object_name,
+                        current_interval_hours
+                    )
+
+                    # Update change frequency based on analytics
+                    change_frequency = suggestion.get("frequency")
+
+                    # Update hours based on suggestion
+                    strategy["hours"] = suggestion.get("suggested_interval_hours", current_interval_hours)
+
+                    # Map hours to schedule
+                    if strategy["hours"] <= 24:
+                        strategy["schedule"] = "daily"
+                    elif strategy["hours"] <= 168:
+                        strategy["schedule"] = "weekly"
+                    else:
+                        strategy["schedule"] = "monthly"
+
+                    logger.info(f"Updated refresh strategy for {object_type} {object_name} "
+                                f"to {strategy['schedule']} ({strategy['hours']} hours) "
+                                f"based on analytics")
+
+                except (ImportError, Exception) as e:
+                    logger.warning(f"Could not use change analytics for refresh strategy: {str(e)}")
+        except Exception as e:
+            # Log but continue with manual strategy
+            logger.warning(f"Error in dynamic strategy determination: {str(e)}")
 
         # Adjust based on change frequency
         if change_frequency == "high":
             # More frequent refresh for high-change objects
             if strategy["schedule"] == "monthly":
                 strategy["schedule"] = "weekly"
+                strategy["hours"] = min(strategy["hours"], 168)
             elif strategy["schedule"] == "weekly":
                 strategy["schedule"] = "daily"
+                strategy["hours"] = min(strategy["hours"], 24)
             strategy["priority"] = "high"
         elif change_frequency == "low":
             # Less frequent refresh for low-change objects
             if strategy["schedule"] == "daily":
                 strategy["schedule"] = "weekly"
+                strategy["hours"] = max(strategy["hours"], 168)
             elif strategy["schedule"] == "weekly":
                 strategy["schedule"] = "monthly"
+                strategy["hours"] = max(strategy["hours"], 720)
 
         # Adjust if last refresh was too recent (within a day) - prioritize less
         if last_refreshed:
@@ -612,12 +660,22 @@ class MetadataTaskManager:
                 refresh_date = datetime.fromisoformat(last_refreshed.replace('Z', '+00:00'))
                 now = datetime.now()
 
-                # If refreshed within the last day, lower priority
-                if (now - refresh_date).total_seconds() < 86400:
+                # If refreshed very recently, lower priority
+                age_hours = (now - refresh_date).total_seconds() / 3600
+
+                # If refreshed less than 20% of the way through the schedule, lower priority
+                if age_hours < (strategy["hours"] * 0.2):
                     if strategy["priority"] == "high":
                         strategy["priority"] = "medium"
                     elif strategy["priority"] == "medium":
                         strategy["priority"] = "low"
+
+                # If nearly due for refresh (>80% of schedule elapsed), raise priority
+                elif age_hours > (strategy["hours"] * 0.8):
+                    if strategy["priority"] == "low":
+                        strategy["priority"] = "medium"
+                    elif strategy["priority"] == "medium":
+                        strategy["priority"] = "high"
             except:
                 pass
 
