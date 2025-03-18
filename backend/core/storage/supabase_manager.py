@@ -6,6 +6,7 @@ import json
 from dotenv import load_dotenv
 from supabase import create_client, Client
 import logging
+import threading
 
 # Configure logging
 logging.basicConfig(
@@ -18,12 +19,36 @@ logger = logging.getLogger('supabase_manager')
 # Load environment variables
 load_dotenv()
 
+class SupabaseSingleton:
+    """Singleton implementation for Supabase client"""
+    _instance = None
+    _lock = threading.Lock()
+
+    @classmethod
+    def get_instance(cls):
+        """Thread-safe method to get or create the Supabase client instance"""
+        if cls._instance is None:
+            with cls._lock:
+                # Double-checked locking
+                if cls._instance is None:
+                    supabase_url = os.getenv("SUPABASE_URL")
+                    supabase_key = os.getenv("SUPABASE_SERVICE_KEY")
+
+                    if not supabase_url or not supabase_key:
+                        logger.error("Missing Supabase configuration (URL or key)")
+                        raise ValueError("Missing Supabase configuration. Check environment variables.")
+
+                    cls._instance = create_client(supabase_url, supabase_key)
+                    logger.info("Supabase singleton client initialized")
+
+        return cls._instance
 
 class SupabaseManager:
     """Manager class for Supabase operations, handling data storage and retrieval."""
 
     def __init__(self):
-        """Initialize the Supabase client"""
+        """Initialize the Supabase client using singleton"""
+        self.supabase: Client = SupabaseSingleton.get_instance()
         supabase_url = os.getenv("SUPABASE_URL")
         supabase_key = os.getenv("SUPABASE_SERVICE_KEY")
 
@@ -33,6 +58,11 @@ class SupabaseManager:
 
         self.supabase: Client = create_client(supabase_url, supabase_key)
         logger.info("Supabase client initialized")
+
+    @classmethod
+    def reset_client(cls):
+        """Reset the Supabase client instance (useful for testing or reconnection)"""
+        SupabaseSingleton._instance = None
 
     def get_user_organization(self, user_id: str) -> Optional[str]:
         """Get the organization ID for a user"""
@@ -80,7 +110,7 @@ class SupabaseManager:
                 .select("*") \
                 .eq("organization_id", organization_id) \
                 .eq("table_name", table_name) \
-                .order("collected_at", {"ascending": False}) \
+                .order("collected_at", desc=True) \
                 .limit(1) \
                 .execute()
 
@@ -100,7 +130,7 @@ class SupabaseManager:
                 .select("collected_at, data") \
                 .eq("organization_id", organization_id) \
                 .eq("table_name", table_name) \
-                .order("collected_at", {"ascending": False}) \
+                .order("collected_at", desc=True) \
                 .limit(num_periods) \
                 .execute()
 
@@ -158,7 +188,7 @@ class SupabaseManager:
                 .select("id") \
                 .eq("organization_id", organization_id) \
                 .eq("table_name", table_name) \
-                .order("collected_at", {"ascending": False}) \
+                .order("collected_at", desc=True) \
                 .execute()
 
             if not response.data or len(response.data) <= keep_latest:

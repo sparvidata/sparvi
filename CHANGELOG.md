@@ -2,6 +2,16 @@
 
 All notable changes to Sparvi will be documented in this file.
 
+## [0.5.1] - 2025-03-18
+### Added
+- None
+
+### Changed
+- None
+
+### Fixed
+- Fixing some redundant supabase mgr initializations
+
 ## [0.5.0] - 2025-03-17
 ### Added
 - None

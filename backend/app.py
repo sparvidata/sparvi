@@ -57,7 +57,14 @@ def init_metadata_task_manager():
                 event_publisher.set_task_manager(metadata_task_manager)
                 logger.info("Connected event publisher to metadata task manager")
             except ImportError:
-                logger.warning("Could not import event publisher")
+                # Define a simple stub event_publisher
+                class EventPublisher:
+                    @staticmethod
+                    def set_task_manager(task_manager):
+                        logger.warning("Stub event publisher used - no actual event publishing")
+
+                event_publisher = EventPublisher()
+                logger.warning("Could not import event publisher, using stub implementation")
             except Exception as e:
                 logger.error(f"Error connecting to event system: {str(e)}")
     except Exception as e:
@@ -2507,9 +2514,11 @@ def after_request(response):
     else:
         response.headers.set('Access-Control-Allow-Origin', 'https://cloud.sparvi.io')
 
-    response.headers.set('Access-Control-Allow-Headers', 'Content-Type,Authorization')
+    response.headers.set('Access-Control-Allow-Headers', 'Content-Type,Authorization,X-Requested-With')
     response.headers.set('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS')
     response.headers.set('Access-Control-Allow-Credentials', 'true')
+    # Cache preflight requests to reduce OPTIONS calls
+    response.headers.set('Access-Control-Max-Age', '3600')  # 1 hour
     return response
 
 @app.route("/api/connections/<connection_id>/tables/<table_name>/columns", methods=["GET"])
