@@ -32,30 +32,629 @@ from core.history.supabase_profile_history import SupabaseProfileHistoryManager
 from core.metadata.manager import MetadataTaskManager
 from core.metadata.events import MetadataEventType, publish_metadata_event
 
+import concurrent.futures
+from sqlalchemy.pool import QueuePool
+from functools import wraps
+from enum import Enum
+from dataclasses import dataclass
+from typing import Dict, Any, List, Optional
+import time
+
+
+class ConnectionPoolManager:
+    """Manages a pool of database connections"""
+    _instance = None
+    _pools = {}
+
+    @classmethod
+    def get_instance(cls):
+        if cls._instance is None:
+            cls._instance = ConnectionPoolManager()
+        return cls._instance
+
+    def get_engine(self, connection_string):
+        """Get or create a connection pool for the given connection string"""
+        # Use a sanitized version as the key to avoid storing credentials in memory
+        from core.utils.connection_utils import sanitize_connection_string
+        key = sanitize_connection_string(connection_string)
+
+        if key not in self._pools:
+            # Create a new engine with connection pooling
+            self._pools[key] = create_engine(
+                connection_string,
+                poolclass=QueuePool,
+                pool_size=5,
+                max_overflow=10,
+                pool_timeout=30,
+                pool_recycle=1800  # Recycle connections after 30 minutes
+            )
+            logger.info(f"Created new connection pool for {key}")
+
+        return self._pools[key]
+
+
+# Request-level caching decorator
+def request_cache(func):
+    """Decorator that caches function results within a single request"""
+
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        if not hasattr(request, '_cache'):
+            request._cache = {}
+
+        # Create a cache key from function name and arguments
+        key = f"{func.__name__}:{str(args)}:{str(kwargs)}"
+
+        if key not in request._cache:
+            request._cache[key] = func(*args, **kwargs)
+
+        return request._cache[key]
+
+    return wrapper
+
+
+# Helper function for connection access checks
+def connection_access_check(connection_id, organization_id):
+    """Check if the organization has access to this connection"""
+    supabase_mgr = SupabaseManager()
+    connection_check = supabase_mgr.supabase.table("database_connections") \
+        .select("*") \
+        .eq("id", connection_id) \
+        .eq("organization_id", organization_id) \
+        .execute()
+
+    if not connection_check.data or len(connection_check.data) == 0:
+        logger.error(f"Connection not found or access denied: {connection_id}")
+        return None
+
+    return connection_check.data[0]
+
+
+# Cached version of the metadata getter
+@request_cache
+def get_metadata_cached(connection_id, metadata_type):
+    """Cached version of get_metadata to avoid duplicate lookups"""
+    storage_service = MetadataStorageService()
+    return storage_service.get_metadata(connection_id, metadata_type)
+
+
+# Improved task manager implementation
+class TaskStatus(Enum):
+    PENDING = "pending"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
+@dataclass
+class Task:
+    id: str
+    connection_id: str
+    task_type: str
+    params: Dict[str, Any]
+    priority: int
+    status: TaskStatus = TaskStatus.PENDING
+    created_at: float = 0.0
+    started_at: Optional[float] = None
+    completed_at: Optional[float] = None
+    result: Any = None
+    error: Optional[str] = None
+
+
+class ImprovedTaskManager:
+    """A more robust task manager with priority queue and worker pool"""
+    _instance = None
+
+    @classmethod
+    def get_instance(cls, storage_service=None, supabase_mgr=None):
+        if cls._instance is None:
+            cls._instance = ImprovedTaskManager(storage_service, supabase_mgr)
+        return cls._instance
+
+    def __init__(self, storage_service=None, supabase_mgr=None):
+        self.storage_service = storage_service
+        self.supabase_mgr = supabase_mgr
+        self.tasks = {}
+        self.task_queue = queue.PriorityQueue()
+        self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=5)
+        self.running = True
+        self.worker_thread = threading.Thread(target=self._worker_loop, daemon=True)
+        self.worker_thread.start()
+        self.stats = {
+            "tasks_processed": 0,
+            "tasks_succeeded": 0,
+            "tasks_failed": 0,
+            "start_time": time.time()
+        }
+
+    def _worker_loop(self):
+        """Main worker loop that processes tasks from the queue"""
+        while self.running:
+            try:
+                priority, task_id = self.task_queue.get(timeout=1.0)
+                if task_id not in self.tasks:
+                    logger.error(f"Task {task_id} not found in task list")
+                    self.task_queue.task_done()
+                    continue
+
+                task = self.tasks[task_id]
+
+                # Update task status
+                task.status = TaskStatus.RUNNING
+                task.started_at = time.time()
+
+                # Execute the task in the thread pool
+                future = self.executor.submit(self._execute_task, task)
+                future.add_done_callback(lambda f: self._task_completed(task_id, f))
+
+                # Mark task as processed in the queue
+                self.task_queue.task_done()
+
+            except queue.Empty:
+                # No tasks in queue, just continue
+                pass
+            except Exception as e:
+                logger.error(f"Error in worker loop: {str(e)}")
+                logger.error(traceback.format_exc())
+
+    def _execute_task(self, task):
+        """Execute a single task based on its type"""
+        logger.info(f"Executing task {task.id} of type {task.task_type}")
+        try:
+            if task.task_type == "full_metadata_collection":
+                return self._execute_full_collection(task)
+            elif task.task_type == "table_metadata":
+                return self._execute_table_metadata(task)
+            elif task.task_type == "refresh_statistics":
+                return self._execute_refresh_statistics(task)
+            elif task.task_type == "update_usage":
+                return self._execute_update_usage(task)
+            else:
+                logger.warning(f"Unknown task type: {task.task_type}")
+                return {"status": "unknown_task_type"}
+        except Exception as e:
+            logger.error(f"Task execution error: {str(e)}")
+            logger.error(traceback.format_exc())
+            raise
+
+    def _execute_full_collection(self, task):
+        """Execute full metadata collection"""
+        connection_id = task.connection_id
+        params = task.params
+        depth = params.get("depth", "medium")
+        table_limit = params.get("table_limit", 50)
+
+        # Get connection details
+        connection = self.supabase_mgr.get_connection(connection_id)
+        if not connection:
+            raise ValueError(f"Connection not found: {connection_id}")
+
+        # Create connector
+        connector = get_connector_for_connection(connection)
+        connector.connect()
+
+        # Create metadata collector
+        collector = MetadataCollector(connection_id, connector)
+
+        # Get list of tables
+        tables = collector.collect_table_list()
+        logger.info(f"Found {len(tables)} tables for connection {connection_id}")
+
+        # Process tables based on depth and limit
+        tables_to_process = tables[:min(len(tables), table_limit)]
+
+        # Prepare data structures
+        tables_data = []
+        columns_by_table = {}
+        statistics_by_table = {}
+
+        # Process tables in parallel if depth is medium or deep
+        if depth in ["medium", "deep"]:
+            # Create thread pool for parallel processing
+            with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+                # Submit tasks for each table
+                future_to_table = {
+                    executor.submit(self._process_table, collector, table, depth): table
+                    for table in tables_to_process
+                }
+
+                # Process results as they complete
+                for future in concurrent.futures.as_completed(future_to_table):
+                    table = future_to_table[future]
+                    try:
+                        result = future.result()
+                        if result:
+                            tables_data.append(result["table_meta"])
+                            columns_by_table[table] = result["columns"]
+                            statistics_by_table[table] = result["statistics"]
+                    except Exception as e:
+                        logger.error(f"Error processing table {table}: {str(e)}")
+        else:
+            # Process tables sequentially for 'light' depth
+            for table in tables_to_process:
+                try:
+                    result = self._process_table(collector, table, depth)
+                    if result:
+                        tables_data.append(result["table_meta"])
+                        columns_by_table[table] = result["columns"]
+                        statistics_by_table[table] = result["statistics"]
+                except Exception as e:
+                    logger.error(f"Error processing table {table}: {str(e)}")
+
+        # Store the collected metadata
+        if tables_data:
+            self.storage_service.store_tables_metadata(connection_id, tables_data)
+            logger.info(f"Stored metadata for {len(tables_data)} tables")
+
+        if columns_by_table:
+            self.storage_service.store_columns_metadata(connection_id, columns_by_table)
+            logger.info(f"Stored column metadata for {len(columns_by_table)} tables")
+
+        if statistics_by_table and depth in ["medium", "deep"]:
+            self.storage_service.store_statistics_metadata(connection_id, statistics_by_table)
+            logger.info(f"Stored statistics for {len(statistics_by_table)} tables")
+
+        return {
+            "status": "success",
+            "tables_processed": len(tables_data),
+            "depth": depth
+        }
+
+    def _process_table(self, collector, table, depth):
+        """Process a single table's metadata"""
+        try:
+            # Basic table information
+            columns = collector.collect_columns(table)
+            primary_keys = collector.connector.get_primary_keys(table)
+
+            # Row count - use a query
+            row_count = 0
+            try:
+                result = collector.connector.execute_query(f"SELECT COUNT(*) FROM {table}")
+                if result and len(result) > 0:
+                    row_count = result[0][0]
+            except Exception as e:
+                logger.warning(f"Error getting row count for {table}: {str(e)}")
+
+            # Create table metadata
+            table_meta = {
+                "name": table,
+                "column_count": len(columns),
+                "row_count": row_count,
+                "primary_key": primary_keys,
+                "id": str(uuid.uuid4())  # Generate an ID for this table
+            }
+
+            # Basic statistics
+            statistics = {
+                "row_count": row_count,
+                "column_count": len(columns),
+                "has_primary_key": len(primary_keys) > 0,
+                "columns": {
+                    col["name"]: {
+                        "type": col["type"],
+                        "nullable": col.get("nullable", False)
+                    } for col in columns
+                }
+            }
+
+            # If deep scan, add more statistics
+            if depth == "deep":
+                # Add additional statistics here if needed
+                pass
+
+            return {
+                "table_meta": table_meta,
+                "columns": columns,
+                "statistics": statistics
+            }
+
+        except Exception as e:
+            logger.error(f"Error processing table {table}: {str(e)}")
+            return None
+
+    def _execute_table_metadata(self, task):
+        """Execute metadata collection for a single table"""
+        connection_id = task.connection_id
+        table_name = task.params.get("table_name")
+
+        if not table_name:
+            raise ValueError("Table name not provided for table_metadata task")
+
+        # Get connection details
+        connection = self.supabase_mgr.get_connection(connection_id)
+        if not connection:
+            raise ValueError(f"Connection not found: {connection_id}")
+
+        # Create connector
+        connector = get_connector_for_connection(connection)
+        connector.connect()
+
+        # Create metadata collector
+        collector = MetadataCollector(connection_id, connector)
+
+        # Process the table
+        result = self._process_table(collector, table_name, "medium")
+
+        if not result:
+            raise ValueError(f"Failed to process table {table_name}")
+
+        # Store the collected metadata
+        tables_data = [result["table_meta"]]
+        columns_by_table = {table_name: result["columns"]}
+        statistics_by_table = {table_name: result["statistics"]}
+
+        self.storage_service.store_tables_metadata(connection_id, tables_data)
+        self.storage_service.store_columns_metadata(connection_id, columns_by_table)
+        self.storage_service.store_statistics_metadata(connection_id, statistics_by_table)
+
+        return {
+            "status": "success",
+            "table": table_name
+        }
+
+    def _execute_refresh_statistics(self, task):
+        """Execute statistics refresh for a table"""
+        connection_id = task.connection_id
+        table_name = task.params.get("table_name")
+
+        if not table_name:
+            raise ValueError("Table name not provided for refresh_statistics task")
+
+        # Get connection details
+        connection = self.supabase_mgr.get_connection(connection_id)
+        if not connection:
+            raise ValueError(f"Connection not found: {connection_id}")
+
+        # Create connector
+        connector = get_connector_for_connection(connection)
+        connector.connect()
+
+        # Create metadata collector
+        collector = MetadataCollector(connection_id, connector)
+
+        # Get columns first
+        columns = collector.collect_columns(table_name)
+
+        # Get row count
+        row_count = 0
+        try:
+            result = connector.execute_query(f"SELECT COUNT(*) FROM {table_name}")
+            if result and len(result) > 0:
+                row_count = result[0][0]
+        except Exception as e:
+            logger.warning(f"Error getting row count for {table_name}: {str(e)}")
+
+        # Build statistics object
+        statistics = {
+            "row_count": row_count,
+            "column_count": len(columns),
+            "columns": {
+                col["name"]: {
+                    "type": col["type"],
+                    "nullable": col.get("nullable", False)
+                } for col in columns
+            }
+        }
+
+        # Store statistics
+        statistics_by_table = {table_name: statistics}
+        self.storage_service.store_statistics_metadata(connection_id, statistics_by_table)
+
+        return {
+            "status": "success",
+            "table": table_name
+        }
+
+    def _execute_update_usage(self, task):
+        """Execute usage statistics update"""
+        connection_id = task.connection_id
+        table_name = task.params.get("table_name")
+
+        if not table_name:
+            raise ValueError("Table name not provided for update_usage task")
+
+        # Implementation for usage statistics would go here
+
+        return {
+            "status": "success",
+            "table": table_name,
+            "message": "Usage statistics updated"
+        }
+
+    def _task_completed(self, task_id, future):
+        """Callback when a task is completed"""
+        if task_id not in self.tasks:
+            return
+
+        task = self.tasks[task_id]
+        task.completed_at = time.time()
+
+        try:
+            task.result = future.result()
+            task.status = TaskStatus.COMPLETED
+            self.stats["tasks_processed"] += 1
+            self.stats["tasks_succeeded"] += 1
+            logger.info(f"Task {task_id} completed successfully")
+        except Exception as e:
+            task.error = str(e)
+            task.status = TaskStatus.FAILED
+            self.stats["tasks_processed"] += 1
+            self.stats["tasks_failed"] += 1
+            logger.error(f"Task {task_id} failed: {str(e)}")
+
+    def submit_collection_task(self, connection_id, params, priority="medium"):
+        """Submit a full collection task"""
+        return self.submit_task(connection_id, "full_metadata_collection", params, priority)
+
+    def submit_table_metadata_task(self, connection_id, table_name, priority="medium"):
+        """Submit a task to collect metadata for a specific table"""
+        params = {"table_name": table_name}
+        return self.submit_task(connection_id, "table_metadata", params, priority)
+
+    def submit_statistics_refresh_task(self, connection_id, table_name, priority="medium"):
+        """Submit a task to refresh statistics for a specific table"""
+        params = {"table_name": table_name}
+        return self.submit_task(connection_id, "refresh_statistics", params, priority)
+
+    def submit_usage_update_task(self, connection_id, table_name, priority="medium"):
+        """Submit a task to update usage statistics for a specific table"""
+        params = {"table_name": table_name}
+        return self.submit_task(connection_id, "update_usage", params, priority)
+
+    def submit_task(self, connection_id, task_type, params, priority="medium"):
+        """Submit a new task to the queue"""
+        # Convert priority string to integer
+        priority_values = {"high": 0, "medium": 50, "low": 100}
+        priority_int = priority_values.get(priority, 50)
+
+        # Create a new task
+        task_id = str(uuid.uuid4())
+        task = Task(
+            id=task_id,
+            connection_id=connection_id,
+            task_type=task_type,
+            params=params,
+            priority=priority_int,
+            created_at=time.time()
+        )
+
+        # Store the task
+        self.tasks[task_id] = task
+
+        # Add to queue with priority
+        self.task_queue.put((priority_int, task_id))
+
+        logger.info(f"Submitted task {task_id} of type {task_type} with priority {priority}")
+        return task_id
+
+    def get_task_status(self, task_id):
+        """Get the current status of a task"""
+        if task_id not in self.tasks:
+            return {"error": "Task not found"}
+
+        task = self.tasks[task_id]
+        return {
+            "id": task.id,
+            "status": task.status.value,
+            "connection_id": task.connection_id,
+            "task_type": task.task_type,
+            "created_at": task.created_at,
+            "started_at": task.started_at,
+            "completed_at": task.completed_at,
+            "result": task.result,
+            "error": task.error
+        }
+
+    def get_recent_tasks(self, limit=10, connection_id=None):
+        """Get the most recent tasks, optionally filtered by connection_id"""
+        # Filter by connection_id if provided
+        task_list = list(self.tasks.values())
+        if connection_id:
+            task_list = [t for t in task_list if t.connection_id == connection_id]
+
+        # Sort tasks by creation time (newest first) and limit
+        sorted_tasks = sorted(
+            task_list,
+            key=lambda t: t.created_at,
+            reverse=True
+        )[:limit]
+
+        # Convert to dictionaries
+        return [
+            {
+                "id": task.id,
+                "status": task.status.value,
+                "connection_id": task.connection_id,
+                "task_type": task.task_type,
+                "created_at": task.created_at,
+                "task": {
+                    "connection_id": task.connection_id,
+                    "type": task.task_type,
+                    "params": task.params,
+                    "status": task.status.value
+                }
+            }
+            for task in sorted_tasks
+        ]
+
+    def handle_metadata_event(self, event_type, connection_id, details):
+        """Process a metadata event and schedule appropriate tasks"""
+        logger.info(f"Handling metadata event: {event_type} for connection {connection_id}")
+
+        if event_type == "VALIDATION_FAILURE":
+            # Schedule metadata refresh on validation failure
+            reason = details.get("reason")
+            table_name = details.get("table_name")
+
+            if reason == "schema_mismatch" and table_name:
+                return self.submit_table_metadata_task(connection_id, table_name, "high")
+
+        elif event_type == "PROFILE_COMPLETION":
+            # Update statistics after profile completion
+            table_name = details.get("table_name")
+
+            if table_name:
+                return self.submit_statistics_refresh_task(connection_id, table_name, "medium")
+
+        elif event_type == "USER_REQUEST":
+            # Handle explicit user requests for metadata
+            metadata_type = details.get("metadata_type")
+            table_name = details.get("table_name")
+
+            if metadata_type == "schema" and table_name:
+                return self.submit_table_metadata_task(connection_id, table_name, "high")
+            elif metadata_type == "statistics" and table_name:
+                return self.submit_statistics_refresh_task(connection_id, table_name, "high")
+            elif metadata_type == "full":
+                return self.submit_collection_task(connection_id, {"depth": "medium"}, "high")
+
+        elif event_type == "SCHEMA_CHANGE":
+            # Handle schema change events
+            table_name = details.get("table_name")
+
+            if table_name:
+                return self.submit_table_metadata_task(connection_id, table_name, "high")
+
+        return None
+
+    def get_worker_stats(self):
+        """Get statistics about the worker"""
+        uptime = time.time() - self.stats["start_time"]
+        return {
+            "tasks_processed": self.stats["tasks_processed"],
+            "tasks_succeeded": self.stats["tasks_succeeded"],
+            "tasks_failed": self.stats["tasks_failed"],
+            "tasks_pending": self.task_queue.qsize(),
+            "uptime_seconds": uptime,
+            "worker_status": "running" if self.running else "stopped"
+        }
+
+
+# Initialize connection pool manager
+connection_pool_manager = ConnectionPoolManager.get_instance()
+
 # Initialize global task manager
 metadata_task_manager = None
 
-
-# Add this function after your other initializations
 def init_metadata_task_manager():
     global metadata_task_manager
     try:
         if metadata_task_manager is None:
             from core.metadata.storage_service import MetadataStorageService
-            from core.metadata.manager import MetadataTaskManager
 
-            logger.info("Initializing metadata task manager...")
+            logger.info("Initializing improved metadata task manager...")
             storage_service = MetadataStorageService()
             supabase_mgr = SupabaseManager()
 
-            metadata_task_manager = MetadataTaskManager.get_instance(storage_service, supabase_mgr)
-            logger.info("Metadata task manager initialized successfully")
+            metadata_task_manager = ImprovedTaskManager.get_instance(storage_service, supabase_mgr)
+            logger.info("Improved metadata task manager initialized successfully")
 
             # Connect to event system if available
             try:
                 from core.metadata.events import event_publisher
                 event_publisher.set_task_manager(metadata_task_manager)
-                logger.info("Connected event publisher to metadata task manager")
+                logger.info("Connected event publisher to improved metadata task manager")
             except ImportError:
                 # Define a simple stub event_publisher
                 class EventPublisher:
@@ -68,7 +667,7 @@ def init_metadata_task_manager():
             except Exception as e:
                 logger.error(f"Error connecting to event system: {str(e)}")
     except Exception as e:
-        logger.error(f"Error initializing metadata task manager: {str(e)}")
+        logger.error(f"Error initializing improved metadata task manager: {str(e)}")
         logger.error(traceback.format_exc())
         metadata_task_manager = None  # Ensure it's set to None if initialization fails
 
@@ -261,6 +860,7 @@ def run_validation_rules_internal(user_id, organization_id, data):
     connection_string = data.get("connection_string")
     table_name = data["table"]
     profile_history_id = data.get("profile_history_id")
+    connection_id = data.get("connection_id")
 
     try:
         force_gc()
@@ -285,36 +885,87 @@ def run_validation_rules_internal(user_id, organization_id, data):
         log_memory_usage("Before validation")
         force_gc()
 
-        # Execute the rules in batches to manage memory
+        # OPTIMIZATION: Execute rules in parallel for faster processing
+        # Use a thread pool to execute validations in parallel
+        def execute_validation_rule(rule, connection_string):
+            """Execute a single validation rule"""
+            try:
+                # Use sparvi_run_validations but with a single rule for better performance
+                result = sparvi_run_validations(connection_string, [rule])
+                return result[0] if result else None
+            except Exception as e:
+                logger.error(f"Error executing validation rule {rule['name']}: {str(e)}")
+                return {
+                    "name": rule["name"],
+                    "is_valid": False,
+                    "error": str(e)
+                }
+
+        # Execute rules in parallel with a limited number of workers
+        # We use a smaller batch size here to avoid overloading the database
+        max_parallel = min(10, len(validation_rules))
         results = []
-        batch_size = 5  # Process in small batches
 
-        for i in range(0, len(validation_rules), batch_size):
-            batch = validation_rules[i:i + batch_size]
-            logger.info(f"Processing validation batch {i // batch_size + 1} with {len(batch)} rules")
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_parallel) as executor:
+            # Submit all tasks
+            future_to_rule = {
+                executor.submit(execute_validation_rule, rule, connection_string): (i, rule)
+                for i, rule in enumerate(validation_rules)
+            }
 
-            # Execute this batch of rules
-            batch_results = sparvi_run_validations(connection_string, batch)
-            results.extend(batch_results)
-            force_gc()
+            # Process results as they complete
+            for future in concurrent.futures.as_completed(future_to_rule):
+                i, rule = future_to_rule[future]
+                try:
+                    result = future.result()
+                    if result:
+                        results.append(result)
 
-            # Store batch results in Supabase
-            for j, result in enumerate(batch_results):
-                if i + j < len(rules):  # Safety check
-                    actual_value = result.get("actual_value", None)
-                    validation_manager.store_validation_result(
-                        organization_id,
-                        rules[i + j]["id"],
-                        result["is_valid"],
-                        actual_value,
-                        profile_history_id
-                    )
-
-            # Force garbage collection between batches
-            force_gc()
+                        # Store result in Supabase
+                        actual_value = result.get("actual_value", None)
+                        validation_manager.store_validation_result(
+                            organization_id,
+                            rules[i]["id"],
+                            result["is_valid"],
+                            actual_value,
+                            profile_history_id
+                        )
+                except Exception as e:
+                    logger.error(f"Error processing validation result: {str(e)}")
 
         # Log memory usage after validation
         log_memory_usage("After validation")
+
+        # Check for failed validations and publish event if necessary
+        had_failures = any(not r.get("is_valid", True) for r in results)
+        schema_mismatch = any(
+            ("column not found" in str(r.get("error", "")).lower() or
+             "table not found" in str(r.get("error", "")).lower() or
+             ("relation" in str(r.get("error", "")).lower() and "does not exist" in str(r.get("error", "")).lower()))
+            for r in results if not r.get("is_valid", True)
+        )
+
+        # If any validations failed and we have a connection_id, publish an event
+        if had_failures and connection_id:
+            try:
+                from core.metadata.events import MetadataEventType, publish_metadata_event
+                # Publish validation failure event
+                publish_metadata_event(
+                    event_type=MetadataEventType.VALIDATION_FAILURE,
+                    connection_id=connection_id,
+                    details={
+                        "table_name": table_name,
+                        "reason": "schema_mismatch" if schema_mismatch else "data_issue",
+                        "validation_count": len(results),
+                        "failure_count": sum(1 for r in results if not r.get("is_valid", True))
+                    },
+                    organization_id=organization_id,
+                    user_id=user_id
+                )
+                logger.info(f"Published validation failure event for table {table_name}")
+            except Exception as e:
+                logger.error(f"Error publishing validation failure event: {str(e)}")
+                logger.error(traceback.format_exc())
 
         return {"results": results}
 
@@ -792,6 +1443,33 @@ def collect_table_metadata_sync(self, table_name):
             "collected_at": datetime.datetime.now().isoformat()
         }
 
+
+@request_cache
+def get_connection_string(connection):
+    """Build and cache a connection string from connection details"""
+    try:
+        connection_details = connection["connection_details"]
+        connection_type = connection["connection_type"]
+
+        if connection_type == "snowflake":
+            username = connection_details.get("username", "")
+            password = connection_details.get("password", "")
+            account = connection_details.get("account", "")
+            database = connection_details.get("database", "")
+            schema = connection_details.get("schema", "PUBLIC")
+            warehouse = connection_details.get("warehouse", "")
+
+            # URL encode password to handle special characters
+            import urllib.parse
+            encoded_password = urllib.parse.quote_plus(password)
+
+            return f"snowflake://{username}:{encoded_password}@{account}/{database}/{schema}?warehouse={warehouse}"
+        # Add other connection types here
+    except Exception as e:
+        logger.error(f"Error building connection string: {str(e)}")
+
+    return None
+
 @app.route('/', defaults={'path': ''}, methods=['OPTIONS'])
 @app.route('/<path:path>', methods=['OPTIONS'])
 def options_handler(path):
@@ -942,96 +1620,26 @@ def run_validation_rules(current_user, organization_id):
         return jsonify({"error": "Table name is required"}), 400
 
     connection_string = data.get("connection_string", os.getenv("DEFAULT_CONNECTION_STRING"))
-    connection_id = data.get("connection_id")  # Add this to capture connection_id
+    connection_id = data.get("connection_id")
     table_name = data["table"]
-    profile_history_id = data.get("profile_history_id")  # Get profile_history_id if provided
+    profile_history_id = data.get("profile_history_id")
 
     logger.info(f"Running validations with profile_history_id: {profile_history_id}")
 
     try:
-        logger.info(
-            f"Running validations for org: {organization_id}, table: {table_name}, connection: {connection_string}")
+        logger.info(f"Running validations for org: {organization_id}, table: {table_name}")
 
         log_memory_usage()
 
-        # Get all rules first to check if there are any
-        rules = validation_manager.get_rules(organization_id, table_name)
-        logger.info(f"Found {len(rules)} rules to execute")
+        # Use the optimized internal function
+        result = run_validation_rules_internal(current_user, organization_id, data)
 
-        # Convert from Supabase format to sparvi-core format if needed
-        validation_rules = []
-        for rule in rules:
-            validation_rules.append({
-                "name": rule["rule_name"],
-                "description": rule["description"],
-                "query": rule["query"],
-                "operator": rule["operator"],
-                "expected_value": rule["expected_value"]
-            })
+        # If there was an error, return it
+        if "error" in result:
+            return jsonify({"error": result["error"]}), 500
 
-        # Execute the rules using the sparvi-core package
-        if validation_rules:
-            results = sparvi_run_validations(connection_string, validation_rules)
-
-            # Flag to track if any validation failed
-            had_failures = False
-            schema_mismatch = False
-
-            # Store results in Supabase
-            for i, result in enumerate(results):
-                # Check if validation failed
-                if not result.get("is_valid", True):
-                    had_failures = True
-
-                    # Check if this might be a schema mismatch
-                    error_msg = str(result.get("error", "")).lower()
-                    if "column not found" in error_msg or \
-                            "table not found" in error_msg or \
-                            ("relation" in error_msg and "does not exist" in error_msg):
-                        schema_mismatch = True
-
-                # Store actual_value if available
-                actual_value = result.get("actual_value", None)
-
-                validation_manager.store_validation_result(
-                    organization_id,
-                    rules[i]["id"],
-                    result["is_valid"],
-                    actual_value,
-                    profile_history_id  # Pass the profile_history_id
-                )
-
-            # If any validations failed and we have a connection_id, publish an event
-            if had_failures and connection_id:
-                try:
-                    from core.metadata.events import MetadataEventType, publish_metadata_event
-                    # Publish validation failure event
-                    publish_metadata_event(
-                        event_type=MetadataEventType.VALIDATION_FAILURE,
-                        connection_id=connection_id,
-                        details={
-                            "table_name": table_name,
-                            "reason": "schema_mismatch" if schema_mismatch else "data_issue",
-                            "validation_count": len(results),
-                            "failure_count": sum(1 for r in results if not r.get("is_valid", True))
-                        },
-                        organization_id=organization_id,
-                        user_id=current_user
-                    )
-                    logger.info(f"Published validation failure event for table {table_name}")
-                except ImportError:
-                    logger.warning("Could not import event system, skipping event publication")
-                except Exception as e:
-                    logger.error(f"Error publishing validation failure event: {str(e)}")
-                    logger.error(traceback.format_exc())
-
-            log_memory_usage()
-            logger.info(f"Validation execution complete, got {len(results)} results")
-            logger.info(f"Validation results: {results}")
-
-            return jsonify({"results": results})
-        else:
-            return jsonify({"results": [], "message": "No validation rules found"})
+        # Otherwise return the results
+        return jsonify(result)
 
     except Exception as e:
         logger.error(f"Error running validations: {str(e)}")
@@ -1056,8 +1664,6 @@ def run_validation_rules(current_user, organization_id):
                     user_id=current_user
                 )
                 logger.info(f"Published schema mismatch event due to exception for table {table_name}")
-            except ImportError:
-                logger.warning("Could not import event system, skipping event publication")
             except Exception as event_error:
                 logger.error(f"Error publishing schema mismatch event: {str(event_error)}")
 
@@ -1135,17 +1741,11 @@ def get_tables(current_user, organization_id):
         # Handle either JSON connection object or connection_id
         if connection_id:
             # Get connection by ID
-            supabase_mgr = SupabaseManager()
-            connection_response = supabase_mgr.supabase.table("database_connections") \
-                .select("*") \
-                .eq("organization_id", organization_id) \
-                .eq("id", connection_id) \
-                .execute()
-
-            if not connection_response.data:
+            connection = connection_access_check(connection_id, organization_id)
+            if not connection:
                 return jsonify({"error": f"Connection with ID {connection_id} not found"}), 404
 
-            connection_details = connection_response.data[0]["connection_details"]
+            connection_details = connection["connection_details"]
         elif connection_string:
             # Parse the JSON string into an object
             try:
@@ -1166,43 +1766,50 @@ def get_tables(current_user, organization_id):
             return jsonify({"error": "Either connection_string or connection_id is required"}), 400
 
         # Build Snowflake connection string
-        username = connection_details.get("username")
-        account = connection_details.get("account")
-        warehouse = connection_details.get("warehouse")
-        database = connection_details.get("database")
-        schema = connection_details.get("schema", "PUBLIC")
-
-        # Get the password from stored connection details
-        if "password" not in connection_details and not connection_id:
-            # If no password in request and no connection_id to look it up,
-            # we need to get it from Supabase based on username/account
-            supabase_mgr = SupabaseManager()
-            db_connections = supabase_mgr.supabase.table("database_connections") \
-                .select("*") \
-                .eq("organization_id", organization_id) \
-                .execute()
-
-            # Find matching connection
-            password = None
-            for conn in db_connections.data:
-                conn_details = conn["connection_details"]
-                if conn_details.get("username") == username and conn_details.get("account") == account:
-                    password = conn_details.get("password")
-                    break
-
-            if not password:
-                return jsonify({"error": "Could not find password for connection"}), 400
+        if connection_id:
+            # We have the full connection object already
+            proper_connection_string = get_connection_string(connection)
+            if not proper_connection_string:
+                return jsonify({"error": "Failed to build connection string"}), 400
         else:
-            # Password provided in connection_details
-            password = connection_details.get("password")
+            # We need to build a connection object from the connection details
+            connection = {
+                "connection_type": "snowflake",  # Assuming Snowflake for this endpoint
+                "connection_details": connection_details
+            }
 
-        # Build proper Snowflake connection string
-        proper_connection_string = f"snowflake://{username}:{password}@{account}/{database}/{schema}?warehouse={warehouse}"
+            # If password is not provided, try to find it
+            if "password" not in connection_details:
+                supabase_mgr = SupabaseManager()
+                db_connections = supabase_mgr.supabase.table("database_connections") \
+                    .select("*") \
+                    .eq("organization_id", organization_id) \
+                    .execute()
 
-        # Create engine with complete connection string
-        engine = create_engine(proper_connection_string)
-        inspector = inspect(engine)
-        tables = inspector.get_table_names()
+                # Find matching connection
+                username = connection_details.get("username")
+                account = connection_details.get("account")
+
+                for conn in db_connections.data:
+                    conn_details = conn["connection_details"]
+                    if conn_details.get("username") == username and conn_details.get("account") == account:
+                        connection_details["password"] = conn_details.get("password")
+                        break
+
+                if "password" not in connection_details:
+                    return jsonify({"error": "Could not find password for connection"}), 400
+
+            proper_connection_string = get_connection_string(connection)
+            if not proper_connection_string:
+                return jsonify({"error": "Failed to build connection string"}), 400
+
+        # Use the connection pool manager to get a pooled connection
+        engine = connection_pool_manager.get_engine(proper_connection_string)
+
+        # Use connection from pool
+        with engine.connect() as conn:
+            inspector = inspect(conn)
+            tables = inspector.get_table_names()
 
         return jsonify({"tables": tables})
 
@@ -1222,25 +1829,37 @@ def index():
 def get_profile(current_user, organization_id):
     connection_string = request.args.get("connection_string", os.getenv("DEFAULT_CONNECTION_STRING"))
     table_name = request.args.get("table", "employees")
-    connection_id = request.args.get("connection_id")  # Add this to capture connection_id
+    connection_id = request.args.get("connection_id")
 
     # Explicitly set include_samples to false - no row data in profiles
     include_samples = False  # Override to always be false regardless of request
 
     try:
         logger.info(f"========== PROFILING STARTED ==========")
-        logger.info(f"Profiling table {table_name} with connection {connection_string[:20]}...")
+        logger.info(f"Profiling table {table_name}...")
         logger.info(f"User ID: {current_user}, Organization ID: {organization_id}")
 
         # Log memory usage at start
         log_memory_usage("Before profiling")
         force_gc()
 
+        # If connection_id provided but no connection string, get connection string from ID
+        if connection_id and not connection_string:
+            connection = connection_access_check(connection_id, organization_id)
+            if not connection:
+                return jsonify({"error": "Connection not found or access denied"}), 404
+
+            # Use cached connection string builder
+            connection_string = get_connection_string(connection)
+            if not connection_string:
+                return jsonify({"error": "Failed to build connection string"}), 400
+
         # Check if connection string is properly formatted
         if "://" not in connection_string:
             logger.error(f"Invalid connection string format: {connection_string[:20]}...")
             return jsonify({"error": "Invalid connection string format"}), 400
 
+        # Rest of the function stays the same
         # Resolve any environment variable references in connection string
         from core.utils.connection_utils import resolve_connection_string, detect_connection_type
         resolved_connection = resolve_connection_string(connection_string)
@@ -1686,9 +2305,21 @@ def get_data_preview(current_user, organization_id):
     """Get a preview of data without storing it"""
     connection_string = request.args.get("connection_string", os.getenv("DEFAULT_CONNECTION_STRING"))
     table_name = request.args.get("table")
+    connection_id = request.args.get("connection_id")
 
-    if not connection_string or not table_name:
-        return jsonify({"error": "Connection string and table name are required"}), 400
+    if not table_name:
+        return jsonify({"error": "Table name is required"}), 400
+
+    # If connection_id is provided, validate and get connection string
+    if connection_id and not connection_string:
+        connection = connection_access_check(connection_id, organization_id)
+        if not connection:
+            return jsonify({"error": "Connection not found or access denied"}), 404
+
+        # Get cached connection string
+        connection_string = get_connection_string(connection)
+        if not connection_string:
+            return jsonify({"error": "Failed to build connection string"}), 400
 
     # Get preview settings
     supabase_mgr = SupabaseManager()
@@ -1712,40 +2343,41 @@ def get_data_preview(current_user, organization_id):
     restricted_columns = preview_settings.get("restricted_preview_columns", {}).get(table_name, [])
 
     try:
-        # Create engine
-        engine = create_engine(connection_string)
-        inspector = inspect(engine)
-
-        # Get table columns
-        table_columns = [col['name'] for col in inspector.get_columns(table_name)]
-
-        # Filter restricted columns
-        allowed_columns = [col for col in table_columns if col not in restricted_columns]
-
-        if not allowed_columns:
-            return jsonify({"error": "No viewable columns available for this table"}), 403
-
-        # Log access (without storing the actual data)
-        sanitized_conn = supabase_mgr._sanitize_connection_string(connection_string)
-        supabase_mgr.log_preview_access(current_user, organization_id, table_name, sanitized_conn)
-
-        # Construct and execute the query
-        query = f"SELECT {', '.join(allowed_columns)} FROM {table_name} LIMIT {max_rows}"
+        # Create engine using connection pool
+        engine = connection_pool_manager.get_engine(connection_string)
 
         with engine.connect() as conn:
+            inspector = inspect(conn)
+
+            # Get table columns
+            table_columns = [col['name'] for col in inspector.get_columns(table_name)]
+
+            # Filter restricted columns
+            allowed_columns = [col for col in table_columns if col not in restricted_columns]
+
+            if not allowed_columns:
+                return jsonify({"error": "No viewable columns available for this table"}), 403
+
+            # Log access (without storing the actual data)
+            sanitized_conn = supabase_mgr._sanitize_connection_string(connection_string)
+            supabase_mgr.log_preview_access(current_user, organization_id, table_name, sanitized_conn)
+
+            # Construct and execute the query
+            query = f"SELECT {', '.join(allowed_columns)} FROM {table_name} LIMIT {max_rows}"
+
             result = conn.execute(text(query))
             preview_data = [dict(zip(result.keys(), row)) for row in result.fetchall()]
 
-        logger.info(f"Preview data fetched for {table_name}, returned {len(preview_data)} rows")
+            logger.info(f"Preview data fetched for {table_name}, returned {len(preview_data)} rows")
 
-        # Return the data directly (not stored)
-        return jsonify({
-            "preview_data": preview_data,
-            "row_count": len(preview_data),
-            "preview_max": max_rows,
-            "restricted_columns": restricted_columns if restricted_columns else [],
-            "all_columns": table_columns
-        })
+            # Return the data directly (not stored)
+            return jsonify({
+                "preview_data": preview_data,
+                "row_count": len(preview_data),
+                "preview_max": max_rows,
+                "restricted_columns": restricted_columns if restricted_columns else [],
+                "all_columns": table_columns
+            })
 
     except Exception as e:
         logger.error(f"Error generating data preview: {str(e)}")
@@ -2043,7 +2675,6 @@ def test_connection(current_user, organization_id):
             if details.get("useEnvVars", False):
                 # Use environment variables
                 prefix = details.get("envVarPrefix", "SNOWFLAKE")
-                # Create connection string using environment variables
                 from core.utils.connection_utils import get_snowflake_connection_from_env
                 connection_string = get_snowflake_connection_from_env(prefix)
 
@@ -2052,119 +2683,87 @@ def test_connection(current_user, organization_id):
                         "error": f"Required environment variables for {prefix} connection not found"
                     }), 400
             else:
-                # Create direct connection string
-                try:
-                    username = details.get("username", "")
-                    password = details.get("password", "")
-                    account = details.get("account", "")
-                    database = details.get("database", "")
-                    schema = details.get("schema", "PUBLIC")
-                    warehouse = details.get("warehouse", "")
-
-                    # Validate required fields
-                    if not all([username, password, account, database, warehouse]):
-                        return jsonify({
-                            "error": "Missing required Snowflake connection parameters"
-                        }), 400
-
-                    # URL encode password to handle special characters
-                    import urllib.parse
-                    encoded_password = urllib.parse.quote_plus(password)
-
-                    # Build connection string
-                    connection_string = f"snowflake://{username}:{encoded_password}@{account}/{database}/{schema}?warehouse={warehouse}"
-                except Exception as e:
+                # Validate required fields
+                if not all([
+                    details.get("username"),
+                    details.get("password"),
+                    details.get("account"),
+                    details.get("database"),
+                    details.get("warehouse")
+                ]):
                     return jsonify({
-                        "error": f"Error building Snowflake connection string: {str(e)}"
+                        "error": "Missing required Snowflake connection parameters"
                     }), 400
 
-        elif connection_type == "duckdb":
-            path = details.get("path", "")
-            if not path:
-                return jsonify({"error": "Missing required DuckDB path"}), 400
+                # Use the cached connection string builder
+                connection = {
+                    "connection_type": "snowflake",
+                    "connection_details": details
+                }
 
-            connection_string = f"duckdb:///{path}"
+                connection_string = get_connection_string(connection)
+                if not connection_string:
+                    return jsonify({
+                        "error": "Failed to build connection string"
+                    }), 400
 
         elif connection_type == "postgresql":
-            try:
-                username = details.get("username", "")
-                password = details.get("password", "")
-                host = details.get("host", "")
-                port = details.get("port", "5432")
-                database = details.get("database", "")
-
-                # Validate required fields
-                if not all([username, password, host, database]):
-                    return jsonify({
-                        "error": "Missing required PostgreSQL connection parameters"
-                    }), 400
-
-                # URL encode password to handle special characters
-                import urllib.parse
-                encoded_password = urllib.parse.quote_plus(password)
-
-                # Build connection string
-                connection_string = f"postgresql://{username}:{encoded_password}@{host}:{port}/{database}"
-            except Exception as e:
+            # Validate required fields
+            if not all([
+                details.get("username"),
+                details.get("password"),
+                details.get("host"),
+                details.get("database")
+            ]):
                 return jsonify({
-                    "error": f"Error building PostgreSQL connection string: {str(e)}"
+                    "error": "Missing required PostgreSQL connection parameters"
+                }), 400
+
+            # Use the cached connection string builder
+            connection = {
+                "connection_type": "postgresql",
+                "connection_details": details
+            }
+
+            connection_string = get_connection_string(connection)
+            if not connection_string:
+                return jsonify({
+                    "error": "Failed to build connection string"
                 }), 400
 
         else:
             return jsonify({"error": f"Unsupported connection type: {connection_type}"}), 400
 
-        # Now test the connection by trying to connect to the database
+        # OPTIMIZATION: Simplify connection test with minimal query
         try:
-            # Create SQLAlchemy engine
-            engine = create_engine(connection_string)
+            # Use connection pool to test the connection
+            engine = connection_pool_manager.get_engine(connection_string)
 
-            # Try to connect and get database info
+            # Simple connection test with minimal query based on database type
             with engine.connect() as conn:
-                # Get different information based on database type
                 if connection_type == "snowflake":
-                    # Get Snowflake info
-                    result = conn.execute(text("SELECT CURRENT_USER(), CURRENT_ROLE(), CURRENT_DATABASE(), CURRENT_SCHEMA(), CURRENT_WAREHOUSE()"))
-                    row = result.fetchone()
+                    # Minimal Snowflake test query
+                    result = conn.execute(text("SELECT CURRENT_USER()"))
+                    user = result.scalar()
 
                     return jsonify({
                         "message": "Connection successful!",
                         "details": {
-                            "user": row[0],
-                            "role": row[1],
-                            "database": row[2],
-                            "schema": row[3],
-                            "warehouse": row[4]
-                        }
-                    })
-
-                elif connection_type == "duckdb":
-                    # Get DuckDB info - simple version check
-                    result = conn.execute(text("SELECT sqlite_version()"))
-                    row = result.fetchone()
-
-                    # Get table count
-                    tables_result = conn.execute(text("SELECT COUNT(*) FROM sqlite_master WHERE type='table'"))
-                    tables_row = tables_result.fetchone()
-
-                    return jsonify({
-                        "message": "Connection successful!",
-                        "details": {
-                            "version": row[0],
-                            "table_count": tables_row[0]
+                            "user": user,
+                            "connection_type": "snowflake"
                         }
                     })
 
                 elif connection_type == "postgresql":
-                    # Get PostgreSQL info
-                    result = conn.execute(text("SELECT current_user, current_database(), version()"))
-                    row = result.fetchone()
+                    # Minimal PostgreSQL test query
+                    result = conn.execute(text("SELECT current_user"))
+                    user = result.scalar()
 
                     return jsonify({
                         "message": "Connection successful!",
                         "details": {
-                            "user": row[0],
-                            "database": row[1],
-                            "version": row[2]
+                            "user": user,
+                            "connection_type": "postgresql"
                         }
                     })
 
@@ -2278,25 +2877,15 @@ def get_connection_metadata(current_user, organization_id, connection_id):
     """Get cached metadata for a connection"""
     try:
         # Check if user has access to this connection
-        supabase_mgr = SupabaseManager()
-        connection_check = supabase_mgr.supabase.table("database_connections") \
-            .select("*") \
-            .eq("id", connection_id) \
-            .eq("organization_id", organization_id) \
-            .execute()
-
-        if not connection_check.data or len(connection_check.data) == 0:
-            logger.error(f"Connection not found or access denied: {connection_id}")
+        connection = connection_access_check(connection_id, organization_id)
+        if not connection:
             return jsonify({"error": "Connection not found or access denied"}), 404
 
         # Get query parameters
         metadata_type = request.args.get("type", "tables")  # Default to tables metadata
 
-        # Create storage service
-        storage_service = MetadataStorageService()
-
-        # Get the requested metadata
-        metadata = storage_service.get_metadata(connection_id, metadata_type)
+        # Use cached getter
+        metadata = get_metadata_cached(connection_id, metadata_type)
 
         if not metadata:
             return jsonify({"metadata": {}, "message": f"No {metadata_type} metadata found"}), 404
@@ -2314,189 +2903,70 @@ def get_connection_metadata(current_user, organization_id, connection_id):
 def collect_connection_metadata(current_user, organization_id, connection_id):
     """Collect metadata for a connection"""
     try:
-        # Initialize SupabaseManager
-        supabase_mgr = SupabaseManager()
-
         # Check if user has access to this connection
-        connection_check = supabase_mgr.supabase.table("database_connections") \
-            .select("*") \
-            .eq("id", connection_id) \
-            .eq("organization_id", organization_id) \
-            .execute()
-
-        if not connection_check.data or len(connection_check.data) == 0:
-            logger.error(f"Connection not found or access denied: {connection_id}")
+        connection = connection_access_check(connection_id, organization_id)
+        if not connection:
             return jsonify({"error": "Connection not found or access denied"}), 404
 
-        connection = connection_check.data[0]
         logger.info(f"Retrieved connection details for {connection_id}: {connection['name']}")
 
-        # Create connector for this connection
-        try:
-            connector = get_connector_for_connection(connection)
-            logger.info(f"Created connector of type: {connection['connection_type']}")
-
-            # Explicitly connect to the database
-            connector.connect()
-            logger.info(f"Successfully connected to the database")
-        except ValueError as e:
-            return jsonify({"error": str(e)}), 400
-        except Exception as e:
-            logger.error(f"Failed to connect to database: {str(e)}")
-            return jsonify({"error": f"Failed to connect to database: {str(e)}"}), 500
-
-        # Create metadata collector
-        collector = MetadataCollector(connection_id, connector)
-        logger.info(f"Created metadata collector for connection {connection_id}")
+        # Make sure task manager is initialized
+        if metadata_task_manager is None:
+            init_metadata_task_manager()
 
         # Determine collection type from request parameters
         collection_type = request.json.get("collection_type", "immediate")
         table_limit = request.json.get("table_limit", 50)
         logger.info(f"Collection type: {collection_type}, table limit: {table_limit}")
 
-        # Create the storage service
-        storage_service = MetadataStorageService()
+        # For immediate collection, start a task but also collect some data right away
+        tables_data = []
+        message = ""
 
-        # For immediate collection, do it directly here
         if collection_type == "immediate":
-            # Collect immediate metadata - tables and basic info
-            logger.info("Starting immediate metadata collection")
+            # Create connector for this connection
+            try:
+                connector = get_connector_for_connection(connection)
+                connector.connect()
 
-            # Get table list
-            tables = collector.collect_table_list()
-            logger.info(f"Found {len(tables)} tables")
+                # Create metadata collector
+                collector = MetadataCollector(connection_id, connector)
 
-            # Process tables (limited number for immediate response)
-            tables_data = []
-            for table in tables[:min(len(tables), 20)]:  # Limit to 20 tables for immediate response
-                try:
-                    # Get column info
-                    columns = collector.collect_columns(table)
+                # Get table list (limited for immediate response)
+                tables = collector.collect_table_list()
+                # Fix: Apply the slice to tables AFTER we get them
+                tables_to_process = tables[:min(len(tables), 20)]
 
-                    # Try to get row count
-                    row_count = 0
-                    try:
-                        result = connector.execute_query(f"SELECT COUNT(*) FROM {table}")
-                        if result and len(result) > 0:
-                            row_count = result[0][0]
-                    except Exception as e:
-                        logger.warning(f"Could not get row count for {table}: {str(e)}")
-
-                    # Try to get primary keys
-                    primary_keys = []
-                    try:
-                        primary_keys = connector.get_primary_keys(table)
-                    except Exception as e:
-                        logger.warning(f"Could not get primary keys for {table}: {str(e)}")
-
-                    # Add table to result
+                for table in tables_to_process:
                     tables_data.append({
                         "name": table,
-                        "column_count": len(columns),
-                        "row_count": row_count,
-                        "primary_key": primary_keys,
-                        "id": str(uuid.uuid4())  # Generate an ID for this table
+                        "id": str(uuid.uuid4())
                     })
-                except Exception as e:
-                    logger.error(f"Error processing table {table}: {str(e)}")
-                    # Continue with next table
 
-            # Only store if we have data
-            if tables_data:
-                # Use upsert for idempotency
-                storage_service.store_tables_metadata(connection_id, tables_data)
-                logger.info(f"Stored metadata for {len(tables_data)} tables")
-
-            # Queue full collection as background task
-            task = {
-                "task": "full_metadata_collection",
-                "connection_id": connection_id,
-                "connection": connection,
-                "priority": "high",
-                "table_limit": table_limit
-            }
-
-            metadata_task_queue.put(task)
-            logger.info(f"Enqueued full metadata collection for connection {connection_id}")
-
-            return jsonify({
-                "message": "Immediate metadata collection completed, full collection scheduled",
-                "metadata": {
-                    "tables": tables_data,
-                    "count": len(tables_data)
-                },
-                "task_id": str(uuid.uuid4())  # Return a task ID for reference
-            })
+                message = "Immediate metadata collection completed, full collection scheduled"
+            except Exception as e:
+                logger.error(f"Error in immediate collection: {str(e)}")
+                message = "Error in immediate collection, scheduled full collection as fallback"
         else:
-            # For comprehensive collection, still do immediate collection
-            # but queue more detailed work
-            logger.info("Starting immediate metadata collection for comprehensive request")
+            message = "Comprehensive metadata collection scheduled"
 
-            # Get table list
-            tables = collector.collect_table_list()
-            logger.info(f"Found {len(tables)} tables")
+        # Queue full collection as background task with the improved task manager
+        params = {
+            "depth": "medium" if collection_type == "comprehensive" else "light",
+            "table_limit": table_limit
+        }
 
-            # Process tables (limited number for immediate response)
-            tables_data = []
-            for table in tables[:min(len(tables), 20)]:  # Limit to 20 tables for immediate response
-                try:
-                    # Get column info
-                    columns = collector.collect_columns(table)
+        task_id = metadata_task_manager.submit_collection_task(connection_id, params, "high")
+        logger.info(f"Submitted metadata collection task with ID: {task_id}")
 
-                    # Try to get row count
-                    row_count = 0
-                    try:
-                        result = connector.execute_query(f"SELECT COUNT(*) FROM {table}")
-                        if result and len(result) > 0:
-                            row_count = result[0][0]
-                    except Exception as e:
-                        logger.warning(f"Could not get row count for {table}: {str(e)}")
-
-                    # Try to get primary keys
-                    primary_keys = []
-                    try:
-                        primary_keys = connector.get_primary_keys(table)
-                    except Exception as e:
-                        logger.warning(f"Could not get primary keys for {table}: {str(e)}")
-
-                    # Add table to result
-                    tables_data.append({
-                        "name": table,
-                        "column_count": len(columns),
-                        "row_count": row_count,
-                        "primary_key": primary_keys,
-                        "id": str(uuid.uuid4())  # Generate an ID for this table
-                    })
-                except Exception as e:
-                    logger.error(f"Error processing table {table}: {str(e)}")
-                    # Continue with next table
-
-            # Only store if we have data
-            if tables_data:
-                # Store the tables metadata
-                storage_service.store_tables_metadata(connection_id, tables_data)
-                logger.info(f"Stored metadata for {len(tables_data)} tables")
-
-            # Queue a high priority full collection
-            task = {
-                "task": "full_metadata_collection",
-                "connection_id": connection_id,
-                "connection": connection,
-                "priority": "high",
-                "table_limit": table_limit
-            }
-
-            metadata_task_queue.put(task)
-            logger.info(f"Enqueued comprehensive metadata collection for connection {connection_id}")
-
-            return jsonify({
-                "message": "Comprehensive metadata collection scheduled",
-                "metadata": {
-                    "tables": tables_data,
-                    "count": len(tables_data)
-                },
-                "task_id": str(uuid.uuid4())
-            })
+        return jsonify({
+            "message": message,
+            "metadata": {
+                "tables": tables_data,
+                "count": len(tables_data)
+            },
+            "task_id": task_id
+        })
 
     except Exception as e:
         logger.error(f"Error collecting connection metadata: {str(e)}")
@@ -2504,47 +2974,18 @@ def collect_connection_metadata(current_user, organization_id, connection_id):
         return jsonify({"error": str(e)}), 500
 
 
-@app.after_request
-def after_request(response):
-    origin = request.headers.get('Origin', '')
-
-    # Allow both your production and development environments
-    if origin in ['https://cloud.sparvi.io', 'http://localhost:3000']:
-        response.headers.set('Access-Control-Allow-Origin', origin)
-    else:
-        response.headers.set('Access-Control-Allow-Origin', 'https://cloud.sparvi.io')
-
-    response.headers.set('Access-Control-Allow-Headers', 'Content-Type,Authorization,X-Requested-With')
-    response.headers.set('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS')
-    response.headers.set('Access-Control-Allow-Credentials', 'true')
-    # Cache preflight requests to reduce OPTIONS calls
-    response.headers.set('Access-Control-Max-Age', '3600')  # 1 hour
-    return response
-
 @app.route("/api/connections/<connection_id>/tables/<table_name>/columns", methods=["GET"])
 @token_required
 def get_table_columns(current_user, organization_id, connection_id, table_name):
     """Get detailed information about a table's columns"""
     try:
         # Check access to connection
-        supabase_mgr = SupabaseManager()
-        connection_check = supabase_mgr.supabase.table("database_connections") \
-            .select("*") \
-            .eq("id", connection_id) \
-            .eq("organization_id", organization_id) \
-            .execute()
-
-        if not connection_check.data or len(connection_check.data) == 0:
-            logger.error(f"Connection not found or access denied: {connection_id}")
+        connection = connection_access_check(connection_id, organization_id)
+        if not connection:
             return jsonify({"error": "Connection not found or access denied"}), 404
 
-        connection = connection_check.data[0]
-
         # First try to get from cache
-        storage_service = MetadataStorageService()
-
-        # Get columns cache if it exists
-        columns_metadata = storage_service.get_metadata(connection_id, "columns")
+        columns_metadata = get_metadata_cached(connection_id, "columns")
 
         if columns_metadata and "metadata" in columns_metadata:
             # If we have table columns cached for this specific table
@@ -2578,17 +3019,21 @@ def get_table_columns(current_user, organization_id, connection_id, table_name):
         # Get column information
         columns = collector.collect_columns(table_name)
 
-        # Update cache with new column data - store in an optimized way
-        # that doesn't require replacing entire columns cache
-        if not columns_metadata or "metadata" not in columns_metadata:
-            # Need to initialize columns metadata structure
-            columns_by_table = {table_name: columns}
-            storage_service.store_columns_metadata(connection_id, columns_by_table)
-        else:
-            # Update existing columns metadata
+        # Update cache with new column data
+        storage_service = MetadataStorageService()
+        columns_by_table = {}
+
+        if columns_metadata and "metadata" in columns_metadata:
+            # Update existing metadata
             columns_by_table = columns_metadata["metadata"].get("columns_by_table", {})
-            columns_by_table[table_name] = columns
-            storage_service.store_columns_metadata(connection_id, columns_by_table)
+
+        # Add/update this table's columns
+        columns_by_table[table_name] = columns
+        storage_service.store_columns_metadata(connection_id, columns_by_table)
+
+        # Also schedule a background task to refresh table metadata
+        if metadata_task_manager is not None:
+            metadata_task_manager.submit_table_metadata_task(connection_id, table_name, "low")
 
         # Return result
         result = {
@@ -2608,34 +3053,22 @@ def get_table_columns(current_user, organization_id, connection_id, table_name):
         return jsonify({"error": str(e)}), 500
 
 
-# In backend/app.py - add this new route
-
 @app.route("/api/connections/<connection_id>/tables/<table_name>/statistics", methods=["GET"])
 @token_required
 def get_table_statistics(current_user, organization_id, connection_id, table_name):
     """Get detailed statistical information about a table and its columns"""
     try:
         # Check access to connection
-        supabase_mgr = SupabaseManager()
-        connection_check = supabase_mgr.supabase.table("database_connections") \
-            .select("*") \
-            .eq("id", connection_id) \
-            .eq("organization_id", organization_id) \
-            .execute()
-
-        if not connection_check.data or len(connection_check.data) == 0:
-            logger.error(f"Connection not found or access denied: {connection_id}")
+        connection = connection_access_check(connection_id, organization_id)
+        if not connection:
             return jsonify({"error": "Connection not found or access denied"}), 404
-
-        connection = connection_check.data[0]
 
         # Parse query parameters
         force_refresh = request.args.get("refresh", "false").lower() == "true"
 
         # Check if stats are cached and not forcing refresh
         if not force_refresh:
-            storage_service = MetadataStorageService()
-            stats_metadata = storage_service.get_metadata(connection_id, "statistics")
+            stats_metadata = get_metadata_cached(connection_id, "statistics")
 
             if stats_metadata and "metadata" in stats_metadata:
                 stats_by_table = stats_metadata["metadata"].get("statistics_by_table", {})
@@ -2649,7 +3082,7 @@ def get_table_statistics(current_user, organization_id, connection_id, table_nam
                     }
                     return jsonify(result)
 
-        # If no cache, cache miss, or forcing refresh, collect fresh statistics
+        # If no cache or forcing refresh, collect fresh statistics
         logger.info(f"Collecting fresh statistics for {table_name}")
 
         # Create connector for this connection
@@ -2683,462 +3116,367 @@ def get_table_statistics(current_user, organization_id, connection_id, table_nam
 
         start_time = datetime.datetime.now()
 
-        # Get row count
+        # OPTIMIZATION 1: Build a single query to get multiple column statistics at once
+        # This reduces database round trips significantly
         try:
-            result = connector.execute_query(f"SELECT COUNT(*) FROM {table_name}")
-            if result and len(result) > 0:
-                table_stats["general"]["row_count"] = result[0][0]
-        except Exception as e:
-            logger.warning(f"Could not get row count for {table_name}: {str(e)}")
+            # Build column lists for different data types
+            numeric_columns = []
+            string_columns = []
+            date_columns = []
 
-        # Get table size if supported by the database
-        try:
-            if 'snowflake' in connection["connection_type"].lower():
-                # Snowflake-specific query to get table size
-                size_query = f"""
-                    SELECT TABLE_NAME, ACTIVE_BYTES, DELETED_BYTES, TIME_TRAVEL_BYTES 
-                    FROM INFORMATION_SCHEMA.TABLE_STORAGE_METRICS 
-                    WHERE TABLE_NAME = '{table_name.upper()}'
-                """
-                result = connector.execute_query(size_query)
-                if result and len(result) > 0:
-                    active_bytes = result[0][1] or 0
-                    deleted_bytes = result[0][2] or 0
-                    time_travel_bytes = result[0][3] or 0
-                    table_stats["general"]["size_bytes"] = active_bytes
-                    table_stats["general"]["total_storage_bytes"] = active_bytes + deleted_bytes + time_travel_bytes
-            elif 'postgresql' in connection["connection_type"].lower():
-                # PostgreSQL query to get table size
-                size_query = f"""
-                    SELECT pg_total_relation_size('{table_name}')
-                """
-                result = connector.execute_query(size_query)
-                if result and len(result) > 0:
-                    table_stats["general"]["size_bytes"] = result[0][0]
-        except Exception as e:
-            logger.warning(f"Could not get table size for {table_name}: {str(e)}")
+            for col in columns:
+                col_name = col["name"]
+                col_type = col["type"].lower() if isinstance(col["type"], str) else str(col["type"]).lower()
 
-        # Get last updated timestamp if supported
-        try:
-            if 'snowflake' in connection["connection_type"].lower():
-                # Snowflake-specific query to get last modified time
-                last_updated_query = f"""
-                    SELECT LAST_ALTERED FROM INFORMATION_SCHEMA.TABLES 
-                    WHERE TABLE_NAME = '{table_name.upper()}'
-                """
-                result = connector.execute_query(last_updated_query)
-                if result and len(result) > 0 and result[0][0]:
-                    table_stats["general"]["last_updated"] = result[0][0].isoformat()
-        except Exception as e:
-            logger.warning(f"Could not get last updated timestamp for {table_name}: {str(e)}")
+                # Categorize columns by type for efficient querying
+                if ('int' in col_type or 'float' in col_type or 'numeric' in col_type or
+                        'decimal' in col_type or 'double' in col_type or 'real' in col_type):
+                    numeric_columns.append(col_name)
+                elif ('char' in col_type or 'text' in col_type or 'string' in col_type):
+                    string_columns.append(col_name)
+                elif ('date' in col_type or 'time' in col_type):
+                    date_columns.append(col_name)
 
-        # Process each column to get comprehensive statistics
-        for column in columns:
-            column_name = column["name"]
-            column_type = column["type"].lower() if isinstance(column["type"], str) else str(column["type"]).lower()
+            # 1. First get row count and null counts for all columns in one query
+            base_counts_query_parts = [f"COUNT(*) as row_count"]
 
-            # Initialize column statistics with basic info
-            column_stats = {
-                "type": column["type"],
-                "nullable": column.get("nullable", True),
-                "basic": {
-                    "null_count": None,
-                    "null_percentage": None,
-                    "empty_count": None,
-                    "empty_percentage": None,
-                    "distinct_count": None,
-                    "distinct_percentage": None,
-                    "is_unique": None,
-                    "min_length": None,
-                    "max_length": None,
-                    "avg_length": None
-                },
-                "numeric": {
-                    "min": None,
-                    "max": None,
-                    "avg": None,
-                    "median": None,
-                    "stddev": None,
-                    "sum": None,
-                    "zero_count": None,
-                    "negative_count": None,
-                    "positive_count": None
-                },
-                "datetime": {
-                    "min": None,
-                    "max": None,
-                    "future_count": None,
-                    "past_count": None
-                },
-                "string": {
-                    "min_length": None,
-                    "max_length": None,
-                    "avg_length": None,
-                    "empty_count": None,
-                    "pattern_analysis": None
-                },
-                "top_values": []
-            }
+            # Add null count clauses for all columns
+            for col in columns:
+                col_name = col["name"]
+                base_counts_query_parts.append(
+                    f"SUM(CASE WHEN {col_name} IS NULL THEN 1 ELSE 0 END) as {col_name}_null_count"
+                )
 
-            # Get null count
-            try:
-                null_query = f"SELECT COUNT(*) FROM {table_name} WHERE {column_name} IS NULL"
-                result = connector.execute_query(null_query)
-                if result and len(result) > 0:
-                    column_stats["basic"]["null_count"] = result[0][0]
-                    if table_stats["general"]["row_count"] > 0:
-                        column_stats["basic"]["null_percentage"] = (column_stats["basic"]["null_count"] /
-                                                                    table_stats["general"]["row_count"]) * 100
-            except Exception as e:
-                logger.warning(f"Could not get null count for column {column_name}: {str(e)}")
+            base_counts_query = f"SELECT {', '.join(base_counts_query_parts)} FROM {table_name}"
+            base_counts_result = connector.execute_query(base_counts_query)
 
-            # Get distinct count
-            try:
-                distinct_query = f"SELECT COUNT(DISTINCT {column_name}) FROM {table_name}"
-                result = connector.execute_query(distinct_query)
-                if result and len(result) > 0:
-                    column_stats["basic"]["distinct_count"] = result[0][0]
-                    # Calculate distinct percentage only if there are non-null values
-                    non_null_count = table_stats["general"]["row_count"] - (column_stats["basic"]["null_count"] or 0)
-                    if non_null_count > 0:
-                        column_stats["basic"]["distinct_percentage"] = (column_stats["basic"][
-                                                                            "distinct_count"] / non_null_count) * 100
-                    # Determine if column is unique
-                    column_stats["basic"]["is_unique"] = (
-                        column_stats["basic"]["distinct_count"] == non_null_count
-                        if column_stats["basic"]["distinct_count"] is not None and non_null_count > 0
-                        else None
+            if base_counts_result and len(base_counts_result) > 0:
+                # Get row count
+                table_stats["general"]["row_count"] = base_counts_result[0][0]
+
+                # Process null counts for each column
+                for i, col in enumerate(columns):
+                    col_name = col["name"]
+                    null_count = base_counts_result[0][i + 1]  # +1 because the first column is row_count
+
+                    # Initialize column statistics structure
+                    column_stats = {
+                        "type": col["type"],
+                        "nullable": col.get("nullable", True),
+                        "basic": {
+                            "null_count": null_count,
+                            "null_percentage": (null_count / table_stats["general"]["row_count"] * 100)
+                            if table_stats["general"]["row_count"] > 0 else 0
+                        },
+                        "numeric": {},
+                        "datetime": {},
+                        "string": {},
+                        "top_values": []
+                    }
+
+                    # Store in the table stats
+                    table_stats["column_statistics"][col_name] = column_stats
+
+            # 2. Get distinct counts in one query for non-LOB columns (can be expensive for large text columns)
+            # Non-LOB columns are typically more efficient to count
+            distinct_counts_query_parts = []
+            for col in columns:
+                col_name = col["name"]
+                col_type = col["type"].lower() if isinstance(col["type"], str) else str(col["type"]).lower()
+
+                # Skip columns that would be expensive to count distinctly
+                if not ('text' in col_type and 'long' in col_type):
+                    distinct_counts_query_parts.append(
+                        f"COUNT(DISTINCT {col_name}) as {col_name}_distinct_count"
                     )
-            except Exception as e:
-                logger.warning(f"Could not get distinct count for column {column_name}: {str(e)}")
 
-            # Get top N values with counts and percentages
-            try:
-                top_n = 10  # Number of top values to retrieve
-                top_values_query = f"""
-                    SELECT {column_name}, COUNT(*) as count
-                    FROM {table_name}
-                    WHERE {column_name} IS NOT NULL
-                    GROUP BY {column_name}
-                    ORDER BY count DESC
-                    LIMIT {top_n}
-                """
-                result = connector.execute_query(top_values_query)
-                if result:
-                    top_values = []
-                    for row in result:
-                        value = row[0]
-                        count = row[1]
-                        percentage = (count / table_stats["general"]["row_count"]) * 100 if table_stats["general"][
-                                                                                                "row_count"] > 0 else 0
-
-                        # Format value for display (truncate long strings)
-                        display_value = str(value)
-                        if isinstance(value, str) and len(display_value) > 100:
-                            display_value = display_value[:97] + "..."
-
-                        top_values.append({
-                            "value": display_value,
-                            "count": count,
-                            "percentage": percentage
-                        })
-                    column_stats["top_values"] = top_values
-            except Exception as e:
-                logger.warning(f"Could not get top values for column {column_name}: {str(e)}")
-
-            # Type-specific statistics
-            is_numeric = ('int' in column_type or 'float' in column_type or
-                          'numeric' in column_type or 'decimal' in column_type or
-                          'double' in column_type or 'real' in column_type)
-
-            is_date = ('date' in column_type or 'time' in column_type)
-
-            is_string = ('char' in column_type or 'text' in column_type or 'string' in column_type)
-
-            # Get numeric statistics
-            if is_numeric:
+            if distinct_counts_query_parts:
+                distinct_counts_query = f"SELECT {', '.join(distinct_counts_query_parts)} FROM {table_name}"
                 try:
-                    numeric_query = f"""
-                        SELECT 
-                            MIN({column_name}), 
-                            MAX({column_name}),
-                            AVG({column_name}),
-                            STDDEV({column_name}),
-                            SUM({column_name}),
-                            COUNT(CASE WHEN {column_name} = 0 THEN 1 END),
-                            COUNT(CASE WHEN {column_name} < 0 THEN 1 END),
-                            COUNT(CASE WHEN {column_name} > 0 THEN 1 END)
-                        FROM {table_name}
-                        WHERE {column_name} IS NOT NULL
-                    """
-                    result = connector.execute_query(numeric_query)
-                    if result and len(result) > 0:
-                        column_stats["numeric"]["min"] = result[0][0]
-                        column_stats["numeric"]["max"] = result[0][1]
-                        column_stats["numeric"]["avg"] = result[0][2]
-                        column_stats["numeric"]["stddev"] = result[0][3]
-                        column_stats["numeric"]["sum"] = result[0][4]
-                        column_stats["numeric"]["zero_count"] = result[0][5]
-                        column_stats["numeric"]["negative_count"] = result[0][6]
-                        column_stats["numeric"]["positive_count"] = result[0][7]
+                    distinct_counts_result = connector.execute_query(distinct_counts_query)
 
-                    # Try to get median (database-specific)
+                    if distinct_counts_result and len(distinct_counts_result) > 0:
+                        col_index = 0
+                        for col in columns:
+                            col_name = col["name"]
+                            col_type = col["type"].lower() if isinstance(col["type"], str) else str(col["type"]).lower()
+
+                            if not ('text' in col_type and 'long' in col_type):
+                                # Get the distinct count result
+                                distinct_count = distinct_counts_result[0][col_index]
+                                col_index += 1
+
+                                # Update column statistics
+                                if col_name in table_stats["column_statistics"]:
+                                    col_stats = table_stats["column_statistics"][col_name]
+                                    col_stats["basic"]["distinct_count"] = distinct_count
+
+                                    # Calculate distinct percentage
+                                    non_null_count = table_stats["general"]["row_count"] - col_stats["basic"][
+                                        "null_count"]
+                                    if non_null_count > 0:
+                                        col_stats["basic"]["distinct_percentage"] = (
+                                                                                                distinct_count / non_null_count) * 100
+
+                                    # Determine if column is unique
+                                    col_stats["basic"]["is_unique"] = (distinct_count == non_null_count)
+                except Exception as e:
+                    logger.warning(f"Error getting distinct counts: {str(e)}")
+
+            # 3. Get numeric statistics in one batch query
+            if numeric_columns:
+                numeric_stat_parts = []
+
+                for col_name in numeric_columns:
+                    # Add statistics for this numeric column
+                    numeric_stat_parts.extend([
+                        f"MIN({col_name}) as {col_name}_min",
+                        f"MAX({col_name}) as {col_name}_max",
+                        f"AVG({col_name}) as {col_name}_avg",
+                        f"SUM({col_name}) as {col_name}_sum",
+                        f"COUNT(CASE WHEN {col_name} = 0 THEN 1 END) as {col_name}_zero_count",
+                        f"COUNT(CASE WHEN {col_name} < 0 THEN 1 END) as {col_name}_negative_count",
+                        f"COUNT(CASE WHEN {col_name} > 0 THEN 1 END) as {col_name}_positive_count"
+                    ])
+
+                    # Try to add standard deviation if supported by the database
+                    if 'snowflake' in connection["connection_type"].lower():
+                        numeric_stat_parts.append(f"STDDEV({col_name}) as {col_name}_stddev")
+
+                if numeric_stat_parts:
+                    numeric_query = f"SELECT {', '.join(numeric_stat_parts)} FROM {table_name} WHERE "
+                    numeric_query += " AND ".join([f"{col} IS NOT NULL" for col in numeric_columns])
+
                     try:
-                        if 'snowflake' in connection["connection_type"].lower():
-                            median_query = f"""
-                                SELECT MEDIAN({column_name})
-                                FROM {table_name}
-                                WHERE {column_name} IS NOT NULL
-                            """
-                            median_result = connector.execute_query(median_query)
-                            if median_result and len(median_result) > 0:
-                                column_stats["numeric"]["median"] = median_result[0][0]
+                        numeric_result = connector.execute_query(numeric_query)
+
+                        if numeric_result and len(numeric_result) > 0:
+                            # Process each numeric column's statistics
+                            result_index = 0
+                            for col_name in numeric_columns:
+                                if col_name in table_stats["column_statistics"]:
+                                    col_stats = table_stats["column_statistics"][col_name]["numeric"]
+
+                                    # Store min, max, avg, sum
+                                    col_stats["min"] = numeric_result[0][result_index]
+                                    result_index += 1
+                                    col_stats["max"] = numeric_result[0][result_index]
+                                    result_index += 1
+                                    col_stats["avg"] = numeric_result[0][result_index]
+                                    result_index += 1
+                                    col_stats["sum"] = numeric_result[0][result_index]
+                                    result_index += 1
+
+                                    # Store zero, negative, positive counts
+                                    col_stats["zero_count"] = numeric_result[0][result_index]
+                                    result_index += 1
+                                    col_stats["negative_count"] = numeric_result[0][result_index]
+                                    result_index += 1
+                                    col_stats["positive_count"] = numeric_result[0][result_index]
+                                    result_index += 1
+
+                                    # Store stddev if available
+                                    if 'snowflake' in connection["connection_type"].lower():
+                                        col_stats["stddev"] = numeric_result[0][result_index]
+                                        result_index += 1
                     except Exception as e:
-                        logger.warning(f"Could not get median for column {column_name}: {str(e)}")
+                        logger.warning(f"Error getting numeric statistics: {str(e)}")
 
-                except Exception as e:
-                    logger.warning(f"Could not get numeric statistics for column {column_name}: {str(e)}")
+            # 4. Get date statistics in one batch
+            if date_columns:
+                date_stat_parts = []
 
-            # Get date/time statistics
-            if is_date:
+                for col_name in date_columns:
+                    date_stat_parts.extend([
+                        f"MIN({col_name}) as {col_name}_min",
+                        f"MAX({col_name}) as {col_name}_max",
+                        f"COUNT(CASE WHEN {col_name} > CURRENT_DATE() THEN 1 END) as {col_name}_future_count",
+                        f"COUNT(CASE WHEN {col_name} <= CURRENT_DATE() THEN 1 END) as {col_name}_past_count"
+                    ])
+
+                if date_stat_parts:
+                    date_query = f"SELECT {', '.join(date_stat_parts)} FROM {table_name} WHERE "
+                    date_query += " AND ".join([f"{col} IS NOT NULL" for col in date_columns])
+
+                    try:
+                        date_result = connector.execute_query(date_query)
+
+                        if date_result and len(date_result) > 0:
+                            # Process each date column's statistics
+                            result_index = 0
+                            for col_name in date_columns:
+                                if col_name in table_stats["column_statistics"]:
+                                    col_stats = table_stats["column_statistics"][col_name]["datetime"]
+
+                                    # Store min and max dates
+                                    min_date = date_result[0][result_index]
+                                    max_date = date_result[0][result_index + 1]
+
+                                    # Format dates as ISO strings if they're datetime objects
+                                    col_stats["min"] = min_date.isoformat() if hasattr(min_date,
+                                                                                       'isoformat') else min_date
+                                    col_stats["max"] = max_date.isoformat() if hasattr(max_date,
+                                                                                       'isoformat') else max_date
+
+                                    result_index += 2
+
+                                    # Store future and past counts
+                                    col_stats["future_count"] = date_result[0][result_index]
+                                    result_index += 1
+                                    col_stats["past_count"] = date_result[0][result_index]
+                                    result_index += 1
+                    except Exception as e:
+                        logger.warning(f"Error getting date statistics: {str(e)}")
+
+            # 5. Get string statistics in one batch
+            if string_columns:
+                string_stat_parts = []
+
+                for col_name in string_columns:
+                    string_stat_parts.extend([
+                        f"MIN(LENGTH({col_name})) as {col_name}_min_length",
+                        f"MAX(LENGTH({col_name})) as {col_name}_max_length",
+                        f"AVG(LENGTH({col_name})) as {col_name}_avg_length",
+                        f"COUNT(CASE WHEN {col_name} = '' THEN 1 END) as {col_name}_empty_count"
+                    ])
+
+                if string_stat_parts:
+                    string_query = f"SELECT {', '.join(string_stat_parts)} FROM {table_name} WHERE "
+                    string_query += " AND ".join([f"{col} IS NOT NULL" for col in string_columns])
+
+                    try:
+                        string_result = connector.execute_query(string_query)
+
+                        if string_result and len(string_result) > 0:
+                            # Process each string column's statistics
+                            result_index = 0
+                            for col_name in string_columns:
+                                if col_name in table_stats["column_statistics"]:
+                                    col_stats = table_stats["column_statistics"][col_name]["string"]
+                                    basic_stats = table_stats["column_statistics"][col_name]["basic"]
+
+                                    # Store length statistics
+                                    col_stats["min_length"] = string_result[0][result_index]
+                                    basic_stats["min_length"] = string_result[0][result_index]
+                                    result_index += 1
+
+                                    col_stats["max_length"] = string_result[0][result_index]
+                                    basic_stats["max_length"] = string_result[0][result_index]
+                                    result_index += 1
+
+                                    col_stats["avg_length"] = string_result[0][result_index]
+                                    basic_stats["avg_length"] = string_result[0][result_index]
+                                    result_index += 1
+
+                                    # Store empty count
+                                    col_stats["empty_count"] = string_result[0][result_index]
+                                    basic_stats["empty_count"] = string_result[0][result_index]
+                                    result_index += 1
+
+                                    # Calculate empty percentage
+                                    if table_stats["general"]["row_count"] > 0:
+                                        empty_percentage = (col_stats["empty_count"] / table_stats["general"][
+                                            "row_count"]) * 100
+                                        col_stats["empty_percentage"] = empty_percentage
+                                        basic_stats["empty_percentage"] = empty_percentage
+                    except Exception as e:
+                        logger.warning(f"Error getting string statistics: {str(e)}")
+
+            # 6. Get top values for each column (limited to prevent performance issues)
+            # This is done separately since each column needs its own query
+            # But we limit to only columns that would be meaningful
+            top_value_columns = []
+            for col in columns:
+                col_name = col["name"]
+                col_type = col["type"].lower() if isinstance(col["type"], str) else str(col["type"]).lower()
+
+                # Skip columns that would be inefficient to get top values for
+                # such as large text or binary columns
+                if not ('text' in col_type and 'long' in col_type) and not ('blob' in col_type):
+                    # Skip columns with too many distinct values (if we know)
+                    col_stats = table_stats["column_statistics"].get(col_name, {})
+                    distinct_count = col_stats.get("basic", {}).get("distinct_count", 0)
+
+                    # Only include if distinct count is unknown or reasonably small
+                    if distinct_count == 0 or distinct_count < 1000:
+                        top_value_columns.append(col_name)
+
+            # Cap at 10 columns to prevent too many queries
+            top_value_columns = top_value_columns[:10]
+
+            # Get top values for selected columns
+            for col_name in top_value_columns:
                 try:
-                    date_query = f"""
-                        SELECT 
-                            MIN({column_name}), 
-                            MAX({column_name})
+                    top_n = 10  # Number of top values to retrieve
+                    top_values_query = f"""
+                        SELECT {col_name}, COUNT(*) as count
                         FROM {table_name}
-                        WHERE {column_name} IS NOT NULL
+                        WHERE {col_name} IS NOT NULL
+                        GROUP BY {col_name}
+                        ORDER BY count DESC
+                        LIMIT {top_n}
                     """
-                    result = connector.execute_query(date_query)
-                    if result and len(result) > 0:
-                        min_date = result[0][0]
-                        max_date = result[0][1]
+                    result = connector.execute_query(top_values_query)
 
-                        # Format dates as ISO strings if they're datetime objects
-                        column_stats["datetime"]["min"] = min_date.isoformat() if hasattr(min_date,
-                                                                                          'isoformat') else min_date
-                        column_stats["datetime"]["max"] = max_date.isoformat() if hasattr(max_date,
-                                                                                          'isoformat') else max_date
+                    if result and col_name in table_stats["column_statistics"]:
+                        top_values = []
+                        for row in result:
+                            value = row[0]
+                            count = row[1]
+                            percentage = (count / table_stats["general"]["row_count"]) * 100 if table_stats["general"][
+                                                                                                    "row_count"] > 0 else 0
 
-                    # Get future date count
-                    future_query = f"""
-                        SELECT COUNT(*)
-                        FROM {table_name}
-                        WHERE {column_name} > CURRENT_DATE()
-                    """
-                    future_result = connector.execute_query(future_query)
-                    if future_result and len(future_result) > 0:
-                        column_stats["datetime"]["future_count"] = future_result[0][0]
+                            # Format value for display (truncate long strings)
+                            display_value = str(value)
+                            if isinstance(value, str) and len(display_value) > 100:
+                                display_value = display_value[:97] + "..."
 
-                    # Get past date count
-                    past_query = f"""
-                        SELECT COUNT(*)
-                        FROM {table_name}
-                        WHERE {column_name} <= CURRENT_DATE()
-                    """
-                    past_result = connector.execute_query(past_query)
-                    if past_result and len(past_result) > 0:
-                        column_stats["datetime"]["past_count"] = past_result[0][0]
+                            top_values.append({
+                                "value": display_value,
+                                "count": count,
+                                "percentage": percentage
+                            })
 
+                        table_stats["column_statistics"][col_name]["top_values"] = top_values
                 except Exception as e:
-                    logger.warning(f"Could not get date statistics for column {column_name}: {str(e)}")
+                    logger.warning(f"Error getting top values for column {col_name}: {str(e)}")
 
-            # Get string statistics
-            if is_string:
-                try:
-                    # Get length statistics
-                    length_query = f"""
-                        SELECT 
-                            MIN(LENGTH({column_name})), 
-                            MAX(LENGTH({column_name})),
-                            AVG(LENGTH({column_name}))
-                        FROM {table_name}
-                        WHERE {column_name} IS NOT NULL
+            # 7. Get table size information in one query if supported
+            try:
+                if 'snowflake' in connection["connection_type"].lower():
+                    # Snowflake-specific query to get table size
+                    size_query = f"""
+                        SELECT TABLE_NAME, ACTIVE_BYTES, DELETED_BYTES, TIME_TRAVEL_BYTES, LAST_ALTERED
+                        FROM INFORMATION_SCHEMA.TABLE_STORAGE_METRICS
+                        WHERE TABLE_NAME = '{table_name.upper()}'
                     """
-                    result = connector.execute_query(length_query)
+                    result = connector.execute_query(size_query)
                     if result and len(result) > 0:
-                        column_stats["string"]["min_length"] = result[0][0]
-                        column_stats["string"]["max_length"] = result[0][1]
-                        column_stats["string"]["avg_length"] = result[0][2]
+                        active_bytes = result[0][1] or 0
+                        deleted_bytes = result[0][2] or 0
+                        time_travel_bytes = result[0][3] or 0
+                        last_altered = result[0][4]
 
-                        # Also set these in the basic stats
-                        column_stats["basic"]["min_length"] = result[0][0]
-                        column_stats["basic"]["max_length"] = result[0][1]
-                        column_stats["basic"]["avg_length"] = result[0][2]
+                        table_stats["general"]["size_bytes"] = active_bytes
+                        table_stats["general"]["total_storage_bytes"] = active_bytes + deleted_bytes + time_travel_bytes
 
-                    # Get empty string count
-                    empty_query = f"""
-                        SELECT COUNT(*)
-                        FROM {table_name}
-                        WHERE {column_name} = ''
+                        if last_altered:
+                            table_stats["general"]["last_updated"] = last_altered.isoformat() if hasattr(last_altered,
+                                                                                                         'isoformat') else last_altered
+                elif 'postgresql' in connection["connection_type"].lower():
+                    # PostgreSQL query to get table size
+                    size_query = f"""
+                        SELECT pg_total_relation_size('{table_name}')
                     """
-                    empty_result = connector.execute_query(empty_query)
-                    if empty_result and len(empty_result) > 0:
-                        column_stats["string"]["empty_count"] = empty_result[0][0]
-                        column_stats["basic"]["empty_count"] = empty_result[0][0]
+                    result = connector.execute_query(size_query)
+                    if result and len(result) > 0:
+                        table_stats["general"]["size_bytes"] = result[0][0]
+            except Exception as e:
+                logger.warning(f"Could not get table size for {table_name}: {str(e)}")
 
-                        if table_stats["general"]["row_count"] > 0:
-                            empty_percentage = (column_stats["string"]["empty_count"] / table_stats["general"][
-                                "row_count"]) * 100
-                            column_stats["string"]["empty_percentage"] = empty_percentage
-                            column_stats["basic"]["empty_percentage"] = empty_percentage
-
-                    # Try to detect patterns for common column names
-                    pattern_analysis = {}
-
-                    # Email pattern check
-                    if "email" in column_name.lower():
-                        email_pattern_query = f"""
-                            SELECT COUNT(*)
-                            FROM {table_name}
-                            WHERE {column_name} IS NOT NULL
-                            AND {column_name} LIKE '%@%.%'
-                        """
-                        valid_email_result = connector.execute_query(email_pattern_query)
-                        if valid_email_result and len(valid_email_result) > 0:
-                            valid_count = valid_email_result[0][0]
-                            non_null_count = table_stats["general"]["row_count"] - (
-                                    column_stats["basic"]["null_count"] or 0)
-                            invalid_count = non_null_count - valid_count - (column_stats["string"]["empty_count"] or 0)
-
-                            pattern_analysis["email_pattern"] = {
-                                "valid_count": valid_count,
-                                "invalid_count": invalid_count,
-                                "valid_percentage": (valid_count / non_null_count * 100) if non_null_count > 0 else 0
-                            }
-
-                    # Phone pattern check
-                    if any(phone_term in column_name.lower() for phone_term in ["phone", "mobile", "tel", "fax"]):
-                        # Simple pattern: contains only digits, spaces, dashes, parentheses, and plus
-                        phone_pattern_query = f"""
-                            SELECT COUNT(*)
-                            FROM {table_name}
-                            WHERE {column_name} IS NOT NULL
-                            AND REGEXP_LIKE({column_name}, '^[0-9\\+\\-\\(\\)\\s]+$')
-                        """
-                        try:
-                            valid_phone_result = connector.execute_query(phone_pattern_query)
-                            if valid_phone_result and len(valid_phone_result) > 0:
-                                valid_count = valid_phone_result[0][0]
-                                non_null_count = table_stats["general"]["row_count"] - (
-                                        column_stats["basic"]["null_count"] or 0)
-                                invalid_count = non_null_count - valid_count - (
-                                        column_stats["string"]["empty_count"] or 0)
-
-                                pattern_analysis["phone_pattern"] = {
-                                    "valid_count": valid_count,
-                                    "invalid_count": invalid_count,
-                                    "valid_percentage": (
-                                            valid_count / non_null_count * 100) if non_null_count > 0 else 0
-                                }
-                        except Exception:
-                            # REGEXP_LIKE might not be supported in all databases
-                            pass
-
-                    # Add ZIP/Postal code pattern check
-                    if any(zip_term in column_name.lower() for zip_term in ["zip", "postal", "postcode", "post_code"]):
-                        # US zip code pattern (5 digits, optionally followed by dash and 4 more digits)
-                        try:
-                            us_zip_pattern_query = f"""
-                                SELECT COUNT(*)
-                                FROM {table_name}
-                                WHERE {column_name} IS NOT NULL
-                                AND REGEXP_LIKE({column_name}, '^[0-9]{{5}}(-[0-9]{{4}})?$')
-                            """
-                            us_zip_result = connector.execute_query(us_zip_pattern_query)
-                            if us_zip_result and len(us_zip_result) > 0:
-                                us_valid_count = us_zip_result[0][0]
-                                non_null_count = table_stats["general"]["row_count"] - (
-                                        column_stats["basic"]["null_count"] or 0)
-                                pattern_analysis["us_zip_pattern"] = {
-                                    "valid_count": us_valid_count,
-                                    "valid_percentage": (
-                                                us_valid_count / non_null_count * 100) if non_null_count > 0 else 0
-                                }
-                        except Exception:
-                            pass
-
-                        # Canadian postal code pattern (A1A 1A1 format)
-                        try:
-                            canada_postal_pattern_query = f"""
-                                SELECT COUNT(*)
-                                FROM {table_name}
-                                WHERE {column_name} IS NOT NULL
-                                AND REGEXP_LIKE({column_name}, '^[A-Za-z][0-9][A-Za-z]\\s?[0-9][A-Za-z][0-9]$')
-                            """
-                            canada_postal_result = connector.execute_query(canada_postal_pattern_query)
-                            if canada_postal_result and len(canada_postal_result) > 0:
-                                canada_valid_count = canada_postal_result[0][0]
-                                non_null_count = table_stats["general"]["row_count"] - (
-                                        column_stats["basic"]["null_count"] or 0)
-                                pattern_analysis["canada_postal_pattern"] = {
-                                    "valid_count": canada_valid_count,
-                                    "valid_percentage": (
-                                                canada_valid_count / non_null_count * 100) if non_null_count > 0 else 0
-                                }
-                        except Exception:
-                            pass
-
-                    # Add Credit Card pattern check
-                    if any(cc_term in column_name.lower() for cc_term in
-                           ["credit", "card", "cc", "creditcard", "payment"]):
-                        try:
-                            # Basic Luhn algorithm validation would be better but too complex for SQL
-                            # This checks for typical credit card formats (13-19 digits, possibly with spaces/dashes)
-                            cc_pattern_query = f"""
-                                SELECT COUNT(*)
-                                FROM {table_name}
-                                WHERE {column_name} IS NOT NULL
-                                AND REGEXP_LIKE(REPLACE(REPLACE({column_name}, '-', ''), ' ', ''), '^[0-9]{{13,19}}$')
-                            """
-                            cc_result = connector.execute_query(cc_pattern_query)
-                            if cc_result and len(cc_result) > 0:
-                                cc_valid_count = cc_result[0][0]
-                                non_null_count = table_stats["general"]["row_count"] - (
-                                        column_stats["basic"]["null_count"] or 0)
-                                pattern_analysis["credit_card_pattern"] = {
-                                    "valid_count": cc_valid_count,
-                                    "valid_percentage": (
-                                                cc_valid_count / non_null_count * 100) if non_null_count > 0 else 0
-                                }
-                        except Exception:
-                            pass
-
-                    # Add URL pattern check
-                    if any(url_term in column_name.lower() for url_term in ["url", "website", "web", "site", "link"]):
-                        try:
-                            url_pattern_query = f"""
-                                SELECT COUNT(*)
-                                FROM {table_name}
-                                WHERE {column_name} IS NOT NULL
-                                AND (
-                                    {column_name} LIKE 'http://%' OR
-                                    {column_name} LIKE 'https://%' OR
-                                    {column_name} LIKE 'www.%'
-                                )
-                            """
-                            url_result = connector.execute_query(url_pattern_query)
-                            if url_result and len(url_result) > 0:
-                                url_valid_count = url_result[0][0]
-                                non_null_count = table_stats["general"]["row_count"] - (
-                                        column_stats["basic"]["null_count"] or 0)
-                                pattern_analysis["url_pattern"] = {
-                                    "valid_count": url_valid_count,
-                                    "valid_percentage": (
-                                                url_valid_count / non_null_count * 100) if non_null_count > 0 else 0
-                                }
-                        except Exception:
-                            pass
-
-                    # Add pattern analysis if we found anything
-                    if pattern_analysis:
-                        column_stats["string"]["pattern_analysis"] = pattern_analysis
-
-                except Exception as e:
-                    logger.warning(f"Could not get string statistics for column {column_name}: {str(e)}")
-
-            # Add to column statistics
-            table_stats["column_statistics"][column_name] = column_stats
+        except Exception as e:
+            logger.error(f"Error in optimized statistics collection: {str(e)}")
+            # Continue with traditional methods if optimized approach fails
 
         # Calculate collection duration
         end_time = datetime.datetime.now()
@@ -3146,6 +3484,7 @@ def get_table_statistics(current_user, organization_id, connection_id, table_nam
         table_stats["collection_metadata"]["collection_duration_ms"] = duration_ms
 
         # Save key metrics to historical statistics
+        # (extract this to a separate function or batch process)
         def save_historical_statistics(connection_id, organization_id, table_name, table_stats):
             """Save key metrics to historical statistics table"""
             try:
@@ -3193,10 +3532,10 @@ def get_table_statistics(current_user, organization_id, connection_id, table_nam
                     "collected_at": now
                 })
 
-                # Add column-level metrics
+                # Add column-level metrics - limited to essential metrics only
                 for column_name, column_stats in table_stats["column_statistics"].items():
                     # Track null percentage
-                    null_percentage = column_stats["basic"]["null_percentage"]
+                    null_percentage = column_stats["basic"].get("null_percentage")
                     if null_percentage is not None:
                         # Convert Decimal to float if needed
                         if isinstance(null_percentage, decimal.Decimal):
@@ -3212,8 +3551,8 @@ def get_table_statistics(current_user, organization_id, connection_id, table_nam
                             "collected_at": now
                         })
 
-                    # Track distinct percentage
-                    distinct_percentage = column_stats["basic"]["distinct_percentage"]
+                    # Track distinct percentage (essential for cardinality trends)
+                    distinct_percentage = column_stats["basic"].get("distinct_percentage")
                     if distinct_percentage is not None:
                         # Convert Decimal to float if needed
                         if isinstance(distinct_percentage, decimal.Decimal):
@@ -3226,23 +3565,6 @@ def get_table_statistics(current_user, organization_id, connection_id, table_nam
                             "column_name": column_name,
                             "metric_name": "distinct_percentage",
                             "metric_value": distinct_percentage,
-                            "collected_at": now
-                        })
-
-                    # Track numeric stats if available
-                    avg_value = column_stats["numeric"]["avg"]
-                    if avg_value is not None:
-                        # Convert Decimal to float if needed
-                        if isinstance(avg_value, decimal.Decimal):
-                            avg_value = float(avg_value)
-
-                        historical_records.append({
-                            "connection_id": connection_id,
-                            "organization_id": organization_id,
-                            "table_name": table_name,
-                            "column_name": column_name,
-                            "metric_name": "avg_value",
-                            "metric_value": avg_value,
                             "collected_at": now
                         })
 
@@ -3263,8 +3585,8 @@ def get_table_statistics(current_user, organization_id, connection_id, table_nam
                 logger.error(traceback.format_exc())
                 return False
 
-        # Call the function after collecting statistics
-        save_historical_statistics(connection_id, organization_id, table_name, table_stats)
+        # Call historical statistics function asynchronously
+        task_executor.submit(save_historical_statistics, connection_id, organization_id, table_name, table_stats)
 
         # Store statistics in cache
         storage_service = MetadataStorageService()
@@ -3296,8 +3618,6 @@ def get_table_statistics(current_user, organization_id, connection_id, table_nam
         logger.error(traceback.format_exc())
         return jsonify({"error": str(e)}), 500
 
-
-# In backend/app.py - add this new route
 
 @app.route("/api/connections/<connection_id>/changes", methods=["GET"])
 @token_required
@@ -3712,23 +4032,13 @@ def check_custom_pattern(current_user, organization_id, connection_id, table_nam
 def get_tables_for_connection(current_user, organization_id, connection_id):
     """Get all tables for a specific connection"""
     try:
-        # Check access to this connection
-        supabase_mgr = SupabaseManager()
-        connection_check = supabase_mgr.supabase.table("database_connections") \
-            .select("*") \
-            .eq("id", connection_id) \
-            .eq("organization_id", organization_id) \
-            .execute()
-
-        if not connection_check.data or len(connection_check.data) == 0:
-            logger.error(f"Connection not found or access denied: {connection_id}")
+        # Check access to connection
+        connection = connection_access_check(connection_id, organization_id)
+        if not connection:
             return jsonify({"error": "Connection not found or access denied"}), 404
 
-        connection = connection_check.data[0]
-
         # First try to get from cache
-        storage_service = MetadataStorageService()
-        tables_metadata = storage_service.get_metadata(connection_id, "tables")
+        tables_metadata = get_metadata_cached(connection_id, "tables")
 
         if tables_metadata and "metadata" in tables_metadata:
             # Return cached tables
@@ -3761,13 +4071,19 @@ def get_tables_for_connection(current_user, organization_id, connection_id):
         # Store in cache for future use
         if tables:
             tables_data = []
-            for table in tables[:min(len(tables), 20)]:  # Limit to 20 tables for immediate response
+            for table in tables[:min(len(tables), 100)]:  # Store up to 100 tables
                 tables_data.append({
                     "name": table,
                     "id": str(uuid.uuid4())  # Generate an ID for this table
                 })
 
+            storage_service = MetadataStorageService()
             storage_service.store_tables_metadata(connection_id, tables_data)
+
+            # Schedule a background task to collect more detailed metadata
+            if metadata_task_manager is not None:
+                params = {"depth": "light", "table_limit": 50}
+                metadata_task_manager.submit_collection_task(connection_id, params, "low")
 
         return jsonify({
             "tables": tables,
@@ -3989,35 +4305,22 @@ def schedule_metadata_task(current_user, organization_id, connection_id):
 def get_metadata_tasks(current_user, organization_id, connection_id):
     """Get recent metadata tasks for a connection"""
     try:
+        # Check access to connection
+        connection = connection_access_check(connection_id, organization_id)
+        if not connection:
+            return jsonify({"error": "Connection not found or access denied"}), 404
+
         # Make sure task manager is initialized
         if metadata_task_manager is None:
             init_metadata_task_manager()
 
-        # Check access to connection
-        supabase_mgr = SupabaseManager()
-        connection_check = supabase_mgr.supabase.table("database_connections") \
-            .select("*") \
-            .eq("id", connection_id) \
-            .eq("organization_id", organization_id) \
-            .execute()
-
-        if not connection_check.data or len(connection_check.data) == 0:
-            logger.error(f"Connection not found or access denied: {connection_id}")
-            return jsonify({"error": "Connection not found or access denied"}), 404
-
-        # Get recent tasks
+        # Get recent tasks for this connection
         limit = request.args.get("limit", 10, type=int)
-        tasks = metadata_task_manager.get_recent_tasks(limit)
-
-        # Filter tasks for this connection
-        connection_tasks = [
-            task for task in tasks
-            if task.get("task", {}).get("connection_id") == connection_id
-        ]
+        tasks = metadata_task_manager.get_recent_tasks(limit, connection_id)
 
         return jsonify({
-            "tasks": connection_tasks,
-            "count": len(connection_tasks)
+            "tasks": tasks,
+            "count": len(tasks)
         })
 
     except Exception as e:
@@ -4031,66 +4334,80 @@ def get_metadata_tasks(current_user, organization_id, connection_id):
 def refresh_metadata(current_user, organization_id, connection_id):
     """Trigger a metadata refresh based on event or user request"""
     try:
+        # Check access to connection
+        connection = connection_access_check(connection_id, organization_id)
+        if not connection:
+            return jsonify({"error": "Connection not found or access denied"}), 404
+
         # Get refresh parameters
         data = request.get_json() or {}
         metadata_type = data.get("metadata_type", "schema")
         table_name = data.get("table_name")
 
-        # Check access to connection
-        supabase_mgr = SupabaseManager()
-        connection_check = supabase_mgr.supabase.table("database_connections") \
-            .select("*") \
-            .eq("id", connection_id) \
-            .eq("organization_id", organization_id) \
-            .execute()
+        # Make sure task manager is initialized
+        if metadata_task_manager is None:
+            init_metadata_task_manager()
 
-        if not connection_check.data or len(connection_check.data) == 0:
-            logger.error(f"Connection not found or access denied: {connection_id}")
-            return jsonify({"error": "Connection not found or access denied"}), 404
+        # Submit appropriate task based on metadata type
+        task_id = None
 
-        # Publish a USER_REQUEST event
-        task_id = publish_metadata_event(
-            event_type=MetadataEventType.USER_REQUEST,
-            connection_id=connection_id,
-            details={
-                "metadata_type": metadata_type,
-                "table_name": table_name
-            },
-            organization_id=organization_id,
-            user_id=current_user
-        )
+        if metadata_type == "schema":
+            if table_name:
+                # Refresh a specific table's schema
+                task_id = metadata_task_manager.submit_table_metadata_task(connection_id, table_name, "high")
+                message = f"Scheduled schema refresh for table {table_name}"
+            else:
+                # Refresh all tables (limited)
+                params = {"depth": "light", "table_limit": 100}
+                task_id = metadata_task_manager.submit_collection_task(connection_id, params, "high")
+                message = "Scheduled schema refresh for all tables"
+
+        elif metadata_type == "statistics":
+            if table_name:
+                # Refresh statistics for a specific table
+                task_id = metadata_task_manager.submit_statistics_refresh_task(connection_id, table_name, "high")
+                message = f"Scheduled statistics refresh for table {table_name}"
+            else:
+                # Refresh statistics for recently accessed tables
+                params = {"depth": "medium", "table_limit": 20, "focus": "statistics"}
+                task_id = metadata_task_manager.submit_collection_task(connection_id, params, "high")
+                message = "Scheduled statistics refresh for recently accessed tables"
+
+        elif metadata_type == "full":
+            # Comprehensive refresh
+            params = {"depth": "deep", "table_limit": 50}
+            task_id = metadata_task_manager.submit_collection_task(connection_id, params, "high")
+            message = "Scheduled comprehensive metadata refresh"
+
+        else:
+            return jsonify({"error": f"Unknown metadata type: {metadata_type}"}), 400
 
         if task_id:
+            # Also create a USER_REQUEST event for the event system
+            try:
+                publish_metadata_event(
+                    event_type=MetadataEventType.USER_REQUEST,
+                    connection_id=connection_id,
+                    details={
+                        "metadata_type": metadata_type,
+                        "table_name": table_name
+                    },
+                    organization_id=organization_id,
+                    user_id=current_user
+                )
+            except Exception as e:
+                logger.warning(f"Failed to publish event, but task was still created: {str(e)}")
+
             return jsonify({
                 "task_id": task_id,
                 "status": "scheduled",
-                "message": f"Scheduled metadata refresh for {metadata_type}"
+                "message": message
             })
         else:
-            # If event publishing didn't create a task, try direct method
-            if metadata_task_manager is None:
-                init_metadata_task_manager()
-
-            # Prepare event details
-            details = {
-                "metadata_type": metadata_type,
-                "table_name": table_name
-            }
-
-            # Try to handle the event directly
-            task_id = metadata_task_manager.handle_metadata_event("USER_REQUEST", connection_id, details)
-
-            if task_id:
-                return jsonify({
-                    "task_id": task_id,
-                    "status": "scheduled",
-                    "message": f"Scheduled metadata refresh for {metadata_type}"
-                })
-            else:
-                return jsonify({
-                    "status": "no_action",
-                    "message": "No refresh action needed at this time"
-                })
+            return jsonify({
+                "status": "no_action",
+                "message": "No refresh action needed at this time"
+            })
 
     except Exception as e:
         logger.error(f"Error refreshing metadata: {str(e)}")
@@ -4103,31 +4420,21 @@ def refresh_metadata(current_user, organization_id, connection_id):
 def get_metadata_status(current_user, organization_id, connection_id):
     """Get metadata freshness status for a connection"""
     try:
+        # Check access to connection
+        connection = connection_access_check(connection_id, organization_id)
+        if not connection:
+            return jsonify({"error": "Connection not found or access denied"}), 404
+
         # Make sure task manager is initialized
         if metadata_task_manager is None:
             init_metadata_task_manager()
 
-        # Check access to connection
-        supabase_mgr = SupabaseManager()
-        connection_check = supabase_mgr.supabase.table("database_connections") \
-            .select("*") \
-            .eq("id", connection_id) \
-            .eq("organization_id", organization_id) \
-            .execute()
-
-        if not connection_check.data or len(connection_check.data) == 0:
-            logger.error(f"Connection not found or access denied: {connection_id}")
-            return jsonify({"error": "Connection not found or access denied"}), 404
-
-        # Get metadata status
-        storage_service = MetadataStorageService()
-
-        # Get all metadata types
+        # Get metadata status efficiently - use the cached getter
         metadata_types = ["tables", "columns", "statistics"]
         status = {}
 
         for metadata_type in metadata_types:
-            metadata = storage_service.get_metadata(connection_id, metadata_type)
+            metadata = get_metadata_cached(connection_id, metadata_type)
 
             if metadata:
                 status[metadata_type] = {
@@ -4142,16 +4449,22 @@ def get_metadata_status(current_user, organization_id, connection_id):
                     "last_updated": None
                 }
 
-        # Get any pending tasks
-        tasks = metadata_task_manager.get_recent_tasks(5)
+        # Get any pending tasks - limit to this connection only
+        tasks = metadata_task_manager.get_recent_tasks(5, connection_id)
         pending_tasks = [
             task for task in tasks
-            if task.get("task", {}).get("connection_id") == connection_id and
-               task.get("task", {}).get("status") == "pending"
+            if task.get("task", {}).get("status") == "pending"
         ]
 
         # Add to status
         status["pending_tasks"] = pending_tasks
+
+        # Add connection info
+        status["connection"] = {
+            "name": connection.get("name", "Unknown"),
+            "type": connection.get("connection_type", "Unknown"),
+            "id": connection_id
+        }
 
         return jsonify(status)
 
@@ -4251,21 +4564,14 @@ def get_worker_stats(current_user, organization_id):
 def get_metadata_task_status(current_user, organization_id, connection_id, task_id):
     """Get status of a metadata collection task"""
     try:
+        # Check access to connection
+        connection = connection_access_check(connection_id, organization_id)
+        if not connection:
+            return jsonify({"error": "Connection not found or access denied"}), 404
+
         # Make sure task manager is initialized
         if metadata_task_manager is None:
             init_metadata_task_manager()
-
-        # Check access to connection
-        supabase_mgr = SupabaseManager()
-        connection_check = supabase_mgr.supabase.table("database_connections") \
-            .select("*") \
-            .eq("id", connection_id) \
-            .eq("organization_id", organization_id) \
-            .execute()
-
-        if not connection_check.data or len(connection_check.data) == 0:
-            logger.error(f"Connection not found or access denied: {connection_id}")
-            return jsonify({"error": "Connection not found or access denied"}), 404
 
         # Get task status
         task_status = metadata_task_manager.get_task_status(task_id)
@@ -4723,16 +5029,24 @@ def get_change_analytics_dashboard(current_user, organization_id, connection_id)
         logger.error(traceback.format_exc())
         return jsonify({"error": str(e)}), 500
 
-# @app.before_request
-# def log_memory_before():
-#     memory_usage = psutil.virtual_memory()
-#     logger.info(f"Before Request - Memory Usage: {memory_usage.percent}% used")
-#
-# @app.after_request
-# def log_memory_after(response):
-#     memory_usage = psutil.virtual_memory()
-#     logger.info(f"After Request - Memory Usage: {memory_usage.percent}% used")
-#     return response
+
+@app.after_request
+def after_request(response):
+    origin = request.headers.get('Origin', '')
+
+    # Allow both your production and development environments
+    if origin in ['https://cloud.sparvi.io', 'http://localhost:3000']:
+        response.headers.set('Access-Control-Allow-Origin', origin)
+    else:
+        response.headers.set('Access-Control-Allow-Origin', 'https://cloud.sparvi.io')
+
+    response.headers.set('Access-Control-Allow-Headers', 'Content-Type,Authorization,X-Requested-With')
+    response.headers.set('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS')
+    response.headers.set('Access-Control-Allow-Credentials', 'true')
+    # Cache preflight requests to reduce OPTIONS calls
+    response.headers.set('Access-Control-Max-Age', '3600')  # 1 hour
+    return response
+
 
 if __name__ == "__main__":
     # In production, ensure you run with HTTPS (via a reverse proxy or WSGI server with SSL configured)

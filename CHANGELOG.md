@@ -2,6 +2,16 @@
 
 All notable changes to Sparvi will be documented in this file.
 
+## [0.5.2] - 2025-03-18
+### Added
+- None
+
+### Changed
+- None
+
+### Fixed
+- Making api more efficient
+
 ## [0.5.1] - 2025-03-18
 ### Added
 - None
