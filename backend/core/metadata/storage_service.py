@@ -81,14 +81,38 @@ class MetadataStorageService:
                 "total_columns": sum(len(cols) for cols in columns_by_table.values())
             }
 
-            # Upsert into connection_metadata
-            response = self.supabase.table("connection_metadata").upsert({
-                "connection_id": connection_id,
-                "metadata_type": "columns",
-                "metadata": metadata,
-                "collected_at": datetime.datetime.now().isoformat(),
-                "refresh_frequency": "1 day"
-            }).execute()
+            # Use check-then-update/insert pattern
+            try:
+                # Check if record exists first
+                check_response = self.supabase.table("connection_metadata") \
+                    .select("id") \
+                    .eq("connection_id", connection_id) \
+                    .eq("metadata_type", "columns") \
+                    .execute()
+
+                if check_response.data and len(check_response.data) > 0:
+                    # Record exists, update it
+                    logger.info(f"Entry exists, updating columns metadata for {connection_id}")
+                    response = self.supabase.table("connection_metadata") \
+                        .update({
+                        "metadata": metadata,
+                        "collected_at": datetime.datetime.now().isoformat()
+                    }) \
+                        .eq("connection_id", connection_id) \
+                        .eq("metadata_type", "columns") \
+                        .execute()
+                else:
+                    # Record doesn't exist, insert it
+                    response = self.supabase.table("connection_metadata").insert({
+                        "connection_id": connection_id,
+                        "metadata_type": "columns",
+                        "metadata": metadata,
+                        "collected_at": datetime.datetime.now().isoformat(),
+                        "refresh_frequency": "1 day"
+                    }).execute()
+            except Exception as e:
+                logger.error(f"Error upserting columns metadata: {str(e)}")
+                return False
 
             if not response.data:
                 logger.error("Failed to store columns metadata")
