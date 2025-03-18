@@ -7,7 +7,7 @@ on:
     paths:
       - '**/*.py'
       - 'backend/**'
-      - 'frontend/**'
+      - 'sparvi-frontend/**'
       - 'package.json'
       - 'requirements.txt'
 
@@ -36,15 +36,15 @@ jobs:
             fi
           fi
           
-          # Check package.json version for frontend changes
-          if git diff --name-only origin/$BASE_BRANCH HEAD | grep -q "frontend/"; then
-            if git diff --name-only origin/$BASE_BRANCH HEAD | grep -q "frontend/package.json"; then
-              VERSION_CHANGED=$(git diff origin/$BASE_BRANCH HEAD frontend/package.json | grep -q '"version":' && echo "true" || echo "false")
+          # Check package.json version for sparvi-frontend changes
+          if git diff --name-only origin/$BASE_BRANCH HEAD | grep -q "sparvi-frontend/"; then
+            if git diff --name-only origin/$BASE_BRANCH HEAD | grep -q "sparvi-frontend/package.json"; then
+              VERSION_CHANGED=$(git diff origin/$BASE_BRANCH HEAD sparvi-frontend/package.json | grep -q '"version":' && echo "true" || echo "false")
               if [ "$VERSION_CHANGED" = "true" ]; then
                 echo "✅ Frontend version was updated"
               else
-                echo "❌ Changes to frontend files detected but version in package.json was not updated"
-                echo "Please update version in frontend/package.json"
+                echo "❌ Changes to sparvi-frontend files detected but version in package.json was not updated"
+                echo "Please update version in sparvi-frontend/package.json"
                 exit 1
               fi
             fi

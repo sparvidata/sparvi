@@ -341,7 +341,7 @@ class MetadataStorage:
                 .select("metadata, collected_at") \
                 .eq("connection_id", connection_id) \
                 .eq("metadata_type", metadata_type) \
-                .order("collected_at", {'ascending': False}) \
+                .order("collected_at", desc=True) \
                 .limit(limit) \
                 .execute()
 
