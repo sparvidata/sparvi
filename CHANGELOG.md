@@ -2,6 +2,16 @@
 
 All notable changes to Sparvi will be documented in this file.
 
+## [0.5.0] - 2025-03-17
+### Added
+- None
+
+### Changed
+- Reworking frontend app
+
+### Fixed
+- None
+
 ## [0.4.3] - 2025-03-08
 ### Added
 - None
