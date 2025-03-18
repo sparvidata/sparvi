@@ -40,7 +40,8 @@ const ConnectionsPage = () => {
     };
 
     loadConnections();
-  }, [refreshConnections, setLoading, showNotification]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // Empty dependency array to run only on mount
 
   // Set connection as default
   const handleSetDefault = async (id) => {
