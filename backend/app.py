@@ -2503,13 +2503,13 @@ def after_request(response):
 
     # Allow both your production and development environments
     if origin in ['https://cloud.sparvi.io', 'http://localhost:3000']:
-        response.headers.add('Access-Control-Allow-Origin', origin)
+        response.headers.set('Access-Control-Allow-Origin', origin)
     else:
-        response.headers.add('Access-Control-Allow-Origin', 'https://cloud.sparvi.io')
+        response.headers.set('Access-Control-Allow-Origin', 'https://cloud.sparvi.io')
 
-    response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization')
-    response.headers.add('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS')
-    response.headers.add('Access-Control-Allow-Credentials', 'true')
+    response.headers.set('Access-Control-Allow-Headers', 'Content-Type,Authorization')
+    response.headers.set('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS')
+    response.headers.set('Access-Control-Allow-Credentials', 'true')
     return response
 
 @app.route("/api/connections/<connection_id>/tables/<table_name>/columns", methods=["GET"])
@@ -3336,7 +3336,7 @@ def get_schema_changes(current_user, organization_id, connection_id):
                 .eq("connection_id", connection_id) \
                 .gte("collected_at", since_timestamp) \
                 .in_("metadata_type", ["tables", "columns"]) \
-                .order("collected_at", {'ascending': False}) \
+                .order("collected_at", desc=True) \
                 .execute()
 
             if not response.data:
@@ -3355,7 +3355,7 @@ def get_schema_changes(current_user, organization_id, connection_id):
                 .eq("connection_id", connection_id) \
                 .lt("collected_at", since_timestamp) \
                 .in_("metadata_type", ["tables", "columns"]) \
-                .order("collected_at", {'ascending': False}) \
+                .order("collected_at", desc=True)  \
                 .execute()
 
             previous_tables = None
@@ -3697,6 +3697,81 @@ def check_custom_pattern(current_user, organization_id, connection_id, table_nam
         logger.error(traceback.format_exc())
         return jsonify({"error": str(e)}), 500
 
+
+@app.route("/api/connections/<connection_id>/tables", methods=["GET"])
+@token_required
+def get_tables_for_connection(current_user, organization_id, connection_id):
+    """Get all tables for a specific connection"""
+    try:
+        # Check access to this connection
+        supabase_mgr = SupabaseManager()
+        connection_check = supabase_mgr.supabase.table("database_connections") \
+            .select("*") \
+            .eq("id", connection_id) \
+            .eq("organization_id", organization_id) \
+            .execute()
+
+        if not connection_check.data or len(connection_check.data) == 0:
+            logger.error(f"Connection not found or access denied: {connection_id}")
+            return jsonify({"error": "Connection not found or access denied"}), 404
+
+        connection = connection_check.data[0]
+
+        # First try to get from cache
+        storage_service = MetadataStorageService()
+        tables_metadata = storage_service.get_metadata(connection_id, "tables")
+
+        if tables_metadata and "metadata" in tables_metadata:
+            # Return cached tables
+            tables = []
+            for table_data in tables_metadata["metadata"].get("tables", []):
+                tables.append(table_data.get("name"))
+
+            return jsonify({
+                "tables": tables,
+                "freshness": tables_metadata.get("freshness", {"status": "unknown"})
+            })
+
+        # If no cache, collect fresh data
+        logger.info(f"No cached table data, collecting fresh data for connection {connection_id}")
+
+        # Create connector for this connection
+        try:
+            connector = get_connector_for_connection(connection)
+            connector.connect()
+        except Exception as e:
+            logger.error(f"Failed to connect to database: {str(e)}")
+            return jsonify({"error": f"Failed to connect to database: {str(e)}"}), 500
+
+        # Create metadata collector
+        collector = MetadataCollector(connection_id, connector)
+
+        # Get table list
+        tables = collector.collect_table_list()
+
+        # Store in cache for future use
+        if tables:
+            tables_data = []
+            for table in tables[:min(len(tables), 20)]:  # Limit to 20 tables for immediate response
+                tables_data.append({
+                    "name": table,
+                    "id": str(uuid.uuid4())  # Generate an ID for this table
+                })
+
+            storage_service.store_tables_metadata(connection_id, tables_data)
+
+        return jsonify({
+            "tables": tables,
+            "freshness": {
+                "status": "fresh",
+                "age_seconds": 0
+            }
+        })
+
+    except Exception as e:
+        logger.error(f"Error getting tables for connection {connection_id}: {str(e)}")
+        logger.error(traceback.format_exc())
+        return jsonify({"error": str(e)}), 500
 
 @app.route("/api/connections/<connection_id>/tables/<table_name>/trends", methods=["GET"])
 @token_required

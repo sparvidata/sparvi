@@ -35,48 +35,74 @@ const DashboardPage = () => {
     ]);
   }, [updateBreadcrumbs]);
 
-  // Load dashboard data when active connection changes
+  // Load dashboard data when connection changes
   useEffect(() => {
-    const fetchDashboardData = async () => {
-      // If no connections or no active connection, return
-      if (!connections.length || (!activeConnection && !defaultConnection)) {
-        return;
-      }
+    // Skip if no active connection
+    if (!connections.length || (!activeConnection && !defaultConnection)) {
+      return;
+    }
 
-      const connection = activeConnection || defaultConnection;
+    const connection = activeConnection || defaultConnection;
+    const connectionId = connection?.id;
 
+    if (!connectionId) return;
+
+    // Flag to avoid state updates if component unmounts
+    let isMounted = true;
+
+    // Separate async function to fetch data
+    async function loadData() {
       try {
-        setLoading('dashboard', true);
+        // Set loading state manually instead of using the context
+        if (isMounted) {
+          setLoading('dashboard', true);
+        }
 
         // Fetch tables count
-        const tablesResponse = await schemaAPI.getTables(connection.id);
+        const tablesResponse = await schemaAPI.getTables(connectionId);
         const tableCount = tablesResponse.data.tables ? tablesResponse.data.tables.length : 0;
 
         // Fetch metadata status
-        const metadataStatusResponse = await metadataAPI.getMetadataStatus(connection.id);
+        const metadataStatusResponse = await metadataAPI.getMetadataStatus(connectionId);
 
         // Fetch recent schema changes
-        const changesResponse = await schemaAPI.getChanges(connection.id,
-          new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString());
+        const changesResponse = await schemaAPI.getChanges(
+          connectionId,
+          new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString()
+        );
 
-        // Update dashboard data
-        setDashboardData({
-          tableCount,
-          recentValidations: [], // We'll fetch this later
-          recentChanges: changesResponse.data.changes || [],
-          schemaHealth: metadataStatusResponse.data || { status: 'unknown' },
-          loading: false
-        });
+        // Only update state if component is still mounted
+        if (isMounted) {
+          setDashboardData({
+            tableCount,
+            recentValidations: [],
+            recentChanges: changesResponse.data.changes || [],
+            schemaHealth: metadataStatusResponse.data || { status: 'unknown' },
+            loading: false
+          });
+        }
       } catch (error) {
         console.error('Error fetching dashboard data:', error);
-        showNotification('Failed to load dashboard data', 'error');
+        if (isMounted) {
+          showNotification('Failed to load dashboard data', 'error');
+        }
       } finally {
-        setLoading('dashboard', false);
+        if (isMounted) {
+          setLoading('dashboard', false);
+        }
       }
+    }
+
+    loadData();
+
+    // Cleanup function to prevent state updates after unmount
+    return () => {
+      isMounted = false;
     };
 
-    fetchDashboardData();
-  }, [activeConnection, defaultConnection, connections.length, setLoading, showNotification]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [connections.length, activeConnection?.id, defaultConnection?.id]);
+  // Only depend on these values, not the functions
 
   // If no connections, show empty state
   if (!connections.length) {

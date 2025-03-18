@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { connectionsAPI } from '../api/apiService';
 import { useAuth } from './AuthContext';
 
@@ -57,7 +57,7 @@ export const ConnectionProvider = ({ children }) => {
   }, [isAuthenticated]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Create a new connection
-  const createConnection = async (connectionData) => {
+  const createConnection = useCallback(async (connectionData) => {
     try {
       setError(null);
       const response = await connectionsAPI.create(connectionData);
@@ -75,10 +75,10 @@ export const ConnectionProvider = ({ children }) => {
       setError(err.message || 'Failed to create connection');
       throw err;
     }
-  };
+  }, [connections.length]);
 
   // Update a connection
-  const updateConnection = async (id, connectionData) => {
+  const updateConnection = useCallback(async (id, connectionData) => {
     try {
       setError(null);
       const response = await connectionsAPI.update(id, connectionData);
@@ -103,10 +103,10 @@ export const ConnectionProvider = ({ children }) => {
       setError(err.message || 'Failed to update connection');
       throw err;
     }
-  };
+  }, [activeConnection, defaultConnection]);
 
   // Delete a connection
-  const deleteConnection = async (id) => {
+  const deleteConnection = useCallback(async (id) => {
     try {
       setError(null);
       await connectionsAPI.delete(id);
@@ -128,10 +128,10 @@ export const ConnectionProvider = ({ children }) => {
       setError(err.message || 'Failed to delete connection');
       throw err;
     }
-  };
+  }, [activeConnection, connections, defaultConnection]);
 
   // Set a connection as the default
-  const setAsDefaultConnection = async (id) => {
+  const setAsDefaultConnection = useCallback(async (id) => {
     try {
       setError(null);
       await connectionsAPI.setDefault(id);
@@ -153,10 +153,10 @@ export const ConnectionProvider = ({ children }) => {
       setError(err.message || 'Failed to set default connection');
       throw err;
     }
-  };
+  }, [connections]);
 
   // Test a connection configuration without saving
-  const testConnection = async (connectionData) => {
+  const testConnection = useCallback(async (connectionData) => {
     try {
       setError(null);
       const response = await connectionsAPI.test(connectionData);
@@ -165,15 +165,15 @@ export const ConnectionProvider = ({ children }) => {
       setError(err.message || 'Connection test failed');
       throw err;
     }
-  };
+  }, []);
 
   // Set active connection (for current UI session)
-  const setCurrentConnection = (connection) => {
+  const setCurrentConnection = useCallback((connection) => {
     setActiveConnection(connection);
-  };
+  }, []);
 
   // Get a specific connection by ID
-  const getConnection = async (id) => {
+  const getConnection = useCallback(async (id) => {
     try {
       setError(null);
       const response = await connectionsAPI.getById(id);
@@ -182,10 +182,10 @@ export const ConnectionProvider = ({ children }) => {
       setError(err.message || 'Failed to get connection details');
       throw err;
     }
-  };
+  }, []);
 
   // Refresh the list of connections
-  const refreshConnections = async () => {
+  const refreshConnections = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
@@ -218,7 +218,7 @@ export const ConnectionProvider = ({ children }) => {
     } finally {
       setLoading(false);
     }
-  };
+  }, [activeConnection]);
 
   // Context value
   const value = {

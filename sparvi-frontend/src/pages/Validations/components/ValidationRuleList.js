@@ -127,7 +127,7 @@ const ValidationRuleList = ({
                 {validation.last_result === false && (
                   <XCircleIcon className="h-5 w-5 text-danger-500 mr-2" aria-hidden="true" />
                 )}
-                {validation.last_result === null || validation.last_result === undefined && (
+                {(validation.last_result === null || validation.last_result === undefined) && (
                   <div className="h-5 w-5 mr-2" />
                 )}
 

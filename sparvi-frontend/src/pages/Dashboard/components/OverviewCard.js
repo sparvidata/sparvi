@@ -7,6 +7,7 @@ import { useUI } from '../../../contexts/UIContext';
 const OverviewCard = ({ title, connectionId, type = 'tables' }) => {
   const [data, setData] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
   const { showNotification } = useUI();
 
   useEffect(() => {
@@ -15,6 +16,8 @@ const OverviewCard = ({ title, connectionId, type = 'tables' }) => {
 
       try {
         setLoading(true);
+        setError(null);
+
         let response;
 
         if (type === 'tables') {
@@ -33,8 +36,8 @@ const OverviewCard = ({ title, connectionId, type = 'tables' }) => {
             setData([]);
           }
         }
-      } catch (error) {
-        console.error(`Error fetching ${type}:`, error);
+      } catch (err) {
+        console.error(`Error fetching ${type}:`, err);
         showNotification(`Failed to load ${type} data`, 'error');
         setData([]);
       } finally {
@@ -43,6 +46,7 @@ const OverviewCard = ({ title, connectionId, type = 'tables' }) => {
     };
 
     fetchData();
+    // The dependency array should include all external variables used in the effect
   }, [connectionId, type, showNotification]);
 
   const getLink = () => {

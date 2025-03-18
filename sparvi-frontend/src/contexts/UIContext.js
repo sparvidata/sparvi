@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, {createContext, useContext, useState, useEffect, useCallback} from 'react';
 
 // Create the UI context
 const UIContext = createContext();
@@ -29,18 +29,11 @@ export const UIProvider = ({ children }) => {
     metadata: false,
   });
 
-  // Handle mobile view
+  // Handle window resize and detect mobile
   useEffect(() => {
     const handleResize = () => {
       const mobile = window.innerWidth < 768;
       setIsMobile(mobile);
-
-      // Auto-close sidebar on mobile
-      if (mobile && sidebarOpen) {
-        setSidebarOpen(false);
-      } else if (!mobile && !sidebarOpen) {
-        setSidebarOpen(true);
-      }
     };
 
     // Initial check
@@ -51,7 +44,17 @@ export const UIProvider = ({ children }) => {
 
     // Cleanup
     return () => window.removeEventListener('resize', handleResize);
-  }, [sidebarOpen]);
+  }, []);
+
+  // Adjust the sidebar state only when mobile status changes
+  useEffect(() => {
+    // Only automatically adjust sidebar when mobile status changes
+    if (isMobile) {
+      setSidebarOpen(false);
+    } else {
+      setSidebarOpen(true);
+    }
+  }, [isMobile]); // Only depend on isMobile changes
 
   // Save theme preference
   useEffect(() => {
@@ -95,17 +98,17 @@ export const UIProvider = ({ children }) => {
   };
 
   // Update breadcrumbs
-  const updateBreadcrumbs = (newBreadcrumbs) => {
+  const updateBreadcrumbs = useCallback((newBreadcrumbs) => {
     setBreadcrumbs(newBreadcrumbs);
-  };
+  }, []);
 
   // Set loading state for a section
-  const setLoading = (section, isLoading) => {
+  const setLoading = useCallback((section, isLoading) => {
     setLoadingStates(prev => ({
       ...prev,
       [section]: isLoading
     }));
-  };
+  }, []);
 
   // Context value
   const value = {
