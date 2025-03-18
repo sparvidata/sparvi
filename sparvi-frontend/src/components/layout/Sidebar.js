@@ -80,7 +80,7 @@ const Sidebar = () => {
         <div className="p-4 border-t border-secondary-200">
           <div className="flex items-center">
             <div className="text-xs text-secondary-500">
-              <div>Sparvi Data Quality</div>
+              <div>Sparvi Cloud</div>
               <div>Version: 1.0.0</div>
             </div>
           </div>

@@ -16,29 +16,18 @@ const Logo = ({ size = 'medium', withText = true, className = '' }) => {
     large: 'text-2xl',
   };
 
-  // SVG logo
+  // Updated SVG logo
   const logoSvg = (
     <svg
-      className={`${sizeClasses[size]} ${className}`}
+      className={`${sizeClasses[size]} text-primary-600 ${className}`}
+      width="32"
+      height="32"
       viewBox="0 0 24 24"
-      fill="none"
       xmlns="http://www.w3.org/2000/svg"
+      fill="none"
     >
-      <path
-        d="M12 3C7.03 3 3 7.03 3 12C3 16.97 7.03 21 12 21C16.97 21 21 16.97 21 12C21 7.03 16.97 3 12 3ZM12 19C8.13 19 5 15.87 5 12C5 8.13 8.13 5 12 5C15.87 5 19 8.13 19 12C19 15.87 15.87 19 12 19Z"
-        fill="currentColor"
-        className="text-primary-600"
-      />
-      <path
-        d="M12 7L9 11H15L12 7Z"
-        fill="currentColor"
-        className="text-primary-500"
-      />
-      <path
-        d="M12 17L15 13H9L12 17Z"
-        fill="currentColor"
-        className="text-primary-700"
-      />
+      <path d="M16 8V16L12 12L8 16V8L12 4L16 8Z" fill="currentColor"/>
+      <path d="M12 12L3 21M12 12L21 21" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
     </svg>
   );
 
