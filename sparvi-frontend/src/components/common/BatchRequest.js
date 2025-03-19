@@ -23,11 +23,9 @@ const BatchRequest = ({
   const [results, setResults] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [loadingItems, setLoadingItems] = useState({});
 
   useEffect(() => {
     let isMounted = true;
-    const controller = new AbortController();
 
     const fetchData = async () => {
       if (!requests || requests.length === 0) {
@@ -38,42 +36,33 @@ const BatchRequest = ({
         return;
       }
 
-      if (isMounted) {
-        setLoading(true);
-        setError(null);
-
-        // Track which items are loading
-        const loadingObj = {};
-        requests.forEach(req => {
-          loadingObj[req.id] = true;
-        });
-        setLoadingItems(loadingObj);
-      }
-
       try {
-        // Wait for auth to be ready if required
+        // Wait for auth if needed
         if (!skipAuthWait) {
           await waitForAuth();
         }
 
-        // Make sure we're still mounted after waiting
+        // Ensure we're still mounted
         if (!isMounted) return;
 
+        // Use enhanced batch request with timeout
         const batchResults = await batchRequests(requests, {
           retries: 2,
+          timeout: 30000,
           waitForAuthentication: !skipAuthWait
         });
 
+        // Safely set results
         if (isMounted) {
           setResults(batchResults);
           if (onComplete) onComplete(batchResults);
         }
       } catch (err) {
+        console.error('Batch request failed:', err);
+
         if (isMounted) {
-          // Don't set error state for cancelled requests
-          if (err.cancelled) {
-            console.log("BatchRequest: Request was cancelled");
-          } else {
+          // Avoid setting error for cancelled requests
+          if (!err.cancelled) {
             setError(err);
             if (onError) onError(err);
           }
@@ -81,17 +70,15 @@ const BatchRequest = ({
       } finally {
         if (isMounted) {
           setLoading(false);
-          setLoadingItems({});
         }
       }
     };
 
     fetchData();
 
-    // Cleanup function
+    // Cleanup
     return () => {
       isMounted = false;
-      controller.abort();
     };
   }, [requests, onComplete, onError, skipAuthWait]);
 

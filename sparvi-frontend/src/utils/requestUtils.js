@@ -3,6 +3,7 @@
  */
 import axios from 'axios';
 import { waitForAuth } from '../api/enhancedApiService';
+import {getSession, supabase} from "../api/supabase";
 
 /**
  * Map to store active request AbortControllers
@@ -115,7 +116,7 @@ export const batchRequests = async (requests, options = {}) => {
     waitForAuthentication = true
   } = options;
 
-  // If requested, wait for authentication to be ready
+  // More comprehensive auth check
   if (waitForAuthentication) {
     try {
       await waitForAuth();
@@ -128,18 +129,39 @@ export const batchRequests = async (requests, options = {}) => {
 
   while (attempt <= retries) {
     try {
+      const session = await getSession();
+
+      // More robust token extraction
+      const token =
+        session?.access_token ||
+        session?.token ||
+        session?.accessToken ||
+        (session?.user && session?.user.token) ||
+        (session?.data && session?.data.access_token);
+
+      if (!token) {
+        throw new Error('No valid authentication token');
+      }
+
       const apiUrl = process.env.NODE_ENV === 'development'
         ? 'http://127.0.0.1:5000/api'
         : '';
 
-      // Use the full URL in development, relative in production
       const batchEndpoint = `${apiUrl}${endpoint}`;
-      console.log("Making batch request to:", batchEndpoint);
 
-      const response = await axios.post(batchEndpoint, { requests });
+      console.log("Making batch request to:", batchEndpoint, {
+        method: 'POST',
+        data: { requests },
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+
+      const response = await axios.post(batchEndpoint, { requests }, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+
       return response.data.results;
     } catch (error) {
-      // Don't retry canceled requests
+      // More comprehensive error handling
       if (axios.isCancel(error)) {
         console.log("Batch request was canceled");
         throw { cancelled: true };
@@ -147,13 +169,25 @@ export const batchRequests = async (requests, options = {}) => {
 
       attempt++;
 
-      // If we've exhausted retries, throw the error
-      if (attempt > retries || error.response?.status !== 401) {
-        console.error('Error in batch request:', error);
+      console.error('Batch request error:', {
+        status: error.response?.status,
+        data: error.response?.data,
+        message: error.message
+      });
+
+      // Only retry on specific auth-related errors
+      if (attempt > retries ||
+          (error.response?.status !== 401 && error.response?.status !== 403)) {
         throw error;
       }
 
-      // If error is 401 and we have retries left, wait and retry
+      // Refresh session if possible
+      try {
+        await supabase.auth.refreshSession();
+      } catch (refreshError) {
+        console.error('Session refresh failed:', refreshError);
+      }
+
       console.log(`Auth error in batch request, retrying (${attempt}/${retries})...`);
       await new Promise(resolve => setTimeout(resolve, retryDelay));
     }

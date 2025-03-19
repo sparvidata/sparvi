@@ -84,12 +84,35 @@ export const getCurrentUser = async () => {
 };
 
 export const getSession = async () => {
-  const { data, error } = await supabase.auth.getSession();
-  if (error) {
-    console.error('Error getting session:', error.message);
+  try {
+    const { data, error } = await supabase.auth.getSession();
+
+    if (error) {
+      console.error('Error getting session:', error);
+      return null;
+    }
+
+    // Proactively refresh if token is close to expiring
+    if (data.session && data.session.expires_at) {
+      const now = Math.floor(Date.now() / 1000);
+      const expiresIn = data.session.expires_at - now;
+
+      if (expiresIn < 300) {  // Refresh if expiring in less than 5 minutes
+        try {
+          const { data: refreshData, error: refreshError } = await supabase.auth.refreshSession();
+          if (refreshError) throw refreshError;
+          return refreshData.session;
+        } catch (refreshError) {
+          console.error('Session refresh failed:', refreshError);
+        }
+      }
+    }
+
+    return data.session;
+  } catch (err) {
+    console.error('Unexpected error in getSession:', err);
     return null;
   }
-  return data?.session || null;
 };
 
 // Setup auth state change listener
