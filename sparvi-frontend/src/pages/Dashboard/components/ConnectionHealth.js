@@ -24,7 +24,11 @@ const ConnectionHealth = ({ connection }) => {
         setStatus(response.data);
       } catch (error) {
         console.error('Error fetching metadata status:', error);
-        showNotification('Failed to load connection health data', 'error');
+
+        // Only show notification for non-cancellation errors
+        if (!error.cancelled) {
+          showNotification('Failed to load connection health data', 'error');
+        }
       } finally {
         setLoading(false);
       }

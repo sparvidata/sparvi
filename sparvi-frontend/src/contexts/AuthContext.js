@@ -10,6 +10,7 @@ import {
   setupAuthListener
 } from '../api/supabase';
 import { userAPI } from '../api/enhancedApiService';
+import { setAuthReady } from '../api/enhancedApiService';
 
 // Create the auth context
 const AuthContext = createContext();
@@ -36,6 +37,11 @@ export const AuthProvider = ({ children }) => {
         if (currentSession) {
           const currentUser = await getCurrentUser();
           setUser(currentUser);
+
+          // Signal that auth is ready if we have a token
+          if (currentSession.access_token) {
+            setAuthReady();
+          }
         }
       } catch (err) {
         console.error('Error initializing auth:', err);
@@ -52,12 +58,22 @@ export const AuthProvider = ({ children }) => {
       setSession(changedSession);
       setUser(changedSession?.user || null);
       setLoading(false);
+
+      // Update auth ready state when session changes
+      if (changedSession?.access_token) {
+        setAuthReady();
+      }
     });
 
-    // Cleanup
+    // Cleanup - the correct way to unsubscribe depends on Supabase version
     return () => {
-      if (authListener?.unsubscribe) {
-        authListener.unsubscribe();
+      // For newer Supabase versions
+      if (authListener && typeof authListener.subscription?.unsubscribe === 'function') {
+        authListener.subscription.unsubscribe();
+      }
+      // Fallback if structure is different
+      else if (authListener) {
+        console.warn('Unable to unsubscribe from auth listener - check Supabase API');
       }
     };
   }, []);

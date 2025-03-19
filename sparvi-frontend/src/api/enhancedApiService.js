@@ -45,6 +45,65 @@ const apiClient = axios.create({
   },
 });
 
+// Create an auth ready state
+let authReady = false;
+let authReadyPromise = null;
+let authReadyResolve = null;
+
+// Initialize the auth ready promise
+const initAuthReadyPromise = () => {
+  if (!authReadyPromise) {
+    authReadyPromise = new Promise(resolve => {
+      authReadyResolve = resolve;
+    });
+  }
+  return authReadyPromise;
+};
+
+// Function to check if auth is ready
+export const waitForAuth = async (timeoutMs = 5000) => {
+  if (authReady) return true;
+
+  // Initialize the promise if it doesn't exist
+  const promise = initAuthReadyPromise();
+
+  // Add timeout
+  const timeoutPromise = new Promise((_, reject) => {
+    setTimeout(() => reject(new Error('Auth ready timeout')), timeoutMs);
+  });
+
+  try {
+    await Promise.race([promise, timeoutPromise]);
+    return true;
+  } catch (error) {
+    console.warn('Timed out waiting for auth to be ready');
+    return false;
+  }
+};
+
+// Function to set auth as ready
+export const setAuthReady = () => {
+  authReady = true;
+  if (authReadyResolve) {
+    authReadyResolve(true);
+  }
+};
+
+// Check auth on module load and set it ready if possible
+(async () => {
+  try {
+    const session = await getSession();
+    if (session?.access_token) {
+      setAuthReady();
+      console.log("Auth initialized with valid token");
+    } else {
+      console.log("No valid auth token found on initialization");
+    }
+  } catch (e) {
+    console.error("Error initializing auth:", e);
+  }
+})();
+
 const debugAuth = async () => {
   try {
     const session = await getSession();

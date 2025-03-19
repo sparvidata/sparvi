@@ -2,6 +2,7 @@
  * Utility functions for API request management
  */
 import axios from 'axios';
+import { waitForAuth } from '../api/enhancedApiService';
 
 /**
  * Map to store active request AbortControllers
@@ -101,26 +102,61 @@ export const throttle = (func, wait = 300) => {
 };
 
 /**
- * Batch multiple API requests into a single call
+ * Batch multiple API requests into a single call with retry logic
  * @param {Array} requests - Array of request configurations
- * @param {string} endpoint - Endpoint for batch processing (defaults to '/api/batch')
+ * @param {Object} options - Options for batch request
  * @returns {Promise} Promise that resolves with all responses
  */
-export const batchRequests = async (requests, endpoint = '/batch') => {
-  try {
-    const apiUrl = process.env.NODE_ENV === 'development'
-      ? 'http://127.0.0.1:5000/api'
-      : '';
+export const batchRequests = async (requests, options = {}) => {
+  const {
+    endpoint = '/batch',
+    retries = 2,
+    retryDelay = 1000,
+    waitForAuthentication = true
+  } = options;
 
-    // Use the full URL in development, relative in production
-    const batchEndpoint = `${apiUrl}${endpoint}`;
-    console.log("Making batch request to:", batchEndpoint);  // Debug log
+  // If requested, wait for authentication to be ready
+  if (waitForAuthentication) {
+    try {
+      await waitForAuth();
+    } catch (error) {
+      console.warn('Proceeding with batch request without waiting for auth');
+    }
+  }
 
-    const response = await axios.post(batchEndpoint, { requests });
-    return response.data.results;
-  } catch (error) {
-    console.error('Error in batch request:', error);
-    throw error;
+  let attempt = 0;
+
+  while (attempt <= retries) {
+    try {
+      const apiUrl = process.env.NODE_ENV === 'development'
+        ? 'http://127.0.0.1:5000/api'
+        : '';
+
+      // Use the full URL in development, relative in production
+      const batchEndpoint = `${apiUrl}${endpoint}`;
+      console.log("Making batch request to:", batchEndpoint);
+
+      const response = await axios.post(batchEndpoint, { requests });
+      return response.data.results;
+    } catch (error) {
+      // Don't retry canceled requests
+      if (axios.isCancel(error)) {
+        console.log("Batch request was canceled");
+        throw { cancelled: true };
+      }
+
+      attempt++;
+
+      // If we've exhausted retries, throw the error
+      if (attempt > retries || error.response?.status !== 401) {
+        console.error('Error in batch request:', error);
+        throw error;
+      }
+
+      // If error is 401 and we have retries left, wait and retry
+      console.log(`Auth error in batch request, retrying (${attempt}/${retries})...`);
+      await new Promise(resolve => setTimeout(resolve, retryDelay));
+    }
   }
 };
 
