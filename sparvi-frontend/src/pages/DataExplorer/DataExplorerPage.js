@@ -9,11 +9,12 @@ import {
 } from '@heroicons/react/24/outline';
 import { useConnection } from '../../contexts/ConnectionContext';
 import { useUI } from '../../contexts/UIContext';
-import { schemaAPI, metadataAPI } from '../../api/apiService';
+import { schemaAPI, metadataAPI } from '../../api/enhancedApiService';
 import LoadingSpinner from '../../components/common/LoadingSpinner';
 import EmptyState from '../../components/common/EmptyState';
 import SchemaBrowser from './components/SchemaBrowser';
 import TableList from './components/TableList';
+import SearchInput from '../../components/common/SearchInput';
 
 const DataExplorerPage = () => {
   const [searchParams] = useSearchParams();
@@ -100,8 +101,8 @@ const DataExplorerPage = () => {
   }, [activeConnection?.id]); // Only depend on connection ID, not functions
 
   // Handle search
-  const handleSearch = (e) => {
-    setSearchQuery(e.target.value);
+  const handleSearch = (query) => {
+    setSearchQuery(query);
   };
 
   // Filter tables by search query
@@ -174,8 +175,6 @@ const DataExplorerPage = () => {
     );
   };
 
-  // Rest of your component remains the same...
-  // ... (all the rest of the code)
 
   return (
     <div className="py-4">
@@ -239,19 +238,11 @@ const DataExplorerPage = () => {
             <div className="px-4 py-3 border-b border-secondary-200">
               <div className="flex items-center justify-between">
                 <h3 className="text-lg font-medium text-secondary-900">Tables</h3>
-
-                <div className="relative max-w-xs w-full">
-                  <input
-                    type="text"
-                    className="block w-full pr-10 pl-10 py-2 border border-secondary-300 rounded-md leading-5 bg-white placeholder-secondary-500 focus:outline-none focus:ring-primary-500 focus:border-primary-500 sm:text-sm"
-                    placeholder="Search tables..."
-                    value={searchQuery}
-                    onChange={handleSearch}
-                  />
-                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                    <MagnifyingGlassIcon className="h-5 w-5 text-secondary-400" aria-hidden="true" />
-                  </div>
-                </div>
+                <SearchInput
+                  onSearch={handleSearch}
+                  placeholder="Search tables..."
+                  initialValue={searchQuery}
+                />
               </div>
             </div>
 

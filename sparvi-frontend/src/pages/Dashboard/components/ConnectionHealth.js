@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { ArrowPathIcon, CheckCircleIcon, ExclamationCircleIcon } from '@heroicons/react/24/outline';
-import { metadataAPI } from '../../../api/apiService';
+import { metadataAPI } from '../../../api/enhancedApiService';
 import { useUI } from '../../../contexts/UIContext';
 
 const ConnectionHealth = ({ connection }) => {

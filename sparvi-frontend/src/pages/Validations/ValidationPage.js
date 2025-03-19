@@ -13,11 +13,12 @@ import {
 } from '@heroicons/react/24/outline';
 import { useConnection } from '../../contexts/ConnectionContext';
 import { useUI } from '../../contexts/UIContext';
-import { validationsAPI, schemaAPI } from '../../api/apiService';
+import { validationsAPI, schemaAPI } from '../../api/enhancedApiService';
 import LoadingSpinner from '../../components/common/LoadingSpinner';
 import EmptyState from '../../components/common/EmptyState';
 import ValidationRuleEditor from './components/ValidationRuleEditor';
 import ValidationRuleList from './components/ValidationRuleList';
+import SearchInput from '../../components/common/SearchInput';
 
 const ValidationPage = () => {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -134,8 +135,8 @@ const ValidationPage = () => {
   };
 
   // Handle search
-  const handleSearch = (e) => {
-    setSearchQuery(e.target.value);
+  const handleSearch = (query) => {
+    setSearchQuery(query);
   };
 
   // Handle status filter
@@ -344,18 +345,11 @@ const ValidationPage = () => {
               <div className="px-4 py-3 border-b border-secondary-200 bg-secondary-50 sm:px-6">
                 <div className="flex items-center justify-between">
                   <div className="flex-1">
-                    <div className="relative max-w-xs w-full">
-                      <input
-                        type="text"
-                        className="block w-full pl-10 pr-3 py-2 border border-secondary-300 rounded-md leading-5 bg-white placeholder-secondary-500 focus:outline-none focus:ring-primary-500 focus:border-primary-500 sm:text-sm"
-                        placeholder="Search rules..."
-                        value={searchQuery}
-                        onChange={handleSearch}
-                      />
-                      <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                        <MagnifyingGlassIcon className="h-5 w-5 text-secondary-400" aria-hidden="true" />
-                      </div>
-                    </div>
+                    <SearchInput
+                      onSearch={handleSearch}
+                      placeholder="Search tables..."
+                      initialValue={searchQuery}
+                    />
                   </div>
 
                   <div className="flex items-center space-x-2">

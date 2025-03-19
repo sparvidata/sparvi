@@ -9,7 +9,7 @@ import {
   getSession,
   setupAuthListener
 } from '../api/supabase';
-import { userAPI } from '../api/apiService';
+import { userAPI } from '../api/enhancedApiService';
 
 // Create the auth context
 const AuthContext = createContext();

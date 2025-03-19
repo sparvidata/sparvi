@@ -4,7 +4,11 @@ import { getCacheItem, setCacheItem, clearCacheItem } from '../utils/cacheUtils'
 import { getRequestAbortController, requestCompleted } from '../utils/requestUtils';
 
 // Create a base API client with defaults
-const API_BASE_URL = process.env.REACT_APP_API_BASE_URL || 'http://localhost:5000/api';
+const API_BASE_URL = process.env.NODE_ENV === 'development'
+  ? 'http://127.0.0.1:5000/api'  // Development server
+  : process.env.REACT_APP_API_BASE_URL || '/api';  // Production will use relative path or env var
+
+console.log("Using API base URL:", API_BASE_URL);  // Add this for debugging
 
 const apiClient = axios.create({
   baseURL: API_BASE_URL,
@@ -31,9 +35,17 @@ apiClient.interceptors.response.use(
   (error) => {
     // Don't treat cancelled requests as errors
     if (axios.isCancel(error)) {
-      console.log('Request cancelled:', error.message);
-      return Promise.reject({ cancelled: true });
+    // Silently handle canceled requests by default
+    // Use a debug flag for logging if needed
+    const isDevelopment = (typeof process !== 'undefined') &&
+                         (process.env) &&
+                         (process.env.NODE_ENV === 'development');
+
+    if (isDevelopment) {
+      console.debug('Request cancelled:', error.message);
     }
+    return Promise.reject({ cancelled: true });
+  }
 
     // Handle specific error codes
     if (error.response) {
@@ -131,6 +143,30 @@ export const connectionsAPI = {
       cacheKey: 'connections.list',
       requestId,
       forceFresh
+    }).then(response => {
+      // Handle different response formats
+      if (response && response.data && response.data.connections) {
+        return response; // Already in correct format
+      } else if (response && response.connections) {
+        // Wrap in data property for consistency
+        return { data: { connections: response.connections } };
+      } else if (Array.isArray(response)) {
+        // Response is array, wrap in expected format
+        return { data: { connections: response } };
+      } else {
+        // Fallback for unexpected response format
+        console.warn('Unexpected API response format from connections endpoint', response);
+        return { data: { connections: [] } };
+      }
+    }).catch(error => {
+      // Handle canceled requests
+      if (error && error.cancelled) {
+        throw error; // Just re-throw cancelled errors
+      }
+
+      console.error('Error fetching connections:', error);
+      // Return valid but empty response
+      return { data: { connections: [] } };
     });
   },
 

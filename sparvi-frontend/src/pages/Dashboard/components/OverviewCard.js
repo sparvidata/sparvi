@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { ArrowRightIcon } from '@heroicons/react/20/solid';
-import { schemaAPI, validationsAPI } from '../../../api/apiService';
+import { schemaAPI, validationsAPI } from '../../../api/enhancedApiService';
 import { useUI } from '../../../contexts/UIContext';
 
 const OverviewCard = ({ title, connectionId, type = 'tables' }) => {

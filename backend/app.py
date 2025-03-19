@@ -13,6 +13,7 @@ import threading
 import queue
 import uuid
 import threading
+import httpx
 from functools import wraps
 from dotenv import load_dotenv
 from flask_cors import CORS
@@ -5028,6 +5029,70 @@ def get_change_analytics_dashboard(current_user, organization_id, connection_id)
         logger.error(f"Error getting analytics dashboard: {str(e)}")
         logger.error(traceback.format_exc())
         return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/batch', methods=['POST'])
+async def batch_requests():
+    """
+    Handle multiple API requests in a single call with authentication forwarding
+    """
+    batch_data = request.json
+
+    if not batch_data or 'requests' not in batch_data:
+        return jsonify({"error": "Invalid batch format"}), 400
+
+    # Get the authorization header from the original request
+    auth_header = request.headers.get('Authorization')
+
+    requests = batch_data['requests']
+    results = {}
+
+    # Process each request
+    for req in requests:
+        req_id = req.get('id')
+        path = req.get('path')
+        params = req.get('params', {})
+        method = req.get('method', 'GET').upper()
+
+        if not req_id or not path:
+            continue
+
+        try:
+            # Make sure path starts with /api for consistency
+            if not path.startswith('/api'):
+                path = f"/api{path}"
+
+            # Build the full URL
+            full_url = f"{request.url_root.rstrip('/')}{path}"
+
+            print(f"Making request to: {full_url}")
+
+            # Create headers dict with auth token if present
+            headers = {}
+            if auth_header:
+                headers['Authorization'] = auth_header
+
+            # Make the internal request with auth headers
+            async with httpx.AsyncClient() as client:
+                if method == 'GET':
+                    response = await client.get(full_url, params=params, headers=headers)
+                elif method == 'POST':
+                    response = await client.post(full_url, json=params, headers=headers)
+
+                # Check if the response was successful
+                if response.status_code == 200:
+                    results[req_id] = response.json()
+                else:
+                    results[req_id] = {
+                        "error": f"Request failed with status code {response.status_code}",
+                        "details": response.text
+                    }
+
+        except Exception as e:
+            print(f"Error handling batch request to {path}: {str(e)}")
+            results[req_id] = {"error": str(e)}
+
+    return jsonify({"results": results})
 
 
 @app.after_request

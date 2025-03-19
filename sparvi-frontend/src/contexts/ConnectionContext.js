@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
-import { connectionsAPI } from '../api/apiService';
+import { connectionsAPI } from '../api/enhancedApiService';
 import { useAuth } from './AuthContext';
 
 // Create the connection context
@@ -32,8 +32,18 @@ export const ConnectionProvider = ({ children }) => {
         setLoading(true);
         setError(null);
 
+        // Use the enhanced API with proper error handling
         const response = await connectionsAPI.getAll();
-        const connectionList = response.data.connections || [];
+
+        // Safely extract the connections array
+        let connectionList = [];
+        if (response && response.data && Array.isArray(response.data.connections)) {
+          connectionList = response.data.connections;
+        } else if (response && Array.isArray(response.connections)) {
+          connectionList = response.connections;
+        } else if (response && Array.isArray(response)) {
+          connectionList = response;
+        }
 
         setConnections(connectionList);
 
@@ -47,7 +57,14 @@ export const ConnectionProvider = ({ children }) => {
         }
       } catch (err) {
         console.error('Error fetching connections:', err);
-        setError(err.message || 'Failed to load connections');
+
+        // Don't show error for canceled requests
+        if (!err.cancelled) {
+          setError(err.message || 'Failed to load connections');
+        }
+
+        // Always ensure connections is an array
+        setConnections([]);
       } finally {
         setLoading(false);
       }

@@ -77,7 +77,8 @@ export const UIProvider = ({ children }) => {
 
   // Show a toast notification
   const showNotification = (message, type = 'info', duration = 5000) => {
-    const id = Date.now();
+    // Generate a more unique ID by adding a random suffix
+    const id = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
     const notification = { id, message, type, duration };
 
     setNotifications(prev => [...prev, notification]);

@@ -106,9 +106,17 @@ export const throttle = (func, wait = 300) => {
  * @param {string} endpoint - Endpoint for batch processing (defaults to '/api/batch')
  * @returns {Promise} Promise that resolves with all responses
  */
-export const batchRequests = async (requests, endpoint = '/api/batch') => {
+export const batchRequests = async (requests, endpoint = '/batch') => {
   try {
-    const response = await axios.post(endpoint, { requests });
+    const apiUrl = process.env.NODE_ENV === 'development'
+      ? 'http://127.0.0.1:5000/api'
+      : '';
+
+    // Use the full URL in development, relative in production
+    const batchEndpoint = `${apiUrl}${endpoint}`;
+    console.log("Making batch request to:", batchEndpoint);  // Debug log
+
+    const response = await axios.post(batchEndpoint, { requests });
     return response.data.results;
   } catch (error) {
     console.error('Error in batch request:', error);

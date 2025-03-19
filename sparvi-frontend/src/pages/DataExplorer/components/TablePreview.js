@@ -5,7 +5,7 @@ import {
   InformationCircleIcon,
   ArrowsUpDownIcon
 } from '@heroicons/react/24/outline';
-import { schemaAPI } from '../../../api/apiService';
+import { schemaAPI } from '../../../api/enhancedApiService';
 import { useUI } from '../../../contexts/UIContext';
 import LoadingSpinner from '../../../components/common/LoadingSpinner';
 

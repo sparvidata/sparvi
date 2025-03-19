@@ -8,7 +8,7 @@ import {
   ExclamationCircleIcon
 } from '@heroicons/react/24/outline';
 import LoadingSpinner from '../../../components/common/LoadingSpinner';
-import { validationsAPI } from '../../../api/apiService';
+import { validationsAPI } from '../../../api/enhancedApiService';
 import { useUI } from '../../../contexts/UIContext';
 
 const ValidationRuleList = ({

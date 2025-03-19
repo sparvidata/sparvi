@@ -7,7 +7,7 @@ import {
 } from '@heroicons/react/24/outline';
 import { useUI } from '../../../contexts/UIContext';
 import LoadingSpinner from '../../../components/common/LoadingSpinner';
-import { validationsAPI, schemaAPI } from '../../../api/apiService';
+import { validationsAPI, schemaAPI } from '../../../api/enhancedApiService';
 
 const ValidationRuleEditor = ({
   connectionId,

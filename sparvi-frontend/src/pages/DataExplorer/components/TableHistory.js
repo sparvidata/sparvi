@@ -9,7 +9,7 @@ import {
   ChartBarIcon,
   DocumentMagnifyingGlassIcon
 } from '@heroicons/react/24/outline';
-import { profilingAPI, validationsAPI } from '../../../api/apiService';
+import { profilingAPI, validationsAPI } from '../../../api/enhancedApiService';
 import { useUI } from '../../../contexts/UIContext';
 import LoadingSpinner from '../../../components/common/LoadingSpinner';
 import { formatDate } from '../../../utils/formatting';
