@@ -8,7 +8,7 @@ import {
   ArrowPathIcon,
   PlusCircleIcon
 } from '@heroicons/react/24/outline';
-import { useConnection } from '../../contexts/ConnectionContext';
+import { useConnection } from '../../contexts/EnhancedConnectionContext';
 import { useUI } from '../../contexts/UIContext';
 import { schemaAPI, validationsAPI, metadataAPI } from '../../api/enhancedApiService';
 import BatchRequest from '../../components/common/BatchRequest';

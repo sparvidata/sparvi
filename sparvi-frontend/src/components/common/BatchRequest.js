@@ -26,6 +26,7 @@ const BatchRequest = ({
 
   useEffect(() => {
     let isMounted = true;
+    let ignoreCancel = false;
 
     const fetchData = async () => {
       if (!requests || requests.length === 0) {
@@ -42,7 +43,7 @@ const BatchRequest = ({
           await waitForAuth();
         }
 
-        // Ensure we're still mounted
+        // Check if we're still mounted before proceeding
         if (!isMounted) return;
 
         // Use enhanced batch request with timeout
@@ -52,20 +53,22 @@ const BatchRequest = ({
           waitForAuthentication: !skipAuthWait
         });
 
-        // Safely set results
+        // Safely set results if still mounted
         if (isMounted) {
           setResults(batchResults);
           if (onComplete) onComplete(batchResults);
         }
       } catch (err) {
-        console.error('Batch request failed:', err);
+        // Don't handle further if unmounted
+        if (!isMounted) return;
 
-        if (isMounted) {
-          // Avoid setting error for cancelled requests
-          if (!err.cancelled) {
-            setError(err);
-            if (onError) onError(err);
-          }
+        // Only handle non-cancellation errors or if ignoreCancel is true
+        // ignoreCancel flag should be set to true only once
+        if (!err.cancelled || ignoreCancel) {
+          console.error('Batch request failed:', err);
+
+          if (onError) onError(err);
+          setError(err);
         }
       } finally {
         if (isMounted) {
@@ -74,11 +77,17 @@ const BatchRequest = ({
       }
     };
 
+    // Set ignoreCancel to true after a brief delay
+    // This will allow one retry after a cancellation but prevent a loop
+    const timeoutId = setTimeout(() => {
+      ignoreCancel = true;
+    }, 200);
+
     fetchData();
 
-    // Cleanup
     return () => {
       isMounted = false;
+      clearTimeout(timeoutId);
     };
   }, [requests, onComplete, onError, skipAuthWait]);
 

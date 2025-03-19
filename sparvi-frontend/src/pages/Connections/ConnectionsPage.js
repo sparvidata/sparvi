@@ -9,7 +9,7 @@ import {
   TrashIcon,
   StarIcon
 } from '@heroicons/react/24/outline';
-import { useConnection } from '../../contexts/ConnectionContext';
+import { useConnection } from '../../contexts/EnhancedConnectionContext';
 import { useUI } from '../../contexts/UIContext';
 
 const ConnectionsPage = () => {

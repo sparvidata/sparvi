@@ -14,7 +14,7 @@ import {
 } from '@heroicons/react/24/outline';
 import { useAuth } from '../../contexts/AuthContext';
 import { useUI } from '../../contexts/UIContext';
-import { useConnection } from '../../contexts/ConnectionContext';
+import { useConnection } from '../../contexts/EnhancedConnectionContext';
 import Logo from '../common/Logo';
 
 const Header = () => {

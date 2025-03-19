@@ -3,12 +3,13 @@ import { Link } from 'react-router-dom';
 import { ArrowPathIcon, CheckCircleIcon, ExclamationCircleIcon } from '@heroicons/react/24/outline';
 import { metadataAPI } from '../../../api/enhancedApiService';
 import { useUI } from '../../../contexts/UIContext';
+import LoadingSpinner from '../../../components/common/LoadingSpinner';
 
 const ConnectionHealth = ({ connection }) => {
   const [status, setStatus] = useState({
-    tables: { status: 'unknown', last_updated: null },
-    columns: { status: 'unknown', last_updated: null },
-    statistics: { status: 'unknown', last_updated: null },
+    tables: { status: 'unknown', last_updated: null, freshness: { status: 'unknown' } },
+    columns: { status: 'unknown', last_updated: null, freshness: { status: 'unknown' } },
+    statistics: { status: 'unknown', last_updated: null, freshness: { status: 'unknown' } },
     pending_tasks: []
   });
   const [loading, setLoading] = useState(true);
@@ -21,7 +22,10 @@ const ConnectionHealth = ({ connection }) => {
       try {
         setLoading(true);
         const response = await metadataAPI.getMetadataStatus(connection.id);
-        setStatus(response.data);
+        // Make sure we have a valid response with data
+        if (response && response.data) {
+          setStatus(response.data);
+        }
       } catch (error) {
         console.error('Error fetching metadata status:', error);
 
@@ -50,7 +54,9 @@ const ConnectionHealth = ({ connection }) => {
       setTimeout(async () => {
         try {
           const response = await metadataAPI.getMetadataStatus(connection.id);
-          setStatus(response.data);
+          if (response && response.data) {
+            setStatus(response.data);
+          }
         } catch (error) {
           console.error('Error fetching updated metadata status:', error);
         } finally {
@@ -65,7 +71,10 @@ const ConnectionHealth = ({ connection }) => {
   };
 
   // Get status badge
-  const getStatusBadge = (status) => {
+  const getStatusBadge = (statusValue) => {
+    // Default to 'unknown' if status is undefined
+    const currentStatus = statusValue || 'unknown';
+
     const statusColors = {
       fresh: 'bg-accent-100 text-accent-800',
       stale: 'bg-warning-100 text-warning-800',
@@ -81,13 +90,13 @@ const ConnectionHealth = ({ connection }) => {
     };
 
     return (
-      <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${statusColors[status] || statusColors.unknown}`}>
-        {status === 'fresh' ? (
+      <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${statusColors[currentStatus] || statusColors.unknown}`}>
+        {currentStatus === 'fresh' ? (
           <CheckCircleIcon className="-ml-0.5 mr-1.5 h-3 w-3" aria-hidden="true" />
-        ) : status === 'error' ? (
+        ) : currentStatus === 'error' ? (
           <ExclamationCircleIcon className="-ml-0.5 mr-1.5 h-3 w-3" aria-hidden="true" />
         ) : null}
-        {statusLabels[status] || 'Unknown'}
+        {statusLabels[currentStatus] || 'Unknown'}
       </span>
     );
   };
@@ -96,8 +105,36 @@ const ConnectionHealth = ({ connection }) => {
   const formatDate = (dateString) => {
     if (!dateString) return 'Never';
 
-    const date = new Date(dateString);
-    return date.toLocaleString();
+    try {
+      const date = new Date(dateString);
+      // Check if date is valid
+      if (isNaN(date.getTime())) return 'Invalid date';
+      return date.toLocaleString();
+    } catch (error) {
+      console.error('Error formatting date:', error);
+      return 'Error';
+    }
+  };
+
+  // Format metadata freshness for display
+  const getMetadataFreshness = () => {
+    // Add safe access to nested properties
+    const tablesStatus = status?.tables?.freshness?.status || 'unknown';
+
+    const statusColors = {
+      fresh: 'text-accent-500',
+      stale: 'text-warning-500',
+      unknown: 'text-secondary-400',
+      error: 'text-danger-500'
+    };
+
+    return (
+      <span className={statusColors[tablesStatus] || statusColors.unknown}>
+        {tablesStatus === 'fresh' ? 'Up to date' :
+         tablesStatus === 'stale' ? 'Needs refresh' :
+         tablesStatus === 'error' ? 'Error' : 'Unknown'}
+      </span>
+    );
   };
 
   // Check if we have an active connection
@@ -148,41 +185,48 @@ const ConnectionHealth = ({ connection }) => {
         </button>
       </div>
       <div className="bg-white px-4 py-5 sm:p-6">
-        <dl className="grid grid-cols-1 gap-x-4 gap-y-6 sm:grid-cols-2 lg:grid-cols-4">
-          <div className="sm:col-span-1">
-            <dt className="text-sm font-medium text-secondary-500">Tables Metadata</dt>
-            <dd className="mt-1 text-sm text-secondary-900 flex items-center justify-between">
-              <span>{getStatusBadge(status.tables?.freshness?.status || 'unknown')}</span>
-              <span className="text-xs text-secondary-500">
-                {formatDate(status.tables?.last_updated)}
-              </span>
-            </dd>
+        {loading ? (
+          <div className="flex justify-center py-4">
+            <LoadingSpinner size="md" />
+            <span className="ml-2 text-secondary-500">Loading metadata status...</span>
           </div>
-          <div className="sm:col-span-1">
-            <dt className="text-sm font-medium text-secondary-500">Columns Metadata</dt>
-            <dd className="mt-1 text-sm text-secondary-900 flex items-center justify-between">
-              <span>{getStatusBadge(status.columns?.freshness?.status || 'unknown')}</span>
-              <span className="text-xs text-secondary-500">
-                {formatDate(status.columns?.last_updated)}
-              </span>
-            </dd>
-          </div>
-          <div className="sm:col-span-1">
-            <dt className="text-sm font-medium text-secondary-500">Statistics Metadata</dt>
-            <dd className="mt-1 text-sm text-secondary-900 flex items-center justify-between">
-              <span>{getStatusBadge(status.statistics?.freshness?.status || 'unknown')}</span>
-              <span className="text-xs text-secondary-500">
-                {formatDate(status.statistics?.last_updated)}
-              </span>
-            </dd>
-          </div>
-          <div className="sm:col-span-1">
-            <dt className="text-sm font-medium text-secondary-500">Pending Tasks</dt>
-            <dd className="mt-1 text-sm text-secondary-900">
-              {status.pending_tasks?.length || 0} tasks pending
-            </dd>
-          </div>
-        </dl>
+        ) : (
+          <dl className="grid grid-cols-1 gap-x-4 gap-y-6 sm:grid-cols-2 lg:grid-cols-4">
+            <div className="sm:col-span-1">
+              <dt className="text-sm font-medium text-secondary-500">Tables Metadata</dt>
+              <dd className="mt-1 text-sm text-secondary-900 flex items-center justify-between">
+                <span>{getStatusBadge(status?.tables?.freshness?.status)}</span>
+                <span className="text-xs text-secondary-500">
+                  {formatDate(status?.tables?.last_updated)}
+                </span>
+              </dd>
+            </div>
+            <div className="sm:col-span-1">
+              <dt className="text-sm font-medium text-secondary-500">Columns Metadata</dt>
+              <dd className="mt-1 text-sm text-secondary-900 flex items-center justify-between">
+                <span>{getStatusBadge(status?.columns?.freshness?.status)}</span>
+                <span className="text-xs text-secondary-500">
+                  {formatDate(status?.columns?.last_updated)}
+                </span>
+              </dd>
+            </div>
+            <div className="sm:col-span-1">
+              <dt className="text-sm font-medium text-secondary-500">Statistics Metadata</dt>
+              <dd className="mt-1 text-sm text-secondary-900 flex items-center justify-between">
+                <span>{getStatusBadge(status?.statistics?.freshness?.status)}</span>
+                <span className="text-xs text-secondary-500">
+                  {formatDate(status?.statistics?.last_updated)}
+                </span>
+              </dd>
+            </div>
+            <div className="sm:col-span-1">
+              <dt className="text-sm font-medium text-secondary-500">Pending Tasks</dt>
+              <dd className="mt-1 text-sm text-secondary-900">
+                {status?.pending_tasks?.length || 0} tasks pending
+              </dd>
+            </div>
+          </dl>
+        )}
       </div>
     </div>
   );

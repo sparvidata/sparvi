@@ -4,7 +4,7 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 // Contexts
 import { AuthProvider } from './contexts/AuthContext';
 import { UIProvider } from './contexts/UIContext';
-import { ConnectionProvider } from './contexts/ConnectionContext';
+import { ConnectionProvider } from './contexts/EnhancedConnectionContext';
 
 // Auth pages
 import LoginPage from './pages/Login/LoginPage';

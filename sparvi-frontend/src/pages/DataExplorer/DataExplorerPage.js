@@ -7,7 +7,7 @@ import {
   ChevronDownIcon,
   ChevronRightIcon
 } from '@heroicons/react/24/outline';
-import { useConnection } from '../../contexts/ConnectionContext';
+import { useConnection } from '../../contexts/EnhancedConnectionContext';
 import { useUI } from '../../contexts/UIContext';
 import { schemaAPI, metadataAPI } from '../../api/enhancedApiService';
 import LoadingSpinner from '../../components/common/LoadingSpinner';

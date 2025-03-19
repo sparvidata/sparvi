@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { ArrowLeftIcon, ServerIcon, CheckCircleIcon, XCircleIcon } from '@heroicons/react/24/outline';
-import { useConnection } from '../../contexts/ConnectionContext';
+import { useConnection } from '../../contexts/EnhancedConnectionContext';
 import { useUI } from '../../contexts/UIContext';
 import SnowflakeConnectionForm from './components/SnowflakeConnectionForm';
 import PostgreSQLConnectionForm from './components/PostgreSQLConnectionForm';
