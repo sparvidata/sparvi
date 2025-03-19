@@ -5032,11 +5032,17 @@ def get_change_analytics_dashboard(current_user, organization_id, connection_id)
 
 
 @app.route('/api/batch', methods=['POST'])
-async def batch_requests():
+def batch_requests():
     """
     Handle multiple API requests in a single call with authentication forwarding
     """
     batch_data = request.json
+
+    # Log all headers for debugging
+    logger.info("Received headers in batch request:")
+    for header_name, header_value in request.headers:
+        logger.info(f"  {header_name}: {header_value[:10]}..." if len(
+            header_value) > 10 else f"  {header_name}: {header_value}")
 
     if not batch_data or 'requests' not in batch_data:
         return jsonify({"error": "Invalid batch format"}), 400
@@ -5044,11 +5050,16 @@ async def batch_requests():
     # Get the authorization header from the original request
     auth_header = request.headers.get('Authorization')
 
-    requests = batch_data['requests']
+    # If no auth header is provided but it's required, return error
+    if not auth_header:
+        logger.warning("No authorization token provided for batch request")
+        return jsonify({"error": "Authorization header is required for batch requests"}), 401
+
+    requests_data = batch_data['requests']
     results = {}
 
-    # Process each request
-    for req in requests:
+    # Process each request synchronously instead of async to avoid issues
+    for req in requests_data:
         req_id = req.get('id')
         path = req.get('path')
         params = req.get('params', {})
@@ -5065,31 +5076,39 @@ async def batch_requests():
             # Build the full URL
             full_url = f"{request.url_root.rstrip('/')}{path}"
 
-            print(f"Making request to: {full_url}")
+            logger.debug(f"Making batch request to: {full_url}")
 
-            # Create headers dict with auth token if present
-            headers = {}
-            if auth_header:
-                headers['Authorization'] = auth_header
+            # Create headers dict with auth token
+            headers = {'Authorization': auth_header, 'Content-Type': 'application/json'}
 
             # Make the internal request with auth headers
-            async with httpx.AsyncClient() as client:
-                if method == 'GET':
-                    response = await client.get(full_url, params=params, headers=headers)
-                elif method == 'POST':
-                    response = await client.post(full_url, json=params, headers=headers)
+            client = httpx.Client()  # Synchronous client instead of async
 
-                # Check if the response was successful
-                if response.status_code == 200:
-                    results[req_id] = response.json()
-                else:
-                    results[req_id] = {
-                        "error": f"Request failed with status code {response.status_code}",
-                        "details": response.text
-                    }
+            if method == 'GET':
+                response = client.get(full_url, params=params, headers=headers)
+            elif method == 'POST':
+                response = client.post(full_url, json=params, headers=headers)
+            elif method == 'PUT':
+                response = client.put(full_url, json=params, headers=headers)
+            elif method == 'DELETE':
+                response = client.delete(full_url, params=params, headers=headers)
+            else:
+                results[req_id] = {"error": f"Unsupported method: {method}"}
+                continue
+
+            # Check if the response was successful
+            if response.status_code == 200:
+                results[req_id] = response.json()
+            else:
+                logger.warning(f"Batch sub-request failed: {path} returned {response.status_code}")
+                results[req_id] = {
+                    "error": f"Request failed with status code {response.status_code}",
+                    "details": response.text
+                }
 
         except Exception as e:
-            print(f"Error handling batch request to {path}: {str(e)}")
+            logger.error(f"Error handling batch request to {path}: {str(e)}")
+            logger.error(traceback.format_exc())
             results[req_id] = {"error": str(e)}
 
     return jsonify({"results": results})

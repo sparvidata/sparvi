@@ -3,6 +3,34 @@ import { getSession } from './supabase';
 import { getCacheItem, setCacheItem, clearCacheItem } from '../utils/cacheUtils';
 import { getRequestAbortController, requestCompleted } from '../utils/requestUtils';
 
+(async () => {
+  try {
+    console.log("Checking auth session structure...");
+    const session = await getSession();
+    console.log("Session available:", !!session);
+    if (session) {
+      // Log a safe version of the session without exposing full tokens
+      const safeSession = { ...session };
+      if (safeSession.access_token) safeSession.access_token = safeSession.access_token.substring(0, 10) + '...';
+      if (safeSession.token) safeSession.token = safeSession.token.substring(0, 10) + '...';
+      if (safeSession.accessToken) safeSession.accessToken = safeSession.accessToken.substring(0, 10) + '...';
+      if (safeSession.user?.token) safeSession.user.token = safeSession.user.token.substring(0, 10) + '...';
+      if (safeSession.data?.access_token) safeSession.data.access_token = safeSession.data.access_token.substring(0, 10) + '...';
+
+      console.log("Session structure:", safeSession);
+      console.log("Token property paths to check:",
+        "access_token:", !!session.access_token,
+        "token:", !!session.token,
+        "accessToken:", !!session.accessToken,
+        "user.token:", !!(session.user && session.user.token),
+        "data.access_token:", !!(session.data && session.data.access_token)
+      );
+    }
+  } catch (e) {
+    console.error("Error checking session:", e);
+  }
+})();
+
 // Create a base API client with defaults
 const API_BASE_URL = process.env.NODE_ENV === 'development'
   ? 'http://127.0.0.1:5000/api'  // Development server
@@ -17,12 +45,42 @@ const apiClient = axios.create({
   },
 });
 
-// Add request interceptor to include auth token
+const debugAuth = async () => {
+  try {
+    const session = await getSession();
+    console.log("Auth check: Session exists:", !!session);
+
+    // Check different possible token locations
+    const token = session?.access_token ||
+                 session?.token ||
+                 session?.accessToken ||
+                 (session?.user?.token) ||
+                 (session?.data?.access_token);
+
+    console.log("Auth check: Token exists:", !!token);
+    if (token) {
+      console.log("Auth check: Token preview:", `${token.substring(0, 10)}...`);
+    } else {
+      // If no token found, log the session structure to help debug
+      console.log("Auth check: Session structure:", JSON.stringify(session, null, 2));
+    }
+    return !!token;
+  } catch (e) {
+    console.error("Error in debugAuth:", e);
+    return false;
+  }
+};
+
 apiClient.interceptors.request.use(
   async (config) => {
-    const session = await getSession();
-    if (session?.access_token) {
-      config.headers.Authorization = `Bearer ${session.access_token}`;
+    try {
+      const session = await getSession();
+      // The token is likely in session.access_token
+      if (session?.access_token) {
+        config.headers.Authorization = `Bearer ${session.access_token}`;
+      }
+    } catch (err) {
+      console.error('Error adding auth token to request:', err);
     }
     return config;
   },
@@ -84,6 +142,12 @@ const enhancedRequest = async (options) => {
     onDownloadProgress
   } = options;
 
+  // Special handling for batch requests
+  if (url === '/batch') {
+    console.log("Batch request detected, ensuring auth headers are present");
+    await debugAuth(); // Log authentication status
+  }
+
   // Check cache first if this is a GET request and caching is enabled
   if (method === 'GET' && cacheKey && !forceFresh) {
     const cachedData = getCacheItem(cacheKey);
@@ -97,7 +161,8 @@ const enhancedRequest = async (options) => {
   const signal = abortSignal || (controller ? controller.signal : undefined);
 
   try {
-    const response = await apiClient({
+    // Special handling for batch requests to ensure headers are correctly applied
+    let requestConfig = {
       method,
       url,
       data,
@@ -105,7 +170,33 @@ const enhancedRequest = async (options) => {
       signal,
       onUploadProgress,
       onDownloadProgress
-    });
+    };
+
+    // For batch requests, ensure we have authentication
+    if (url === '/batch') {
+      const session = await getSession();
+
+      // Check different possible token locations
+      const token = session?.access_token ||
+                   session?.token ||
+                   session?.accessToken ||
+                   (session?.user?.token) ||
+                   (session?.data?.access_token);
+
+      if (!token) {
+        console.error("No auth token available for batch request");
+        throw new Error("Authentication required for batch request");
+      }
+
+      // Log the request being made
+      console.log(`Making batch request to: ${API_BASE_URL}${url}`, {
+        method,
+        hasAuth: !!token,
+        batchSize: data?.requests?.length || 0
+      });
+    }
+
+    const response = await apiClient(requestConfig);
 
     // Cache the response if this is a GET request and caching is enabled
     if (method === 'GET' && cacheKey) {
@@ -127,6 +218,14 @@ const enhancedRequest = async (options) => {
     // Clear the abort controller
     if (requestId) {
       requestCompleted(requestId);
+    }
+
+    // Special handling for auth errors in batch requests
+    if (url === '/batch' && error.response && error.response.status === 401) {
+      console.error("Authentication error in batch request. Token may be invalid or missing.");
+
+      // Log detailed information about the auth state
+      await debugAuth();
     }
 
     console.error(`Error in ${method} request to ${url}:`, error);
@@ -244,7 +343,6 @@ export const connectionsAPI = {
   getConnectionDashboard: (connectionId, options = {}) => {
     const { forceFresh = false } = options;
 
-    // This is a batched request that gets all the data needed for a connection dashboard
     return enhancedRequest({
       method: 'POST',
       url: '/batch',
@@ -256,9 +354,18 @@ export const connectionsAPI = {
         ]
       },
       cacheKey: `connections.dashboard.${connectionId}`,
-      cacheTTL: 2 * 60 * 1000, // 2 minutes since dashboard data changes frequently
+      cacheTTL: 2 * 60 * 1000,
       requestId: `connections.dashboard.${connectionId}`,
       forceFresh
+    }).catch(error => {
+      // Check if it's an auth error
+      if (error.response && error.response.status === 401) {
+        console.error("Authentication error in dashboard batch request");
+        // You might want to trigger a login redirect here
+      } else {
+        console.error("Dashboard batch request failed:", error);
+      }
+      throw error;
     });
   }
 };
@@ -346,7 +453,6 @@ export const schemaAPI = {
   getTableDashboard: (connectionId, tableName, options = {}) => {
     const { forceFresh = false } = options;
 
-    // This is a batched request that gets all the data needed for a table dashboard
     return enhancedRequest({
       method: 'POST',
       url: '/batch',
@@ -362,6 +468,15 @@ export const schemaAPI = {
       cacheTTL: 5 * 60 * 1000, // 5 minutes
       requestId: `table.dashboard.${connectionId}.${tableName}`,
       forceFresh
+    }).catch(error => {
+      // Check if it's an auth error
+      if (error.response && error.response.status === 401) {
+        console.error("Authentication error in table dashboard batch request");
+        // You might want to trigger a login redirect here
+      } else {
+        console.error("Table dashboard batch request failed:", error);
+      }
+      throw error;
     });
   }
 };
