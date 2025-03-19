@@ -1,5 +1,4 @@
-// src/pages/Dashboard/components/ConnectionHealth.js
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { ArrowPathIcon, CheckCircleIcon, ExclamationCircleIcon } from '@heroicons/react/24/outline';
 import { useConnection } from '../../../contexts/EnhancedConnectionContext';
@@ -21,53 +20,70 @@ const ConnectionHealth = () => {
   // Use connectionId instead of the entire connection object to prevent re-renders
   const connectionId = activeConnection?.id;
 
+  // Add a last fetch time tracker
+  const lastFetchRef = useRef(0);
+  // Add a fetch limit to prevent constant re-fetching
+  const FETCH_INTERVAL_MS = 30000; // 30 seconds minimum between fetches
+
+  // Add isMounted ref to track component mount state
+  const isMountedRef = useRef(true);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
+
   // Create memoized fetch function to avoid recreation on every render
-  const fetchStatus = useCallback(async () => {
+  const fetchStatus = useCallback(async (force = false) => {
     if (!connectionId) return;
+
+    // Check if we need to fetch again - avoid too frequent refreshes
+    const now = Date.now();
+    if (!force && now - lastFetchRef.current < FETCH_INTERVAL_MS) {
+      console.log("Skipping fetch, too soon since last fetch");
+      return;
+    }
 
     try {
       setLoading(true);
       console.log("Fetching metadata status for connection", connectionId);
+      lastFetchRef.current = now; // Update last fetch time
 
       // Make request with longer timeout
       const response = await apiRequest(`connections/${connectionId}/metadata/status`, {
-        timeout: 60000 // 60 seconds timeout
+        timeout: 60000, // 60 seconds timeout
+        skipThrottle: force // Skip throttling for manual refreshes
       });
 
-      // Make sure response is valid
-      if (response) {
+      // Make sure response is valid and component is still mounted
+      if (response && isMountedRef.current) {
         console.log("Setting metadata status:", response);
         setStatus(response);
       }
     } catch (error) {
-      console.error('Error fetching metadata status:', error);
-      showNotification('Failed to load connection health data', 'error');
+      if (error.throttled) {
+        console.log("Metadata status request throttled");
+        return;
+      }
+
+      if (isMountedRef.current) {
+        console.error('Error fetching metadata status:', error);
+        showNotification('Failed to load connection health data', 'error');
+      }
     } finally {
-      setLoading(false);
+      if (isMountedRef.current) {
+        setLoading(false);
+      }
     }
   }, [connectionId, showNotification]);
 
-  // Only re-run when connectionId changes
+  // Only fetch data once on initial mount or when connection changes
   useEffect(() => {
-    let isMounted = true;
-
-    const loadData = async () => {
-      try {
-        if (!connectionId) return;
-
-        await fetchStatus();
-      } catch (error) {
-        if (isMounted) {
-          console.error("Error in connection health effect:", error);
-        }
-      }
-    };
-
-    loadData();
-
-    return () => {
-      isMounted = false;
-    };
+    if (connectionId) {
+      fetchStatus();
+    }
   }, [connectionId, fetchStatus]);
 
   // Handle refresh metadata - use connectionId directly
@@ -80,29 +96,41 @@ const ConnectionHealth = () => {
       // Simplified request using new helper
       await apiRequest(`connections/${connectionId}/metadata/refresh`, {
         method: 'POST',
-        data: { metadata_type: 'schema' }
+        data: { metadata_type: 'schema' },
+        skipThrottle: true // Skip throttling for manual refreshes
       });
 
       showNotification('Metadata refresh initiated', 'success');
 
       // Fetch updated status after a short delay
       setTimeout(async () => {
+        if (!isMountedRef.current) return;
+
         try {
-          const response = await apiRequest(`connections/${connectionId}/metadata/status`);
-          if (response) {
+          const response = await apiRequest(`connections/${connectionId}/metadata/status`, {
+            skipThrottle: true // Skip throttling for post-refresh update
+          });
+
+          if (response && isMountedRef.current) {
             console.log("Setting metadata status after refresh:", response);
             setStatus(response);
           }
         } catch (error) {
-          console.error('Error fetching updated metadata status:', error);
+          if (isMountedRef.current) {
+            console.error('Error fetching updated metadata status:', error);
+          }
         } finally {
-          setLoading(false);
+          if (isMountedRef.current) {
+            setLoading(false);
+          }
         }
       }, 1000);
     } catch (error) {
-      console.error('Error refreshing metadata:', error);
-      showNotification('Failed to refresh metadata', 'error');
-      setLoading(false);
+      if (isMountedRef.current) {
+        console.error('Error refreshing metadata:', error);
+        showNotification('Failed to refresh metadata', 'error');
+        setLoading(false);
+      }
     }
   };
 

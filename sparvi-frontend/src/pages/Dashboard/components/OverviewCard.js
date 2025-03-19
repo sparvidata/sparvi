@@ -1,4 +1,3 @@
-// src/pages/Dashboard/components/OverviewCard.js
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { ArrowRightIcon } from '@heroicons/react/20/solid';
@@ -11,7 +10,12 @@ const OverviewCard = ({ title, type = 'tables', connectionId }) => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const { showNotification } = useUI();
+
+  // Use refs to track component state and prevent unnecessary fetches
   const isMountedRef = useRef(true);
+  const lastFetchRef = useRef(0);
+  const dataLoadedRef = useRef(false);
+  const FETCH_INTERVAL_MS = 30000; // 30 seconds minimum between fetches
 
   // Cleanup on unmount
   useEffect(() => {
@@ -20,13 +24,26 @@ const OverviewCard = ({ title, type = 'tables', connectionId }) => {
     };
   }, []);
 
-  // Create memoized load function
-  const fetchData = useCallback(async () => {
+  // Create memoized load function with fetch throttling
+  const fetchData = useCallback(async (force = false) => {
     if (!connectionId) return;
+
+    // Check if we need to fetch again - avoid too frequent refreshes
+    const now = Date.now();
+    if (!force && now - lastFetchRef.current < FETCH_INTERVAL_MS) {
+      console.log(`Skipping ${type} overview fetch, too soon since last fetch`);
+      return;
+    }
+
+    // Skip if already loaded unless forced
+    if (!force && dataLoadedRef.current) {
+      return;
+    }
 
     try {
       setLoading(true);
       setError(null);
+      lastFetchRef.current = now;
       console.log(`Loading ${type} overview data for connection`, connectionId);
 
       // Add a small delay to prevent request conflicts
@@ -35,16 +52,21 @@ const OverviewCard = ({ title, type = 'tables', connectionId }) => {
       if (!isMountedRef.current) return;
 
       if (type === 'tables') {
-        const response = await apiRequest(`connections/${connectionId}/tables`);
+        const response = await apiRequest(`connections/${connectionId}/tables`, {
+          skipThrottle: force // Skip throttling for manual refreshes
+        });
 
         if (isMountedRef.current) {
           console.log(`Setting ${type} overview data:`, response);
           // Only show first 5 tables
           setData((response?.tables || []).slice(0, 5));
+          dataLoadedRef.current = true;
         }
       } else if (type === 'validations') {
         // First get tables
-        const tablesResponse = await apiRequest(`connections/${connectionId}/tables`);
+        const tablesResponse = await apiRequest(`connections/${connectionId}/tables`, {
+          skipThrottle: force // Skip throttling for manual refreshes
+        });
         const tables = tablesResponse?.tables || [];
 
         if (!isMountedRef.current) return;
@@ -52,23 +74,31 @@ const OverviewCard = ({ title, type = 'tables', connectionId }) => {
         if (tables.length > 0) {
           // Get validation rules for the first table
           const validationResponse = await apiRequest('validations', {
-            params: { table: tables[0] }
+            params: { table: tables[0] },
+            skipThrottle: force // Skip throttling for manual refreshes
           });
 
           if (isMountedRef.current) {
             console.log(`Setting ${type} overview data:`, validationResponse);
             setData((validationResponse?.rules || []).slice(0, 5));
+            dataLoadedRef.current = true;
           }
         } else {
           if (isMountedRef.current) {
             setData([]);
+            dataLoadedRef.current = true;
           }
         }
       }
     } catch (err) {
       if (!isMountedRef.current) return;
 
-      if (err?.cancelled) return;
+      if (err.throttled) {
+        console.log(`${type} overview request throttled`);
+        return;
+      }
+
+      if (err.cancelled) return;
 
       console.error(`Error fetching ${type}:`, err);
       setError(err);
@@ -80,13 +110,21 @@ const OverviewCard = ({ title, type = 'tables', connectionId }) => {
     }
   }, [connectionId, type, showNotification]);
 
-  // Load data only when dependencies change
+  // Load data only when dependencies change and not loaded yet
   useEffect(() => {
-    if (connectionId) {
+    if (connectionId && !dataLoadedRef.current) {
       fetchData();
-    } else {
+    } else if (!connectionId) {
       setData([]);
       setLoading(false);
+      dataLoadedRef.current = false;
+    }
+
+    // Reset loaded state when connection changes
+    if (connectionId) {
+      return () => {
+        dataLoadedRef.current = false;
+      };
     }
   }, [connectionId, fetchData]);
 

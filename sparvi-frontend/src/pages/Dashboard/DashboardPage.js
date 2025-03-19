@@ -1,4 +1,3 @@
-// src/pages/Dashboard/DashboardPage.js
 import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import {
@@ -31,6 +30,11 @@ const DashboardPage = () => {
 
   // Use a ref to track mounted state
   const isMountedRef = useRef(true);
+  // Use a ref to track if tables data has been loaded
+  const tablesLoadedRef = useRef(false);
+  // Track last fetch time to prevent too frequent refreshes
+  const lastFetchRef = useRef(0);
+  const FETCH_INTERVAL_MS = 30000; // 30 seconds minimum between fetches
 
   // Get connectionId to use as a dependency
   const connectionId = activeConnection?.id;
@@ -50,26 +54,39 @@ const DashboardPage = () => {
   }, [updateBreadcrumbs]);
 
   // Create memoized load function
-  const loadDashboardData = useCallback(async () => {
+  const loadDashboardData = useCallback(async (force = false) => {
     if (!connectionId) return;
+
+    // Check if we need to fetch again - avoid too frequent refreshes
+    const now = Date.now();
+    if (!force && now - lastFetchRef.current < FETCH_INTERVAL_MS) {
+      console.log("Skipping dashboard fetch, too soon since last fetch");
+      return;
+    }
 
     try {
       console.log("Loading tables data for connection", connectionId);
+      lastFetchRef.current = now;
+
       // Load tables data
       setTablesLoading(true);
-      const tablesResponse = await apiRequest(`connections/${connectionId}/tables`);
+      const tablesResponse = await apiRequest(`connections/${connectionId}/tables`, {
+        skipThrottle: force // Skip throttling for manual refreshes
+      });
 
       if (isMountedRef.current) {
         console.log("Setting tables data:", tablesResponse);
         setTablesData(tablesResponse);
         setTablesLoading(false);
+        tablesLoadedRef.current = true; // Mark that we've loaded tables data
       }
 
       // Load changes data
       setChangesLoading(true);
       const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
       const changesResponse = await apiRequest(`connections/${connectionId}/changes`, {
-        params: { since }
+        params: { since },
+        skipThrottle: force // Skip throttling for manual refreshes
       });
 
       if (isMountedRef.current) {
@@ -78,22 +95,30 @@ const DashboardPage = () => {
         setChangesLoading(false);
       }
     } catch (error) {
+      if (error.throttled) {
+        console.log("Dashboard data request throttled");
+        return;
+      }
+
       if (isMountedRef.current) {
         console.error('Error loading dashboard data:', error);
         showNotification('Some dashboard data could not be loaded', 'error');
-      }
-    } finally {
-      if (isMountedRef.current) {
+        // Even on error, set loading to false
         setTablesLoading(false);
         setChangesLoading(false);
       }
     }
   }, [connectionId, showNotification]);
 
-  // Load data only when connectionId changes
+  // Load data only when connectionId changes and only once
   useEffect(() => {
-    if (connectionId) {
+    if (connectionId && !tablesLoadedRef.current) {
       loadDashboardData();
+    } else if (!connectionId) {
+      // Reset state when connection changes
+      setTablesData(null);
+      setChangesData(null);
+      tablesLoadedRef.current = false;
     }
   }, [connectionId, loadDashboardData]);
 
@@ -103,7 +128,7 @@ const DashboardPage = () => {
 
     setRefreshing(true);
     try {
-      await loadDashboardData();
+      await loadDashboardData(true); // true = force refresh
       showNotification('Dashboard data refreshed', 'success');
     } catch (error) {
       console.error('Error refreshing dashboard data:', error);
@@ -171,14 +196,14 @@ const DashboardPage = () => {
 
       {/* Statistics section */}
       <div className="mt-8 grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-4">
-        {/* Table count */}
+        {/* Table count - Explicitly handle the loading and value state */}
         <StatisticCard
           title="Tables"
-          value={tablesData?.tables?.length || 0}
+          value={tablesData && tablesData.tables ? tablesData.tables.length : 0}
           icon={TableCellsIcon}
           href="/explorer"
           color="primary"
-          loading={tablesLoading}
+          loading={tablesLoading && !tablesData}
         />
 
         {/* Validations count */}
@@ -193,11 +218,11 @@ const DashboardPage = () => {
         {/* Schema changes */}
         <StatisticCard
           title="Schema Changes"
-          value={changesData?.changes?.length || 0}
+          value={changesData && changesData.changes ? changesData.changes.length : 0}
           icon={ArrowPathIcon}
           href="/metadata"
           color="warning"
-          loading={changesLoading}
+          loading={changesLoading && !changesData}
         />
 
         {/* Issues */}

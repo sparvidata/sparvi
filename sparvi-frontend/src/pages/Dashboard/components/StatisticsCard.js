@@ -1,5 +1,5 @@
 // src/pages/Dashboard/components/StatisticCard.js
-import React from 'react';
+import React, {useEffect, useState} from 'react';
 import { Link } from 'react-router-dom';
 import { ArrowRightIcon } from '@heroicons/react/20/solid';
 import LoadingSpinner from '../../../components/common/LoadingSpinner';
