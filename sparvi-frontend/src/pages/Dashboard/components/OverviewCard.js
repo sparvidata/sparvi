@@ -19,13 +19,20 @@ const OverviewCard = ({ title, type = 'tables', connectionId }) => {
   const fetchTimeoutRef = useRef(null);
   const FETCH_INTERVAL_MS = 30000; // 30 seconds minimum between fetches
 
+  // Debug logging for component lifecycle
+  console.log(`[${type}] Rendering with connectionId:`, connectionId);
+
   // Cleanup on unmount
   useEffect(() => {
+    // Set mounted flag to true on mount
+    isMountedRef.current = true;
+
     return () => {
       console.log(`[${type}] Overview component unmounting`);
       isMountedRef.current = false;
       if (fetchTimeoutRef.current) {
         clearTimeout(fetchTimeoutRef.current);
+        fetchTimeoutRef.current = null;
       }
     };
   }, [type]);
@@ -47,107 +54,72 @@ const OverviewCard = ({ title, type = 'tables', connectionId }) => {
       return;
     }
 
-    // If there's a pending timeout, clear it
-    if (fetchTimeoutRef.current) {
-      clearTimeout(fetchTimeoutRef.current);
-    }
+    // Update last fetch time right away
+    lastFetchRef.current = now;
 
-    // Set up the real data fetching after a short delay
-    // This helps avoid race conditions with multiple unmounts/mounts
-    fetchTimeoutRef.current = setTimeout(async () => {
-      // Check if component is still mounted before proceeding
-      if (!isMountedRef.current) {
-        console.log(`[${type}] Component unmounted during timeout, aborting fetch`);
-        return;
-      }
+    // Set loading state immediately
+    setLoading(true);
 
-      try {
-        console.log(`[${type}] Starting to fetch data for connection:`, connectionId);
-        setLoading(true);
-        setError(null);
-        lastFetchRef.current = now;
+    try {
+      console.log(`[${type}] Starting to fetch data for connection:`, connectionId);
 
-        if (type === 'tables') {
-          // Fetch tables data
-          console.log(`[${type}] Fetching tables for connection:`, connectionId);
-          const response = await apiRequest(`connections/${connectionId}/tables`);
+      if (type === 'tables') {
+        // Direct fetch without setTimeout
+        const response = await apiRequest(`connections/${connectionId}/tables`, {
+          skipThrottle: true
+        });
 
-          // Check if component is still mounted
-          if (!isMountedRef.current) {
-            console.log(`[${type}] Component unmounted after fetch, aborting`);
-            return;
-          }
-
+        // Check if component is still mounted
+        if (isMountedRef.current) {
           console.log(`[${type}] Tables data received:`, response);
 
           // Only show first 5 tables
           const tablesToShow = (response?.tables || []).slice(0, 5);
           setData(tablesToShow);
-        } else if (type === 'validations') {
-          // Fetch validations data (requires tables first)
-          console.log(`[${type}] Fetching tables for validation lookup:`, connectionId);
-          const tablesResponse = await apiRequest(`connections/${connectionId}/tables`);
-          const tables = tablesResponse?.tables || [];
+          setLoading(false);
+        }
+      } else if (type === 'validations') {
+        // Fetch validations data (requires tables first)
+        const tablesResponse = await apiRequest(`connections/${connectionId}/tables`, {
+          skipThrottle: true
+        });
+        const tables = tablesResponse?.tables || [];
+
+        // Check if component is still mounted
+        if (!isMountedRef.current) return;
+
+        if (tables.length > 0) {
+          // Get validation rules for the first table
+          const validationResponse = await apiRequest('validations', {
+            params: { table: tables[0] },
+            skipThrottle: true
+          });
 
           // Check if component is still mounted
-          if (!isMountedRef.current) {
-            console.log(`[${type}] Component unmounted after tables fetch for validations, aborting`);
-            return;
-          }
-
-          if (tables.length > 0) {
-            // Get validation rules for the first table
-            console.log(`[${type}] Fetching validations for table:`, tables[0]);
-            const validationResponse = await apiRequest('validations', {
-              params: { table: tables[0] }
-            });
-
-            // Check if component is still mounted
-            if (!isMountedRef.current) {
-              console.log(`[${type}] Component unmounted after validations fetch, aborting`);
-              return;
-            }
-
-            console.log(`[${type}] Validation data received:`, validationResponse);
-
+          if (isMountedRef.current) {
             // Get first 5 validation rules
             const validationsToShow = (validationResponse?.rules || []).slice(0, 5);
             setData(validationsToShow);
-          } else {
-            console.log(`[${type}] No tables available for validations`);
+            setLoading(false);
+          }
+        } else {
+          if (isMountedRef.current) {
             setData([]);
+            setLoading(false);
           }
         }
-      } catch (err) {
-        // Handle errors
-        if (!isMountedRef.current) {
-          console.log(`[${type}] Component unmounted during error, aborting`);
-          return;
-        }
-
-        if (err?.cancelled) {
-          console.log(`[${type}] Request was cancelled`);
-          return;
-        }
-
-        if (err?.throttled) {
-          console.log(`[${type}] Request was throttled`);
-          return;
-        }
-
+      }
+    } catch (err) {
+      // Handle errors
+      if (isMountedRef.current) {
         console.error(`[${type}] Error fetching data:`, err);
         setError(err);
+        setLoading(false);
         if (showNotification) {
           showNotification(`Failed to load ${type} data`, 'error');
         }
-      } finally {
-        // Always set loading to false at the end if component is still mounted
-        if (isMountedRef.current) {
-          console.log(`[${type}] Setting loading to false`);
-          setLoading(false);
-        }
       }
-    }, 100); // Short delay to avoid race conditions
+    }
   }, [connectionId, type, showNotification]);
 
   // Load data when dependencies change
@@ -173,6 +145,9 @@ const OverviewCard = ({ title, type = 'tables', connectionId }) => {
         return '/dashboard';
     }
   };
+
+  // Debug render
+  console.log(`[${type}] Rendering with ${data.length} items, loading: ${loading}`);
 
   return (
     <div className="card overflow-hidden">

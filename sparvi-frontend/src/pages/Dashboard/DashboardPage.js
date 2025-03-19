@@ -126,6 +126,7 @@ const DashboardPage = () => {
       // Load tables and changes data
       loadTablesData();
       loadChangesData();
+
     } else {
       // Reset state when connection changes
       setTablesData(null);
@@ -215,11 +216,11 @@ const DashboardPage = () => {
         {/* Table count - Explicitly handle the loading and value state */}
         <StatisticCard
           title="Tables"
-          value={tablesData && tablesData.tables ? tablesData.tables.length : 0}
+          value={tablesData?.tables?.length || 0}
           icon={TableCellsIcon}
           href="/explorer"
           color="primary"
-          loading={tablesLoading && !tablesData}
+          loading={tablesLoading && !tablesData?.tables}
         />
 
         {/* Validations count */}
@@ -234,11 +235,11 @@ const DashboardPage = () => {
         {/* Schema changes */}
         <StatisticCard
           title="Schema Changes"
-          value={changesData && changesData.changes ? changesData.changes.length : 0}
+          value={changesData?.changes?.length || 0}
           icon={ArrowPathIcon}
           href="/metadata"
           color="warning"
-          loading={changesLoading && !changesData}
+          loading={changesLoading && !changesData?.changes}
         />
 
         {/* Issues */}
@@ -262,18 +263,20 @@ const DashboardPage = () => {
         {/* Overview cards with connectionId prop - now with improved handling */}
         <div className="space-y-5">
           {connectionId && (
-            <>
-              <OverviewCard
-                title="Tables"
-                type="tables"
-                connectionId={connectionId}
-              />
-              <OverviewCard
-                title="Validations"
-                type="validations"
-                connectionId={connectionId}
-              />
-            </>
+              <>
+                <OverviewCard
+                    key={`tables-${connectionId}`}
+                    title="Tables"
+                    type="tables"
+                    connectionId={connectionId}
+                />
+                <OverviewCard
+                    key={`validations-${connectionId}`}
+                    title="Validations"
+                    type="validations"
+                    connectionId={connectionId}
+                />
+              </>
           )}
         </div>
       </div>

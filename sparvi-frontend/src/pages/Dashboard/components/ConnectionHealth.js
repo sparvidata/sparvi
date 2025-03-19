@@ -79,21 +79,25 @@ const ConnectionHealth = () => {
         });
 
         // Make sure response is valid and component is still mounted
-        if (response && isMountedRef.current) {
+        if (isMountedRef.current) {
           console.log("Setting metadata status:", response);
           setStatus(response);
+          setLoading(false); // Explicitly set loading to false here
         }
       } catch (error) {
         if (error.throttled) {
           console.log("Metadata status request throttled");
-          return;
-        }
-
-        if (isMountedRef.current) {
+        } else if (isMountedRef.current) {
           console.error('Error fetching metadata status:', error);
           showNotification('Failed to load connection health data', 'error');
         }
+
+        // Always set loading to false
+        if (isMountedRef.current) {
+          setLoading(false);
+        }
       } finally {
+        // Belt and suspenders approach
         if (isMountedRef.current) {
           setLoading(false);
         }
