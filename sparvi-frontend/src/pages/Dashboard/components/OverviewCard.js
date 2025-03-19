@@ -1,3 +1,4 @@
+// src/pages/Dashboard/components/OverviewCard.js
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { ArrowRightIcon } from '@heroicons/react/20/solid';
@@ -15,38 +16,19 @@ const OverviewCard = ({ title, type = 'tables', connectionId }) => {
   // Refs for tracking component state
   const isMountedRef = useRef(true);
   const lastFetchRef = useRef(0);
-  const dataLoadedRef = useRef(false);
+  const fetchTimeoutRef = useRef(null);
   const FETCH_INTERVAL_MS = 30000; // 30 seconds minimum between fetches
-
-  // Debug logging for state changes
-  useEffect(() => {
-    console.log(`[${type}] Overview Loading State:`, loading);
-    console.log(`[${type}] Overview Data:`, data);
-  }, [loading, data, type]);
 
   // Cleanup on unmount
   useEffect(() => {
     return () => {
       console.log(`[${type}] Overview component unmounting`);
       isMountedRef.current = false;
+      if (fetchTimeoutRef.current) {
+        clearTimeout(fetchTimeoutRef.current);
+      }
     };
   }, [type]);
-
-  // Reset component state when connection changes
-  useEffect(() => {
-    console.log(`[${type}] Connection changed to:`, connectionId);
-    // Reset state when connection changes or is removed
-    if (!connectionId) {
-      setData([]);
-      setLoading(false);
-      setError(null);
-      dataLoadedRef.current = false;
-    } else {
-      // New connection, prepare for data loading
-      setLoading(true);
-      dataLoadedRef.current = false;
-    }
-  }, [connectionId, type]);
 
   // Create memoized load function with fetch throttling
   const fetchData = useCallback(async (force = false) => {
@@ -61,120 +43,122 @@ const OverviewCard = ({ title, type = 'tables', connectionId }) => {
     const now = Date.now();
     if (!force && now - lastFetchRef.current < FETCH_INTERVAL_MS) {
       console.log(`[${type}] Skipping fetch, too soon since last fetch`);
+      setLoading(false);
       return;
     }
 
-    // Skip if already loaded unless forced
-    if (!force && dataLoadedRef.current) {
-      console.log(`[${type}] Data already loaded, skipping fetch`);
-      return;
+    // If there's a pending timeout, clear it
+    if (fetchTimeoutRef.current) {
+      clearTimeout(fetchTimeoutRef.current);
     }
 
-    try {
-      console.log(`[${type}] Starting to fetch data for connection:`, connectionId);
-      setLoading(true);
-      setError(null);
-      lastFetchRef.current = now;
-
-      // Add a small delay to prevent request conflicts
-      await new Promise(resolve => setTimeout(resolve, 100));
-
-      // Check if component is still mounted
+    // Set up the real data fetching after a short delay
+    // This helps avoid race conditions with multiple unmounts/mounts
+    fetchTimeoutRef.current = setTimeout(async () => {
+      // Check if component is still mounted before proceeding
       if (!isMountedRef.current) {
-        console.log(`[${type}] Component unmounted during delay, aborting fetch`);
+        console.log(`[${type}] Component unmounted during timeout, aborting fetch`);
         return;
       }
 
-      if (type === 'tables') {
-        // Fetch tables data
-        console.log(`[${type}] Fetching tables for connection:`, connectionId);
-        const response = await apiRequest(`connections/${connectionId}/tables`);
+      try {
+        console.log(`[${type}] Starting to fetch data for connection:`, connectionId);
+        setLoading(true);
+        setError(null);
+        lastFetchRef.current = now;
 
-        // Check if component is still mounted
-        if (!isMountedRef.current) {
-          console.log(`[${type}] Component unmounted after tables fetch, aborting`);
-          return;
-        }
-
-        console.log(`[${type}] Tables data received:`, response);
-
-        // Only show first 5 tables
-        const tablesToShow = (response?.tables || []).slice(0, 5);
-        setData(tablesToShow);
-        dataLoadedRef.current = true;
-        console.log(`[${type}] Tables data set:`, tablesToShow);
-      } else if (type === 'validations') {
-        // Fetch validations data (requires tables first)
-        console.log(`[${type}] Fetching tables for validation lookup:`, connectionId);
-        const tablesResponse = await apiRequest(`connections/${connectionId}/tables`);
-        const tables = tablesResponse?.tables || [];
-
-        // Check if component is still mounted
-        if (!isMountedRef.current) {
-          console.log(`[${type}] Component unmounted after tables fetch for validations, aborting`);
-          return;
-        }
-
-        if (tables.length > 0) {
-          // Get validation rules for the first table
-          console.log(`[${type}] Fetching validations for table:`, tables[0]);
-          const validationResponse = await apiRequest('validations', {
-            params: { table: tables[0] }
-          });
+        if (type === 'tables') {
+          // Fetch tables data
+          console.log(`[${type}] Fetching tables for connection:`, connectionId);
+          const response = await apiRequest(`connections/${connectionId}/tables`);
 
           // Check if component is still mounted
           if (!isMountedRef.current) {
-            console.log(`[${type}] Component unmounted after validations fetch, aborting`);
+            console.log(`[${type}] Component unmounted after fetch, aborting`);
             return;
           }
 
-          console.log(`[${type}] Validation data received:`, validationResponse);
+          console.log(`[${type}] Tables data received:`, response);
 
-          // Get first 5 validation rules
-          const validationsToShow = (validationResponse?.rules || []).slice(0, 5);
-          setData(validationsToShow);
-          dataLoadedRef.current = true;
-          console.log(`[${type}] Validation data set:`, validationsToShow);
-        } else {
-          console.log(`[${type}] No tables available for validations`);
-          setData([]);
-          dataLoadedRef.current = true;
+          // Only show first 5 tables
+          const tablesToShow = (response?.tables || []).slice(0, 5);
+          setData(tablesToShow);
+        } else if (type === 'validations') {
+          // Fetch validations data (requires tables first)
+          console.log(`[${type}] Fetching tables for validation lookup:`, connectionId);
+          const tablesResponse = await apiRequest(`connections/${connectionId}/tables`);
+          const tables = tablesResponse?.tables || [];
+
+          // Check if component is still mounted
+          if (!isMountedRef.current) {
+            console.log(`[${type}] Component unmounted after tables fetch for validations, aborting`);
+            return;
+          }
+
+          if (tables.length > 0) {
+            // Get validation rules for the first table
+            console.log(`[${type}] Fetching validations for table:`, tables[0]);
+            const validationResponse = await apiRequest('validations', {
+              params: { table: tables[0] }
+            });
+
+            // Check if component is still mounted
+            if (!isMountedRef.current) {
+              console.log(`[${type}] Component unmounted after validations fetch, aborting`);
+              return;
+            }
+
+            console.log(`[${type}] Validation data received:`, validationResponse);
+
+            // Get first 5 validation rules
+            const validationsToShow = (validationResponse?.rules || []).slice(0, 5);
+            setData(validationsToShow);
+          } else {
+            console.log(`[${type}] No tables available for validations`);
+            setData([]);
+          }
+        }
+      } catch (err) {
+        // Handle errors
+        if (!isMountedRef.current) {
+          console.log(`[${type}] Component unmounted during error, aborting`);
+          return;
+        }
+
+        if (err?.cancelled) {
+          console.log(`[${type}] Request was cancelled`);
+          return;
+        }
+
+        if (err?.throttled) {
+          console.log(`[${type}] Request was throttled`);
+          return;
+        }
+
+        console.error(`[${type}] Error fetching data:`, err);
+        setError(err);
+        if (showNotification) {
+          showNotification(`Failed to load ${type} data`, 'error');
+        }
+      } finally {
+        // Always set loading to false at the end if component is still mounted
+        if (isMountedRef.current) {
+          console.log(`[${type}] Setting loading to false`);
+          setLoading(false);
         }
       }
-    } catch (err) {
-      // Handle errors
-      if (!isMountedRef.current) {
-        console.log(`[${type}] Component unmounted during error, aborting`);
-        return;
-      }
-
-      if (err?.cancelled) {
-        console.log(`[${type}] Request was cancelled`);
-        return;
-      }
-
-      if (err?.throttled) {
-        console.log(`[${type}] Request was throttled`);
-        return;
-      }
-
-      console.error(`[${type}] Error fetching data:`, err);
-      setError(err);
-      showNotification(`Failed to load ${type} data`, 'error');
-    } finally {
-      // Always set loading to false at the end if component is still mounted
-      if (isMountedRef.current) {
-        console.log(`[${type}] Setting loading to false`);
-        setLoading(false);
-      }
-    }
-  }, [connectionId, type]);
+    }, 100); // Short delay to avoid race conditions
+  }, [connectionId, type, showNotification]);
 
   // Load data when dependencies change
   useEffect(() => {
     if (connectionId) {
       console.log(`[${type}] Triggering data fetch for connection:`, connectionId);
       fetchData();
+    } else {
+      // Reset state when no connection
+      setData([]);
+      setLoading(false);
     }
   }, [connectionId, fetchData, type]);
 

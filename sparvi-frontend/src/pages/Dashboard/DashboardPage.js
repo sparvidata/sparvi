@@ -30,10 +30,8 @@ const DashboardPage = () => {
 
   // Use a ref to track mounted state
   const isMountedRef = useRef(true);
-  // Use a ref to track if tables data has been loaded
-  const tablesLoadedRef = useRef(false);
   // Track last fetch time to prevent too frequent refreshes
-  const lastFetchRef = useRef(0);
+  const lastFetchRef = useRef({ tables: 0, changes: 0 });
   const FETCH_INTERVAL_MS = 30000; // 30 seconds minimum between fetches
 
   // Get connectionId to use as a dependency
@@ -53,62 +51,89 @@ const DashboardPage = () => {
     ]);
   }, [updateBreadcrumbs]);
 
-    // Load dashboard data function
-  const loadDashboardData = useCallback(async (force = false) => {
+  // Load tables data function
+  const loadTablesData = useCallback(async (force = false) => {
     if (!connectionId) {
-      // If no connection, reset loading states
       setTablesLoading(false);
-      setChangesLoading(false);
+      return;
+    }
+
+    // Check if we should skip fetching due to recent fetch
+    const now = Date.now();
+    if (!force && now - lastFetchRef.current.tables < FETCH_INTERVAL_MS) {
       return;
     }
 
     try {
       console.log("Loading tables data for connection", connectionId);
-      setTablesLoading(true); // Set loading true at start
+      setTablesLoading(true);
+      lastFetchRef.current.tables = now;
 
-      const tablesResponse = await apiRequest(`connections/${connectionId}/tables`);
-
-      if (isMountedRef.current) {
-        console.log("Setting tables data:", tablesResponse);
-        // Important: First set the data, then set loading to false
-        setTablesData(tablesResponse);
-        setTablesLoading(false);
-      }
-
-      // Load changes data
-      setChangesLoading(true); // Set loading true at start
-      const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
-      const changesResponse = await apiRequest(`connections/${connectionId}/changes`, {
-        params: { since }
+      const response = await apiRequest(`connections/${connectionId}/tables`, {
+        skipThrottle: force // Skip throttling if forcing refresh
       });
 
       if (isMountedRef.current) {
-        console.log("Setting changes data:", changesResponse);
-        // Important: First set the data, then set loading to false
-        setChangesData(changesResponse);
+        setTablesData(response);
+        setTablesLoading(false);
+      }
+    } catch (error) {
+      if (isMountedRef.current) {
+        console.error('Error loading tables data:', error);
+        setTablesLoading(false);
+      }
+    }
+  }, [connectionId]);
+
+  // Load changes data function
+  const loadChangesData = useCallback(async (force = false) => {
+    if (!connectionId) {
+      setChangesLoading(false);
+      return;
+    }
+
+    // Check if we should skip fetching due to recent fetch
+    const now = Date.now();
+    if (!force && now - lastFetchRef.current.changes < FETCH_INTERVAL_MS) {
+      return;
+    }
+
+    try {
+      setChangesLoading(true);
+      lastFetchRef.current.changes = now;
+
+      const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+      const response = await apiRequest(`connections/${connectionId}/changes`, {
+        params: { since },
+        skipThrottle: force // Skip throttling if forcing refresh
+      });
+
+      if (isMountedRef.current) {
+        setChangesData(response);
         setChangesLoading(false);
       }
     } catch (error) {
-      // ...error handling
       if (isMountedRef.current) {
-        // Important: Always set loading to false on error
-        setTablesLoading(false);
+        console.error('Error loading changes data:', error);
         setChangesLoading(false);
       }
     }
   }, [connectionId]);
 
-  // Load data only when connectionId changes and only once
+  // Load dashboard data when connection changes
   useEffect(() => {
-    if (connectionId && !tablesLoadedRef.current) {
-      loadDashboardData();
-    } else if (!connectionId) {
+    if (connectionId) {
+      // Load tables and changes data
+      loadTablesData();
+      loadChangesData();
+    } else {
       // Reset state when connection changes
       setTablesData(null);
       setChangesData(null);
-      tablesLoadedRef.current = false;
+      setTablesLoading(false);
+      setChangesLoading(false);
     }
-  }, [connectionId, loadDashboardData]);
+  }, [connectionId, loadTablesData, loadChangesData]);
 
   // Handle manual refresh
   const handleRefreshData = async () => {
@@ -116,7 +141,10 @@ const DashboardPage = () => {
 
     setRefreshing(true);
     try {
-      await loadDashboardData(true); // true = force refresh
+      await Promise.all([
+        loadTablesData(true), // Pass true to force refresh
+        loadChangesData(true) // Pass true to force refresh
+      ]);
       showNotification('Dashboard data refreshed', 'success');
     } catch (error) {
       console.error('Error refreshing dashboard data:', error);
@@ -133,7 +161,7 @@ const DashboardPage = () => {
         <ServerIcon className="mx-auto h-12 w-12 text-secondary-400" />
         <h3 className="mt-2 text-sm font-medium text-secondary-900">No connections</h3>
         <p className="mt-1 text-sm text-secondary-500">
-          Get started by creating a new connection.
+          Get started by creating a new connection to your data source.
         </p>
         <div className="mt-6">
           <Link
@@ -231,18 +259,22 @@ const DashboardPage = () => {
           recentValidations={[]}
         />
 
-        {/* Overview cards with connectionId prop */}
+        {/* Overview cards with connectionId prop - now with improved handling */}
         <div className="space-y-5">
-          <OverviewCard
-            title="Tables"
-            type="tables"
-            connectionId={connectionId}
-          />
-          <OverviewCard
-            title="Validations"
-            type="validations"
-            connectionId={connectionId}
-          />
+          {connectionId && (
+            <>
+              <OverviewCard
+                title="Tables"
+                type="tables"
+                connectionId={connectionId}
+              />
+              <OverviewCard
+                title="Validations"
+                type="validations"
+                connectionId={connectionId}
+              />
+            </>
+          )}
         </div>
       </div>
     </div>

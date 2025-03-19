@@ -27,62 +27,86 @@ const ConnectionHealth = () => {
 
   // Add isMounted ref to track component mount state
   const isMountedRef = useRef(true);
+  // Add a timeout ref to track and clear pending fetches
+  const fetchTimeoutRef = useRef(null);
 
   // Cleanup on unmount
   useEffect(() => {
     return () => {
       isMountedRef.current = false;
+      if (fetchTimeoutRef.current) {
+        clearTimeout(fetchTimeoutRef.current);
+      }
     };
   }, []);
 
   // Create memoized fetch function to avoid recreation on every render
   const fetchStatus = useCallback(async (force = false) => {
-    if (!connectionId) return;
+    if (!connectionId) {
+      setLoading(false);
+      return;
+    }
 
     // Check if we need to fetch again - avoid too frequent refreshes
     const now = Date.now();
     if (!force && now - lastFetchRef.current < FETCH_INTERVAL_MS) {
       console.log("Skipping fetch, too soon since last fetch");
+      setLoading(false);
       return;
     }
 
-    try {
-      setLoading(true);
-      console.log("Fetching metadata status for connection", connectionId);
-      lastFetchRef.current = now; // Update last fetch time
+    // Clear any pending fetch timeouts
+    if (fetchTimeoutRef.current) {
+      clearTimeout(fetchTimeoutRef.current);
+    }
 
-      // Make request with longer timeout
-      const response = await apiRequest(`connections/${connectionId}/metadata/status`, {
-        timeout: 60000, // 60 seconds timeout
-        skipThrottle: force // Skip throttling for manual refreshes
-      });
-
-      // Make sure response is valid and component is still mounted
-      if (response && isMountedRef.current) {
-        console.log("Setting metadata status:", response);
-        setStatus(response);
-      }
-    } catch (error) {
-      if (error.throttled) {
-        console.log("Metadata status request throttled");
+    // Add a small delay before fetching to avoid race conditions
+    fetchTimeoutRef.current = setTimeout(async () => {
+      // Check if component is still mounted
+      if (!isMountedRef.current) {
         return;
       }
 
-      if (isMountedRef.current) {
-        console.error('Error fetching metadata status:', error);
-        showNotification('Failed to load connection health data', 'error');
-      }
-    } finally {
-      if (isMountedRef.current) {
-        setLoading(false);
-      }
-    }
-  }, [connectionId]);
+      try {
+        setLoading(true);
+        console.log("Fetching metadata status for connection", connectionId);
+        lastFetchRef.current = now; // Update last fetch time
 
-  // Only fetch data once on initial mount or when connection changes
+        // Make request with longer timeout
+        const response = await apiRequest(`connections/${connectionId}/metadata/status`, {
+          timeout: 60000, // 60 seconds timeout
+          skipThrottle: force // Skip throttling for manual refreshes
+        });
+
+        // Make sure response is valid and component is still mounted
+        if (response && isMountedRef.current) {
+          console.log("Setting metadata status:", response);
+          setStatus(response);
+        }
+      } catch (error) {
+        if (error.throttled) {
+          console.log("Metadata status request throttled");
+          return;
+        }
+
+        if (isMountedRef.current) {
+          console.error('Error fetching metadata status:', error);
+          showNotification('Failed to load connection health data', 'error');
+        }
+      } finally {
+        if (isMountedRef.current) {
+          setLoading(false);
+        }
+      }
+    }, 100);
+  }, [connectionId, showNotification]);
+
+  // Only fetch data when connection changes
   useEffect(() => {
     if (connectionId) {
       fetchStatus();
+    } else {
+      setLoading(false);
     }
   }, [connectionId, fetchStatus]);
 

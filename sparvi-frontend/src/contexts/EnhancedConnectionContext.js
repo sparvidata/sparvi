@@ -351,8 +351,21 @@ export const ConnectionProvider = ({ children }) => {
       const response = await connectionsAPI.getConnectionDashboard(connectionId, { forceFresh });
       return response;
     } catch (err) {
+      // Check if it's a cancelled request
+      if (err.cancelled) {
+        console.log('Connection dashboard request was cancelled');
+        return { cancelled: true };
+      }
+
+      console.error('Error fetching connection dashboard:', err);
       setError(err.message || 'Failed to get connection dashboard');
-      throw err;
+
+      // Return a standardized error response instead of throwing
+      return {
+        error: true,
+        message: err.message || 'Failed to get connection dashboard',
+        details: err
+      };
     }
   }, []);
 
