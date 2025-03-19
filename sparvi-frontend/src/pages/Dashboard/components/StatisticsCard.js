@@ -1,6 +1,8 @@
+// src/pages/Dashboard/components/StatisticCard.js
 import React from 'react';
 import { Link } from 'react-router-dom';
 import { ArrowRightIcon } from '@heroicons/react/20/solid';
+import LoadingSpinner from '../../../components/common/LoadingSpinner';
 
 const StatisticCard = ({ title, value, icon: Icon, href, color = 'primary', loading = false }) => {
   // Define color classes based on the color prop
@@ -34,7 +36,10 @@ const StatisticCard = ({ title, value, icon: Icon, href, color = 'primary', load
             <dt className="text-sm font-medium text-secondary-500 truncate">{title}</dt>
             <dd>
               {loading ? (
-                <div className="h-8 w-16 bg-secondary-200 animate-pulse rounded"></div>
+                <div className="flex items-center h-8">
+                  <LoadingSpinner size="sm" className="mr-2" />
+                  <span className="text-secondary-400">Loading...</span>
+                </div>
               ) : (
                 <div className="text-lg font-medium text-secondary-900">{value}</div>
               )}

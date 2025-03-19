@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from 'react';
+// src/pages/Dashboard/DashboardPage.js
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import {
   ServerIcon,
@@ -10,26 +11,36 @@ import {
 } from '@heroicons/react/24/outline';
 import { useConnection } from '../../contexts/EnhancedConnectionContext';
 import { useUI } from '../../contexts/UIContext';
-import { schemaAPI, validationsAPI, metadataAPI } from '../../api/enhancedApiService';
-import BatchRequest from '../../components/common/BatchRequest';
+import { apiRequest } from '../../utils/apiUtils';
 import LoadingSpinner from '../../components/common/LoadingSpinner';
+import ConnectionHealth from './components/ConnectionHealth';
 import OverviewCard from './components/OverviewCard';
 import RecentActivity from './components/RecentActivity';
-import ConnectionHealth from './components/ConnectionHealth';
 import StatisticCard from './components/StatisticsCard';
 
 const DashboardPage = () => {
-  const { connections, activeConnection, defaultConnection } = useConnection();
-  const { updateBreadcrumbs, showNotification, setLoading } = useUI();
+  const { connections, activeConnection } = useConnection();
+  const { updateBreadcrumbs, showNotification } = useUI();
+  const [refreshing, setRefreshing] = useState(false);
 
-  const [dashboardData, setDashboardData] = useState({
-    tableCount: 0,
-    recentValidations: [],
-    recentChanges: [],
-    schemaHealth: { status: 'unknown' },
-    loading: true
-  });
-  const [isRefreshing, setIsRefreshing] = useState(false);
+  // State for individual sections
+  const [tablesData, setTablesData] = useState(null);
+  const [changesData, setChangesData] = useState(null);
+  const [tablesLoading, setTablesLoading] = useState(false);
+  const [changesLoading, setChangesLoading] = useState(false);
+
+  // Use a ref to track mounted state
+  const isMountedRef = useRef(true);
+
+  // Get connectionId to use as a dependency
+  const connectionId = activeConnection?.id;
+
+  // Set up cleanup on unmount
+  useEffect(() => {
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
 
   // Set breadcrumbs
   useEffect(() => {
@@ -38,57 +49,72 @@ const DashboardPage = () => {
     ]);
   }, [updateBreadcrumbs]);
 
-  // Prepare connection ID for API calls
-  const connectionId = activeConnection?.id || defaultConnection?.id;
+  // Create memoized load function
+  const loadDashboardData = useCallback(async () => {
+    if (!connectionId) return;
 
-  // Prepare batch request configuration
-  const getBatchRequests = () => {
-    if (!connectionId) return [];
+    try {
+      console.log("Loading tables data for connection", connectionId);
+      // Load tables data
+      setTablesLoading(true);
+      const tablesResponse = await apiRequest(`connections/${connectionId}/tables`);
 
-    // Don't make the requests if we're refreshing
-    if (isRefreshing) return [];
+      if (isMountedRef.current) {
+        console.log("Setting tables data:", tablesResponse);
+        setTablesData(tablesResponse);
+        setTablesLoading(false);
+      }
 
-    return [
-      { id: 'tables', path: `/connections/${connectionId}/tables` },
-      { id: 'metadataStatus', path: `/connections/${connectionId}/metadata/status` },
-      { id: 'changes', path: `/connections/${connectionId}/changes`,
-        params: { since: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString() } }
-    ];
-  };
+      // Load changes data
+      setChangesLoading(true);
+      const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+      const changesResponse = await apiRequest(`connections/${connectionId}/changes`, {
+        params: { since }
+      });
 
-  // Handle batch requests completion
-  const handleBatchComplete = (results) => {
-    // Ensure each property exists before trying to access it
-    const tableCount = results.tables?.tables?.length || 0;
-    const recentChanges = results.changes?.changes || [];
-    const schemaHealth = results.metadataStatus || { status: 'unknown' };
+      if (isMountedRef.current) {
+        console.log("Setting changes data:", changesResponse);
+        setChangesData(changesResponse);
+        setChangesLoading(false);
+      }
+    } catch (error) {
+      if (isMountedRef.current) {
+        console.error('Error loading dashboard data:', error);
+        showNotification('Some dashboard data could not be loaded', 'error');
+      }
+    } finally {
+      if (isMountedRef.current) {
+        setTablesLoading(false);
+        setChangesLoading(false);
+      }
+    }
+  }, [connectionId, showNotification]);
 
-    setDashboardData({
-      tableCount,
-      recentValidations: [],
-      recentChanges,
-      schemaHealth,
-      loading: false
-    });
-    setIsRefreshing(false);
-  };
+  // Load data only when connectionId changes
+  useEffect(() => {
+    if (connectionId) {
+      loadDashboardData();
+    }
+  }, [connectionId, loadDashboardData]);
 
-  // Handle batch requests error
-  const handleBatchError = (error) => {
-    console.error('Error loading dashboard data:', error);
-    showNotification('Failed to load dashboard data', 'error');
-    setDashboardData(prev => ({ ...prev, loading: false }));
-    setIsRefreshing(false);
-  };
+  // Handle manual refresh
+  const handleRefreshData = async () => {
+    if (!connectionId || refreshing) return;
 
-  // Handle dashboard refresh
-  const handleRefresh = () => {
-    setIsRefreshing(true);
-    setDashboardData(prev => ({ ...prev, loading: true }));
+    setRefreshing(true);
+    try {
+      await loadDashboardData();
+      showNotification('Dashboard data refreshed', 'success');
+    } catch (error) {
+      console.error('Error refreshing dashboard data:', error);
+      showNotification('Failed to refresh dashboard data', 'error');
+    } finally {
+      setRefreshing(false);
+    }
   };
 
   // If no connections, show empty state
-  if (!connections.length) {
+  if (!connections || connections.length === 0) {
     return (
       <div className="text-center py-12">
         <ServerIcon className="mx-auto h-12 w-12 text-secondary-400" />
@@ -115,13 +141,13 @@ const DashboardPage = () => {
         <div className="flex justify-between items-center">
           <h1 className="text-2xl font-semibold text-secondary-900">Dashboard</h1>
 
-          {connectionId && (
+          {activeConnection && (
             <button
-              onClick={handleRefresh}
-              disabled={isRefreshing}
+              onClick={handleRefreshData}
+              disabled={refreshing}
               className="inline-flex items-center px-3 py-1.5 border border-secondary-300 shadow-sm text-sm font-medium rounded-md text-secondary-700 bg-white hover:bg-secondary-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-secondary-500 disabled:opacity-50"
             >
-              {isRefreshing ? (
+              {refreshing ? (
                 <>
                   <LoadingSpinner size="sm" className="mr-2" />
                   Refreshing...
@@ -140,97 +166,72 @@ const DashboardPage = () => {
         </p>
       </div>
 
-      {/* Connection info */}
-      <ConnectionHealth connection={activeConnection || defaultConnection} />
+      {/* Connection health with its own loading logic */}
+      <ConnectionHealth />
 
-      {connectionId ? (
-        <BatchRequest
-          requests={getBatchRequests()}
-          onComplete={handleBatchComplete}
-          onError={handleBatchError}
-          loadingComponent={
-            <div className="mt-8 grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-4">
-              {/* Skeleton loading states for statistics */}
-              {[1, 2, 3, 4].map((i) => (
-                <div key={i} className="card px-4 py-5 sm:p-6 animate-pulse">
-                  <div className="flex items-center">
-                    <div className="flex-shrink-0 rounded-md p-3 bg-secondary-100">
-                      <div className="h-6 w-6 bg-secondary-200 rounded"></div>
-                    </div>
-                    <div className="ml-5 w-0 flex-1">
-                      <div className="h-5 bg-secondary-200 rounded w-20 mb-2"></div>
-                      <div className="h-7 bg-secondary-200 rounded w-12"></div>
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          }
-        >
-          {() => (
-            <>
-              {/* Stats overview */}
-              <div className="mt-8 grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-4">
-                <StatisticCard
-                  title="Tables"
-                  value={dashboardData.tableCount}
-                  icon={TableCellsIcon}
-                  href="/explorer"
-                  color="primary"
-                />
-                <StatisticCard
-                  title="Validations"
-                  value={dashboardData.recentValidations.length || 0}
-                  icon={ClipboardDocumentCheckIcon}
-                  href="/validations"
-                  color="accent"
-                />
-                <StatisticCard
-                  title="Schema Changes"
-                  value={dashboardData.recentChanges.length || 0}
-                  icon={ArrowPathIcon}
-                  href="/metadata"
-                  color="warning"
-                />
-                <StatisticCard
-                  title="Issues"
-                  value={0}
-                  icon={ExclamationTriangleIcon}
-                  href="/validations"
-                  color="danger"
-                />
-              </div>
+      {/* Statistics section */}
+      <div className="mt-8 grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-4">
+        {/* Table count */}
+        <StatisticCard
+          title="Tables"
+          value={tablesData?.tables?.length || 0}
+          icon={TableCellsIcon}
+          href="/explorer"
+          color="primary"
+          loading={tablesLoading}
+        />
 
-              {/* Contextual cards */}
-              <div className="mt-5 grid grid-cols-1 gap-5 lg:grid-cols-2">
-                {/* Recent activity */}
-                <RecentActivity
-                  recentChanges={dashboardData.recentChanges}
-                  recentValidations={dashboardData.recentValidations}
-                />
+        {/* Validations count */}
+        <StatisticCard
+          title="Validations"
+          value={0} // No validations data yet
+          icon={ClipboardDocumentCheckIcon}
+          href="/validations"
+          color="accent"
+        />
 
-                {/* Overview cards */}
-                <div className="space-y-5">
-                  <OverviewCard
-                    title="Tables"
-                    connectionId={connectionId}
-                    type="tables"
-                  />
-                  <OverviewCard
-                    title="Validations"
-                    connectionId={connectionId}
-                    type="validations"
-                  />
-                </div>
-              </div>
-            </>
-          )}
-        </BatchRequest>
-      ) : (
-        <div className="mt-8 text-center py-8">
-          <p className="text-secondary-500">Select a connection to view dashboard data.</p>
+        {/* Schema changes */}
+        <StatisticCard
+          title="Schema Changes"
+          value={changesData?.changes?.length || 0}
+          icon={ArrowPathIcon}
+          href="/metadata"
+          color="warning"
+          loading={changesLoading}
+        />
+
+        {/* Issues */}
+        <StatisticCard
+          title="Issues"
+          value={0}
+          icon={ExclamationTriangleIcon}
+          href="/validations"
+          color="danger"
+        />
+      </div>
+
+      {/* Contextual cards */}
+      <div className="mt-5 grid grid-cols-1 gap-5 lg:grid-cols-2">
+        {/* Recent activity */}
+        <RecentActivity
+          recentChanges={changesData?.changes || []}
+          recentValidations={[]}
+        />
+
+        {/* Overview cards with connectionId prop */}
+        <div className="space-y-5">
+          <OverviewCard
+            title="Tables"
+            type="tables"
+            connectionId={connectionId}
+          />
+          <OverviewCard
+            title="Validations"
+            type="validations"
+            connectionId={connectionId}
+          />
         </div>
-      )}
+      </div>
     </div>
   );
 };

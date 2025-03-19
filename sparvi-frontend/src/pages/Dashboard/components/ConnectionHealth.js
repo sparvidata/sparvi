@@ -1,12 +1,14 @@
-import React, { useState, useEffect } from 'react';
+// src/pages/Dashboard/components/ConnectionHealth.js
+import React, { useState, useEffect, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { ArrowPathIcon, CheckCircleIcon, ExclamationCircleIcon } from '@heroicons/react/24/outline';
-import {metadataAPI, waitForAuth} from '../../../api/enhancedApiService';
+import { useConnection } from '../../../contexts/EnhancedConnectionContext';
 import { useUI } from '../../../contexts/UIContext';
+import { apiRequest } from '../../../utils/apiUtils';
 import LoadingSpinner from '../../../components/common/LoadingSpinner';
-import {cancelRequests} from "../../../utils/requestUtils";
 
-const ConnectionHealth = ({ connection }) => {
+const ConnectionHealth = () => {
+  const { activeConnection } = useConnection();
   const [status, setStatus] = useState({
     tables: { status: 'unknown', last_updated: null, freshness: { status: 'unknown' } },
     columns: { status: 'unknown', last_updated: null, freshness: { status: 'unknown' } },
@@ -16,72 +18,80 @@ const ConnectionHealth = ({ connection }) => {
   const [loading, setLoading] = useState(true);
   const { showNotification } = useUI();
 
-  useEffect(() => {
-    let isMounted = true;
-    const fetchStatus = async () => {
-      if (!connection) return;
+  // Use connectionId instead of the entire connection object to prevent re-renders
+  const connectionId = activeConnection?.id;
 
-      try {
-        setLoading(true);
-
-        // Wait for authentication to be ready
-        await waitForAuth(3000).catch(() => console.log("Auth wait timed out, proceeding anyway"));
-
-        // Add a small delay to ensure other critical components initialize first
-        await new Promise(resolve => setTimeout(resolve, 100));
-
-        // Use a unique requestId to better track this request
-        const response = await metadataAPI.getMetadataStatus(connection.id, {
-          forceFresh: false,
-          requestId: `metadata-status-${connection.id}-${Date.now()}`
-        });
-
-        // Make sure we have a valid response with data
-        if (response && response.data) {
-          setStatus(response.data);
-        }
-      } catch (error) {
-        // Only show errors for non-cancelled requests
-        if (!error.cancelled) {
-          console.error('Error fetching metadata status:', error);
-          showNotification('Failed to load connection health data', 'error');
-        } else {
-          console.log('Metadata status request was cancelled');
-        }
-      } finally {
-        if (isMounted) setLoading(false);
-      }
-    };
-
-    fetchStatus();
-
-    // Cleanup function
-    return () => {
-      // Mark component as unmounted
-      isMounted = false;
-
-      // Cancel any pending requests for this connection
-      if (connection) {
-        cancelRequests(`metadata-status-${connection.id}`);
-      }
-    };
-  }, [connection]);
-
-  // Handle refresh metadata
-  const handleRefresh = async () => {
-    if (!connection) return;
+  // Create memoized fetch function to avoid recreation on every render
+  const fetchStatus = useCallback(async () => {
+    if (!connectionId) return;
 
     try {
       setLoading(true);
-      await metadataAPI.refreshMetadata(connection.id, 'schema');
+      console.log("Fetching metadata status for connection", connectionId);
+
+      // Make request with longer timeout
+      const response = await apiRequest(`connections/${connectionId}/metadata/status`, {
+        timeout: 60000 // 60 seconds timeout
+      });
+
+      // Make sure response is valid
+      if (response) {
+        console.log("Setting metadata status:", response);
+        setStatus(response);
+      }
+    } catch (error) {
+      console.error('Error fetching metadata status:', error);
+      showNotification('Failed to load connection health data', 'error');
+    } finally {
+      setLoading(false);
+    }
+  }, [connectionId, showNotification]);
+
+  // Only re-run when connectionId changes
+  useEffect(() => {
+    let isMounted = true;
+
+    const loadData = async () => {
+      try {
+        if (!connectionId) return;
+
+        await fetchStatus();
+      } catch (error) {
+        if (isMounted) {
+          console.error("Error in connection health effect:", error);
+        }
+      }
+    };
+
+    loadData();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [connectionId, fetchStatus]);
+
+  // Handle refresh metadata - use connectionId directly
+  const handleRefresh = async () => {
+    if (!connectionId) return;
+
+    try {
+      setLoading(true);
+
+      // Simplified request using new helper
+      await apiRequest(`connections/${connectionId}/metadata/refresh`, {
+        method: 'POST',
+        data: { metadata_type: 'schema' }
+      });
+
       showNotification('Metadata refresh initiated', 'success');
 
       // Fetch updated status after a short delay
       setTimeout(async () => {
         try {
-          const response = await metadataAPI.getMetadataStatus(connection.id);
-          if (response && response.data) {
-            setStatus(response.data);
+          const response = await apiRequest(`connections/${connectionId}/metadata/status`);
+          if (response) {
+            console.log("Setting metadata status after refresh:", response);
+            setStatus(response);
           }
         } catch (error) {
           console.error('Error fetching updated metadata status:', error);
@@ -94,37 +104,6 @@ const ConnectionHealth = ({ connection }) => {
       showNotification('Failed to refresh metadata', 'error');
       setLoading(false);
     }
-  };
-
-  // Get status badge
-  const getStatusBadge = (statusValue) => {
-    // Default to 'unknown' if status is undefined
-    const currentStatus = statusValue || 'unknown';
-
-    const statusColors = {
-      fresh: 'bg-accent-100 text-accent-800',
-      stale: 'bg-warning-100 text-warning-800',
-      unknown: 'bg-secondary-100 text-secondary-800',
-      error: 'bg-danger-100 text-danger-800'
-    };
-
-    const statusLabels = {
-      fresh: 'Fresh',
-      stale: 'Stale',
-      unknown: 'Unknown',
-      error: 'Error'
-    };
-
-    return (
-      <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${statusColors[currentStatus] || statusColors.unknown}`}>
-        {currentStatus === 'fresh' ? (
-          <CheckCircleIcon className="-ml-0.5 mr-1.5 h-3 w-3" aria-hidden="true" />
-        ) : currentStatus === 'error' ? (
-          <ExclamationCircleIcon className="-ml-0.5 mr-1.5 h-3 w-3" aria-hidden="true" />
-        ) : null}
-        {statusLabels[currentStatus] || 'Unknown'}
-      </span>
-    );
   };
 
   // Format the date
@@ -142,29 +121,39 @@ const ConnectionHealth = ({ connection }) => {
     }
   };
 
-  // Format metadata freshness for display
-  const getMetadataFreshness = () => {
-    // Add safe access to nested properties
-    const tablesStatus = status?.tables?.freshness?.status || 'unknown';
+  // Get status badge
+  const getStatusBadge = (statusValue) => {
+    // Default to 'unknown' if status is undefined
+    const currentStatus = statusValue || 'unknown';
 
     const statusColors = {
-      fresh: 'text-accent-500',
-      stale: 'text-warning-500',
-      unknown: 'text-secondary-400',
-      error: 'text-danger-500'
+      recent: 'bg-accent-100 text-accent-800',
+      stale: 'bg-warning-100 text-warning-800',
+      unknown: 'bg-secondary-100 text-secondary-800',
+      error: 'bg-danger-100 text-danger-800'
+    };
+
+    const statusLabels = {
+      recent: 'Fresh',
+      stale: 'Stale',
+      unknown: 'Unknown',
+      error: 'Error'
     };
 
     return (
-      <span className={statusColors[tablesStatus] || statusColors.unknown}>
-        {tablesStatus === 'fresh' ? 'Up to date' :
-         tablesStatus === 'stale' ? 'Needs refresh' :
-         tablesStatus === 'error' ? 'Error' : 'Unknown'}
+      <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${statusColors[currentStatus] || statusColors.unknown}`}>
+        {currentStatus === 'fresh' ? (
+          <CheckCircleIcon className="-ml-0.5 mr-1.5 h-3 w-3" aria-hidden="true" />
+        ) : currentStatus === 'error' ? (
+          <ExclamationCircleIcon className="-ml-0.5 mr-1.5 h-3 w-3" aria-hidden="true" />
+        ) : null}
+        {statusLabels[currentStatus] || 'Unknown'}
       </span>
     );
   };
 
   // Check if we have an active connection
-  if (!connection) {
+  if (!connectionId) {
     return (
       <div className="card px-4 py-5 sm:p-6">
         <p className="text-sm text-secondary-500">No active connection selected</p>
@@ -184,8 +173,8 @@ const ConnectionHealth = ({ connection }) => {
         <div>
           <h3 className="text-lg leading-6 font-medium text-secondary-900">Connection Health</h3>
           <p className="mt-1 max-w-2xl text-sm text-secondary-500">
-            {connection.name}
-            {connection.is_default && (
+            {activeConnection.name}
+            {activeConnection.is_default && (
               <span className="ml-2 inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-primary-100 text-primary-800">
                 Default
               </span>

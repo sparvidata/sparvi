@@ -1,122 +1,99 @@
 // src/pages/Dashboard/components/OverviewCard.js
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { ArrowRightIcon } from '@heroicons/react/20/solid';
-import { schemaAPI, validationsAPI } from '../../../api/enhancedApiService';
 import { useUI } from '../../../contexts/UIContext';
-import { waitForAuth } from '../../../api/enhancedApiService';
+import { apiRequest } from '../../../utils/apiUtils';
+import LoadingSpinner from '../../../components/common/LoadingSpinner';
 
-const OverviewCard = ({ title, connectionId, type = 'tables' }) => {
+const OverviewCard = ({ title, type = 'tables', connectionId }) => {
   const [data, setData] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const { showNotification } = useUI();
-
-  // Add a mounted ref to prevent state updates after unmount
   const isMountedRef = useRef(true);
-  // Add a request identifier
-  const requestIdRef = useRef(`overview-${type}-${connectionId}-${Date.now()}`);
 
+  // Cleanup on unmount
   useEffect(() => {
-    // Set up mounted ref
-    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
 
-    const fetchData = async () => {
-      if (!connectionId) return;
+  // Create memoized load function
+  const fetchData = useCallback(async () => {
+    if (!connectionId) return;
 
-      try {
-        // Only set loading if component is still mounted
+    try {
+      setLoading(true);
+      setError(null);
+      console.log(`Loading ${type} overview data for connection`, connectionId);
+
+      // Add a small delay to prevent request conflicts
+      await new Promise(resolve => setTimeout(resolve, 100));
+
+      if (!isMountedRef.current) return;
+
+      if (type === 'tables') {
+        const response = await apiRequest(`connections/${connectionId}/tables`);
+
         if (isMountedRef.current) {
-          setLoading(true);
-          setError(null);
-        }
-
-        // Wait for authentication to be ready
-        await waitForAuth(3000).catch(() =>
-          console.log("Auth wait timed out in OverviewCard, proceeding anyway")
-        );
-
-        // Check if component unmounted during auth wait
-        if (!isMountedRef.current) return;
-
-        // Add a small delay to prevent request conflicts
-        await new Promise(resolve => setTimeout(resolve, 100 * Math.random()));
-
-        // Check if component unmounted during delay
-        if (!isMountedRef.current) return;
-
-        let response;
-
-        if (type === 'tables') {
-          response = await schemaAPI.getTables(connectionId, {
-            forceFresh: false,
-            requestId: requestIdRef.current
-          });
-
-          // Check if component unmounted during request
-          if (!isMountedRef.current) return;
-
+          console.log(`Setting ${type} overview data:`, response);
           // Only show first 5 tables
-          setData((response.data?.tables || []).slice(0, 5));
-        } else if (type === 'validations') {
-          // First get tables
-          const tablesResponse = await schemaAPI.getTables(connectionId, {
-            requestId: `${requestIdRef.current}-tables`
+          setData((response?.tables || []).slice(0, 5));
+        }
+      } else if (type === 'validations') {
+        // First get tables
+        const tablesResponse = await apiRequest(`connections/${connectionId}/tables`);
+        const tables = tablesResponse?.tables || [];
+
+        if (!isMountedRef.current) return;
+
+        if (tables.length > 0) {
+          // Get validation rules for the first table
+          const validationResponse = await apiRequest('validations', {
+            params: { table: tables[0] }
           });
 
-          // Check if component unmounted during request
-          if (!isMountedRef.current) return;
-
-          const tables = tablesResponse.data?.tables || [];
-
-          if (tables.length > 0) {
-            // Get validation rules for the first table
-            const validationResponse = await validationsAPI.getRules(tables[0], {
-              requestId: `${requestIdRef.current}-validations`
-            });
-
-            // Check if component unmounted during request
-            if (!isMountedRef.current) return;
-
-            setData((validationResponse.data?.rules || []).slice(0, 5));
-          } else {
+          if (isMountedRef.current) {
+            console.log(`Setting ${type} overview data:`, validationResponse);
+            setData((validationResponse?.rules || []).slice(0, 5));
+          }
+        } else {
+          if (isMountedRef.current) {
             setData([]);
           }
         }
-      } catch (err) {
-        // Only update state if component is still mounted and error is not a cancellation
-        if (isMountedRef.current && (!err.cancelled)) {
-          console.error(`Error fetching ${type}:`, err);
-          setError(err);
-          // Don't show notifications for cancelled requests
-          if (!err.cancelled) {
-            showNotification(`Failed to load ${type} data`, 'error');
-          }
-        }
-      } finally {
-        // Only update state if component is still mounted
-        if (isMountedRef.current) {
-          setLoading(false);
-        }
       }
-    };
+    } catch (err) {
+      if (!isMountedRef.current) return;
 
-    // Execute fetch
-    fetchData();
+      if (err?.cancelled) return;
 
-    // Cleanup function
-    return () => {
-      // Mark component as unmounted
-      isMountedRef.current = false;
-    };
-  // Include connectionId and type in dependencies, but NOT showNotification
-  // as it might change and cause re-renders
-  }, [connectionId, type]);
+      console.error(`Error fetching ${type}:`, err);
+      setError(err);
+      showNotification(`Failed to load ${type} data`, 'error');
+    } finally {
+      if (isMountedRef.current) {
+        setLoading(false);
+      }
+    }
+  }, [connectionId, type, showNotification]);
+
+  // Load data only when dependencies change
+  useEffect(() => {
+    if (connectionId) {
+      fetchData();
+    } else {
+      setData([]);
+      setLoading(false);
+    }
+  }, [connectionId, fetchData]);
 
   const getLink = () => {
     switch (type) {
       case 'tables':
-        return '/explorer';
+        return connectionId ? `/explorer?connection=${connectionId}` : '/explorer';
       case 'validations':
         return '/validations';
       default:
