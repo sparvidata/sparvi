@@ -1,8 +1,10 @@
-import React, { useState, useEffect } from 'react';
+// src/pages/Dashboard/components/OverviewCard.js
+import React, { useState, useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { ArrowRightIcon } from '@heroicons/react/20/solid';
 import { schemaAPI, validationsAPI } from '../../../api/enhancedApiService';
 import { useUI } from '../../../contexts/UIContext';
+import { waitForAuth } from '../../../api/enhancedApiService';
 
 const OverviewCard = ({ title, connectionId, type = 'tables' }) => {
   const [data, setData] = useState([]);
@@ -10,44 +12,106 @@ const OverviewCard = ({ title, connectionId, type = 'tables' }) => {
   const [error, setError] = useState(null);
   const { showNotification } = useUI();
 
+  // Add a mounted ref to prevent state updates after unmount
+  const isMountedRef = useRef(true);
+  // Add a request identifier
+  const requestIdRef = useRef(`overview-${type}-${connectionId}-${Date.now()}`);
+
   useEffect(() => {
+    // Set up mounted ref
+    isMountedRef.current = true;
+
     const fetchData = async () => {
       if (!connectionId) return;
 
       try {
-        setLoading(true);
-        setError(null);
+        // Only set loading if component is still mounted
+        if (isMountedRef.current) {
+          setLoading(true);
+          setError(null);
+        }
+
+        // Wait for authentication to be ready
+        await waitForAuth(3000).catch(() =>
+          console.log("Auth wait timed out in OverviewCard, proceeding anyway")
+        );
+
+        // Check if component unmounted during auth wait
+        if (!isMountedRef.current) return;
+
+        // Add a small delay to prevent request conflicts
+        await new Promise(resolve => setTimeout(resolve, 100 * Math.random()));
+
+        // Check if component unmounted during delay
+        if (!isMountedRef.current) return;
 
         let response;
 
         if (type === 'tables') {
-          response = await schemaAPI.getTables(connectionId);
+          response = await schemaAPI.getTables(connectionId, {
+            forceFresh: false,
+            requestId: requestIdRef.current
+          });
+
+          // Check if component unmounted during request
+          if (!isMountedRef.current) return;
+
           // Only show first 5 tables
-          setData((response.data.tables || []).slice(0, 5));
+          setData((response.data?.tables || []).slice(0, 5));
         } else if (type === 'validations') {
-          // Example implementation - adjust based on your API
-          // Here we're assuming you'd have an endpoint to get recent validations
-          const tables = (await schemaAPI.getTables(connectionId)).data.tables || [];
+          // First get tables
+          const tablesResponse = await schemaAPI.getTables(connectionId, {
+            requestId: `${requestIdRef.current}-tables`
+          });
+
+          // Check if component unmounted during request
+          if (!isMountedRef.current) return;
+
+          const tables = tablesResponse.data?.tables || [];
+
           if (tables.length > 0) {
             // Get validation rules for the first table
-            const validationResponse = await validationsAPI.getRules(tables[0]);
-            setData((validationResponse.data.rules || []).slice(0, 5));
+            const validationResponse = await validationsAPI.getRules(tables[0], {
+              requestId: `${requestIdRef.current}-validations`
+            });
+
+            // Check if component unmounted during request
+            if (!isMountedRef.current) return;
+
+            setData((validationResponse.data?.rules || []).slice(0, 5));
           } else {
             setData([]);
           }
         }
       } catch (err) {
-        console.error(`Error fetching ${type}:`, err);
-        showNotification(`Failed to load ${type} data`, 'error');
-        setData([]);
+        // Only update state if component is still mounted and error is not a cancellation
+        if (isMountedRef.current && (!err.cancelled)) {
+          console.error(`Error fetching ${type}:`, err);
+          setError(err);
+          // Don't show notifications for cancelled requests
+          if (!err.cancelled) {
+            showNotification(`Failed to load ${type} data`, 'error');
+          }
+        }
       } finally {
-        setLoading(false);
+        // Only update state if component is still mounted
+        if (isMountedRef.current) {
+          setLoading(false);
+        }
       }
     };
 
+    // Execute fetch
     fetchData();
-    // The dependency array should include all external variables used in the effect
-  }, [connectionId, type, showNotification]);
+
+    // Cleanup function
+    return () => {
+      // Mark component as unmounted
+      isMountedRef.current = false;
+    };
+  // Include connectionId and type in dependencies, but NOT showNotification
+  // as it might change and cause re-renders
+  }, [connectionId, type]);
 
   const getLink = () => {
     switch (type) {

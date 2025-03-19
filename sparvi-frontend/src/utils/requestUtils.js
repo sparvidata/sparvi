@@ -88,7 +88,7 @@ export const debounce = (func, wait = 300) => {
  * @param {number} wait - The number of milliseconds to throttle invocations to
  * @returns {Function} The throttled function
  */
-export const throttle = (func, wait = 300) => {
+export const throttle = (func, wait = 600) => {
   let waiting = false;
 
   return function executedFunction(...args) {
@@ -113,84 +113,85 @@ export const batchRequests = async (requests, options = {}) => {
     endpoint = '/batch',
     retries = 2,
     retryDelay = 1000,
-    waitForAuthentication = true
+    waitForAuthentication = true,
+    timeout = 60000 // Increase from 30000 to 60000 (60 seconds)
   } = options;
 
-  // More comprehensive auth check
-  if (waitForAuthentication) {
-    try {
-      await waitForAuth();
-    } catch (error) {
-      console.warn('Proceeding with batch request without waiting for auth');
-    }
-  }
+  // Create an abort controller for this entire batch operation
+  const controller = new AbortController();
 
-  let attempt = 0;
+  // Set timeout to prevent hanging requests
+  const timeoutId = setTimeout(() => {
+    console.log(`Batch request timed out after ${timeout}ms, aborting`);
+    controller.abort();
+  }, timeout);
 
-  while (attempt <= retries) {
-    try {
-      const session = await getSession();
-
-      // More robust token extraction
-      const token =
-        session?.access_token ||
-        session?.token ||
-        session?.accessToken ||
-        (session?.user && session?.user.token) ||
-        (session?.data && session?.data.access_token);
-
-      if (!token) {
-        throw new Error('No valid authentication token');
-      }
-
-      const apiUrl = process.env.NODE_ENV === 'development'
-        ? 'http://127.0.0.1:5000/api'
-        : '';
-
-      const batchEndpoint = `${apiUrl}${endpoint}`;
-
-      console.log("Making batch request to:", batchEndpoint, {
-        method: 'POST',
-        data: { requests },
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-
-      const response = await axios.post(batchEndpoint, { requests }, {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-
-      return response.data.results;
-    } catch (error) {
-      // More comprehensive error handling
-      if (axios.isCancel(error)) {
-        console.log("Batch request was canceled");
-        throw { cancelled: true };
-      }
-
-      attempt++;
-
-      console.error('Batch request error:', {
-        status: error.response?.status,
-        data: error.response?.data,
-        message: error.message
-      });
-
-      // Only retry on specific auth-related errors
-      if (attempt > retries ||
-          (error.response?.status !== 401 && error.response?.status !== 403)) {
-        throw error;
-      }
-
-      // Refresh session if possible
+  try {
+    // Wait for auth if needed
+    if (waitForAuthentication) {
       try {
-        await supabase.auth.refreshSession();
-      } catch (refreshError) {
-        console.error('Session refresh failed:', refreshError);
+        await waitForAuth(5000);
+      } catch (error) {
+        console.warn('Proceeding with batch request without waiting for auth');
       }
-
-      console.log(`Auth error in batch request, retrying (${attempt}/${retries})...`);
-      await new Promise(resolve => setTimeout(resolve, retryDelay));
     }
+
+    let attempt = 0;
+
+    while (attempt <= retries) {
+      try {
+        const session = await getSession();
+
+        // Extract token - keep it simple
+        const token = session?.access_token;
+
+        if (!token) {
+          console.error('No valid authentication token for batch request');
+          throw new Error('Authentication required');
+        }
+
+        const apiUrl = process.env.NODE_ENV === 'development'
+          ? 'http://127.0.0.1:5000/api'
+          : '/api';
+
+        const batchEndpoint = `${apiUrl}${endpoint}`;
+
+        console.log(`Making batch request with ${requests.length} requests`);
+
+        const response = await axios.post(
+          batchEndpoint,
+          { requests },
+          {
+            headers: { 'Authorization': `Bearer ${token}` },
+            signal: controller.signal,
+            timeout: timeout // Also set the axios timeout to match
+          }
+        );
+
+        return response.data.results;
+      } catch (error) {
+        // If request was cancelled, don't retry
+        if (axios.isCancel(error)) {
+          console.log('Batch request was cancelled');
+          throw { cancelled: true };
+        }
+
+        attempt++;
+
+        // Only retry on specific errors
+        if (attempt > retries ||
+            (error.response?.status !== 401 &&
+             error.response?.status !== 403 &&
+             error.response?.status !== 429)) {
+          throw error;
+        }
+
+        console.log(`Batch request error, retrying (${attempt}/${retries})...`);
+        await new Promise(resolve => setTimeout(resolve, retryDelay));
+      }
+    }
+  } finally {
+    clearTimeout(timeoutId);
   }
 };
 

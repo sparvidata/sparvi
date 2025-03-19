@@ -44,7 +44,7 @@ const TableHistory = ({ tableName, connectionId }) => {
     };
 
     loadHistory();
-  }, [tableName, showNotification]);
+  }, [tableName]);
 
   // Handle profile selection
   const handleProfileSelect = async (profile) => {

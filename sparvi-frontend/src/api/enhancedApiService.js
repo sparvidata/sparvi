@@ -198,14 +198,9 @@ const enhancedRequest = async (options) => {
     requestId,
     abortSignal,
     onUploadProgress,
-    onDownloadProgress
+    onDownloadProgress,
+    timeout = 60000 // 60 seconds timeout
   } = options;
-
-  // Special handling for batch requests
-  if (url === '/batch') {
-    console.log("Batch request detected, ensuring auth headers are present");
-    await debugAuth(); // Log authentication status
-  }
 
   // Check cache first if this is a GET request and caching is enabled
   if (method === 'GET' && cacheKey && !forceFresh) {
@@ -216,44 +211,36 @@ const enhancedRequest = async (options) => {
   }
 
   // Setup abort controller if needed
-  const controller = requestId ? getRequestAbortController(requestId) : null;
+  const controller = requestId ? getRequestAbortController(requestId) : new AbortController();
   const signal = abortSignal || (controller ? controller.signal : undefined);
 
+  // Set a timeout
+  const timeoutId = setTimeout(() => {
+    if (controller && !controller.signal.aborted) {
+      console.log(`Request timeout (${timeout}ms) for: ${url}`, { requestId });
+      controller.abort();
+    }
+  }, timeout);
+
   try {
-    // Special handling for batch requests to ensure headers are correctly applied
-    let requestConfig = {
+    // Log when making batch requests
+    if (url === '/batch') {
+      console.log(`Making batch request to: ${API_BASE_URL}${url}`, {
+        method,
+        requestId
+      });
+    }
+
+    const requestConfig = {
       method,
       url,
       data,
       params,
       signal,
       onUploadProgress,
-      onDownloadProgress
+      onDownloadProgress,
+      timeout // Add explicit timeout to axios request
     };
-
-    // For batch requests, ensure we have authentication
-    if (url === '/batch') {
-      const session = await getSession();
-
-      // Check different possible token locations
-      const token = session?.access_token ||
-                   session?.token ||
-                   session?.accessToken ||
-                   (session?.user?.token) ||
-                   (session?.data?.access_token);
-
-      if (!token) {
-        console.error("No auth token available for batch request");
-        throw new Error("Authentication required for batch request");
-      }
-
-      // Log the request being made
-      console.log(`Making batch request to: ${API_BASE_URL}${url}`, {
-        method,
-        hasAuth: !!token,
-        batchSize: data?.requests?.length || 0
-      });
-    }
 
     const response = await apiClient(requestConfig);
 
@@ -271,24 +258,25 @@ const enhancedRequest = async (options) => {
   } catch (error) {
     // If it's a cancelled request, just rethrow
     if (axios.isCancel(error) || error.cancelled) {
-      throw error;
+      throw { cancelled: true, originalError: error };
     }
+
+    // Log details about the error for debugging
+    console.error(`Error in ${method} request to ${url}:`, {
+      message: error.message,
+      status: error.response?.status,
+      data: error.response?.data,
+      requestId
+    });
 
     // Clear the abort controller
     if (requestId) {
       requestCompleted(requestId);
     }
 
-    // Special handling for auth errors in batch requests
-    if (url === '/batch' && error.response && error.response.status === 401) {
-      console.error("Authentication error in batch request. Token may be invalid or missing.");
-
-      // Log detailed information about the auth state
-      await debugAuth();
-    }
-
-    console.error(`Error in ${method} request to ${url}:`, error);
     throw error;
+  } finally {
+    clearTimeout(timeoutId);
   }
 };
 

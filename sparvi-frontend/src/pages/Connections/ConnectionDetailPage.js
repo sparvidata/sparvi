@@ -47,7 +47,7 @@ const ConnectionDetailPage = () => {
     };
 
     loadConnection();
-  }, [id, getConnection, navigate, showNotification, setLoading]);
+  }, [id, getConnection, navigate, setLoading]);
 
   // Handle connection name change
   const handleNameChange = (e) => {

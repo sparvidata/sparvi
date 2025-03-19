@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { ArrowPathIcon, CheckCircleIcon, ExclamationCircleIcon } from '@heroicons/react/24/outline';
-import { metadataAPI } from '../../../api/enhancedApiService';
+import {metadataAPI, waitForAuth} from '../../../api/enhancedApiService';
 import { useUI } from '../../../contexts/UIContext';
 import LoadingSpinner from '../../../components/common/LoadingSpinner';
+import {cancelRequests} from "../../../utils/requestUtils";
 
 const ConnectionHealth = ({ connection }) => {
   const [status, setStatus] = useState({
@@ -16,30 +17,55 @@ const ConnectionHealth = ({ connection }) => {
   const { showNotification } = useUI();
 
   useEffect(() => {
+    let isMounted = true;
     const fetchStatus = async () => {
       if (!connection) return;
 
       try {
         setLoading(true);
-        const response = await metadataAPI.getMetadataStatus(connection.id);
+
+        // Wait for authentication to be ready
+        await waitForAuth(3000).catch(() => console.log("Auth wait timed out, proceeding anyway"));
+
+        // Add a small delay to ensure other critical components initialize first
+        await new Promise(resolve => setTimeout(resolve, 100));
+
+        // Use a unique requestId to better track this request
+        const response = await metadataAPI.getMetadataStatus(connection.id, {
+          forceFresh: false,
+          requestId: `metadata-status-${connection.id}-${Date.now()}`
+        });
+
         // Make sure we have a valid response with data
         if (response && response.data) {
           setStatus(response.data);
         }
       } catch (error) {
-        console.error('Error fetching metadata status:', error);
-
-        // Only show notification for non-cancellation errors
+        // Only show errors for non-cancelled requests
         if (!error.cancelled) {
+          console.error('Error fetching metadata status:', error);
           showNotification('Failed to load connection health data', 'error');
+        } else {
+          console.log('Metadata status request was cancelled');
         }
       } finally {
-        setLoading(false);
+        if (isMounted) setLoading(false);
       }
     };
 
     fetchStatus();
-  }, [connection, showNotification]);
+
+    // Cleanup function
+    return () => {
+      // Mark component as unmounted
+      isMounted = false;
+
+      // Cancel any pending requests for this connection
+      if (connection) {
+        cancelRequests(`metadata-status-${connection.id}`);
+      }
+    };
+  }, [connection]);
 
   // Handle refresh metadata
   const handleRefresh = async () => {

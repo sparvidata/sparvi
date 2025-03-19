@@ -50,7 +50,7 @@ const TableDetailPage = () => {
         navigate('/explorer');
       }
     }
-  }, [connectionId, connections, activeConnection, setCurrentConnection, showNotification, navigate]);
+  }, [connectionId, connections, activeConnection, setCurrentConnection, navigate]);
 
   // Set breadcrumbs
   useEffect(() => {

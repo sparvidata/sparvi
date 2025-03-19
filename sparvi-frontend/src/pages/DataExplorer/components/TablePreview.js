@@ -50,7 +50,7 @@ const TablePreview = ({ connectionId, tableName }) => {
     };
 
     loadPreview();
-  }, [connectionId, tableName, maxRows, showNotification]);
+  }, [connectionId, tableName, maxRows]);
 
   // Handle max rows change
   const handleMaxRowsChange = (e) => {

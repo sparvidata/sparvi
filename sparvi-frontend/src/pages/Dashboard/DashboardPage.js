@@ -45,6 +45,9 @@ const DashboardPage = () => {
   const getBatchRequests = () => {
     if (!connectionId) return [];
 
+    // Don't make the requests if we're refreshing
+    if (isRefreshing) return [];
+
     return [
       { id: 'tables', path: `/connections/${connectionId}/tables` },
       { id: 'metadataStatus', path: `/connections/${connectionId}/metadata/status` },

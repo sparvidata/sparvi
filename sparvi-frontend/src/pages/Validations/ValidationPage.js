@@ -69,7 +69,7 @@ const ValidationPage = () => {
     };
 
     loadTables();
-  }, [activeConnection, showNotification]);
+  }, [activeConnection]);
 
   // Load validations for selected table
   useEffect(() => {
@@ -95,7 +95,7 @@ const ValidationPage = () => {
     };
 
     loadValidations();
-  }, [selectedTable, showNotification]);
+  }, [selectedTable]);
 
   // Apply filters and search
   useEffect(() => {

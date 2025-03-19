@@ -66,7 +66,7 @@ const ValidationRuleEditor = ({
     };
 
     loadColumns();
-  }, [connectionId, tableName, showNotification]);
+  }, [connectionId, tableName]);
 
   // Handle input changes
   const handleChange = (e) => {

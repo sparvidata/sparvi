@@ -65,13 +65,18 @@ export const ConnectionProvider = ({ children }) => {
         lastFetchTimeRef.current = now;
 
         const response = await connectionsAPI.getAll({ forceFresh });
-        console.log('Raw API response:', response);
-        const connectionList = response.data.connections || [];
+
+        // Check if response is canceled
+        if (response?.cancelled) {
+          console.log('Connection fetch was cancelled');
+          return;
+        }
+
+        const connectionList = response?.data?.connections || [];
 
         // Update the connection reference
         lastConnectionsRef.current = connectionList;
         setConnections(connectionList);
-        console.log('Connections loaded:', connectionList);
 
         // Find default connection
         const defaultConn = connectionList.find(conn => conn.is_default);
@@ -91,8 +96,11 @@ export const ConnectionProvider = ({ children }) => {
           }
         }
       } catch (err) {
-        console.error('Error fetching connections:', err);
-        setError(err.message || 'Failed to load connections');
+        // Don't set error state for cancelled requests
+        if (!err.cancelled) {
+          console.error('Error fetching connections:', err);
+          setError(err.message || 'Failed to load connections');
+        }
       } finally {
         setLoading(false);
         setIsRefreshing(false);
