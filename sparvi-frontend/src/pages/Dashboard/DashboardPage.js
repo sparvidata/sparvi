@@ -25,8 +25,8 @@ const DashboardPage = () => {
   // State for individual sections
   const [tablesData, setTablesData] = useState(null);
   const [changesData, setChangesData] = useState(null);
-  const [tablesLoading, setTablesLoading] = useState(false);
-  const [changesLoading, setChangesLoading] = useState(false);
+  const [tablesLoading, setTablesLoading] = useState(true);
+  const [changesLoading, setChangesLoading] = useState(true);
 
   // Use a ref to track mounted state
   const isMountedRef = useRef(true);
@@ -53,62 +53,50 @@ const DashboardPage = () => {
     ]);
   }, [updateBreadcrumbs]);
 
-  // Create memoized load function
+    // Load dashboard data function
   const loadDashboardData = useCallback(async (force = false) => {
-    if (!connectionId) return;
-
-    // Check if we need to fetch again - avoid too frequent refreshes
-    const now = Date.now();
-    if (!force && now - lastFetchRef.current < FETCH_INTERVAL_MS) {
-      console.log("Skipping dashboard fetch, too soon since last fetch");
+    if (!connectionId) {
+      // If no connection, reset loading states
+      setTablesLoading(false);
+      setChangesLoading(false);
       return;
     }
 
     try {
       console.log("Loading tables data for connection", connectionId);
-      lastFetchRef.current = now;
+      setTablesLoading(true); // Set loading true at start
 
-      // Load tables data
-      setTablesLoading(true);
-      const tablesResponse = await apiRequest(`connections/${connectionId}/tables`, {
-        skipThrottle: force // Skip throttling for manual refreshes
-      });
+      const tablesResponse = await apiRequest(`connections/${connectionId}/tables`);
 
       if (isMountedRef.current) {
         console.log("Setting tables data:", tablesResponse);
+        // Important: First set the data, then set loading to false
         setTablesData(tablesResponse);
         setTablesLoading(false);
-        tablesLoadedRef.current = true; // Mark that we've loaded tables data
       }
 
       // Load changes data
-      setChangesLoading(true);
+      setChangesLoading(true); // Set loading true at start
       const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
       const changesResponse = await apiRequest(`connections/${connectionId}/changes`, {
-        params: { since },
-        skipThrottle: force // Skip throttling for manual refreshes
+        params: { since }
       });
 
       if (isMountedRef.current) {
         console.log("Setting changes data:", changesResponse);
+        // Important: First set the data, then set loading to false
         setChangesData(changesResponse);
         setChangesLoading(false);
       }
     } catch (error) {
-      if (error.throttled) {
-        console.log("Dashboard data request throttled");
-        return;
-      }
-
+      // ...error handling
       if (isMountedRef.current) {
-        console.error('Error loading dashboard data:', error);
-        showNotification('Some dashboard data could not be loaded', 'error');
-        // Even on error, set loading to false
+        // Important: Always set loading to false on error
         setTablesLoading(false);
         setChangesLoading(false);
       }
     }
-  }, [connectionId, showNotification]);
+  }, [connectionId]);
 
   // Load data only when connectionId changes and only once
   useEffect(() => {

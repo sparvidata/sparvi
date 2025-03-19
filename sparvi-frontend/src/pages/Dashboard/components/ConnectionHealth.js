@@ -77,7 +77,7 @@ const ConnectionHealth = () => {
         setLoading(false);
       }
     }
-  }, [connectionId, showNotification]);
+  }, [connectionId]);
 
   // Only fetch data once on initial mount or when connection changes
   useEffect(() => {
