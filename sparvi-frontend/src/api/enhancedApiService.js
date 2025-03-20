@@ -33,10 +33,14 @@ import { getRequestAbortController, requestCompleted } from '../utils/requestUti
 
 // Create a base API client with defaults
 const API_BASE_URL = process.env.NODE_ENV === 'development'
-  ? 'http://127.0.0.1:5000/api'  // Development server
-  : process.env.REACT_APP_API_BASE_URL || '/api';  // Production will use relative path or env var
+  ? 'http://localhost:5000/api'  // Local development
+  : process.env.REACT_APP_API_BASE_URL || 'https://sparvi-backend.onrender.com/api';
 
-console.log("Using API base URL:", API_BASE_URL);  // Add this for debugging
+console.log("Full environment details:", {
+  NODE_ENV: process.env.NODE_ENV,
+  REACT_APP_API_BASE_URL: process.env.REACT_APP_API_BASE_URL,
+  COMPUTED_API_BASE_URL: API_BASE_URL
+});
 
 const apiClient = axios.create({
   baseURL: API_BASE_URL,
