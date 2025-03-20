@@ -903,12 +903,46 @@ def run_validation_rules_internal(user_id, organization_id, data):
         return {"error": "Table name is required"}
 
     connection_string = data.get("connection_string")
+    connection_id = data.get("connection_id")
+    logger.info(f"Run validations request: {data}")
     table_name = data["table"]
     profile_history_id = data.get("profile_history_id")
-    connection_id = data.get("connection_id")
 
     try:
         force_gc()
+
+        # If no connection string is provided, fetch connection details
+        if not connection_string and connection_id:
+            # Check access to connection
+            supabase_mgr = SupabaseManager()
+            connection_check = supabase_mgr.supabase.table("database_connections") \
+                .select("*") \
+                .eq("id", connection_id) \
+                .eq("organization_id", organization_id) \
+                .execute()
+
+            if not connection_check.data or len(connection_check.data) == 0:
+                logger.error(f"Connection not found or access denied: {connection_id}")
+                return {"error": "Connection not found or access denied"}
+
+            connection = connection_check.data[0]
+
+            # Create connector for this connection
+            try:
+                connector = get_connector_for_connection(connection)
+                connector.connect()
+            except Exception as e:
+                logger.error(f"Failed to connect to database: {str(e)}")
+                return {"error": f"Failed to connect to database: {str(e)}"}
+
+            # Build connection string using the connection details
+            connection_string = build_connection_string(connection)
+
+        # Validate connection string
+        if not connection_string:
+            logger.error("No database connection string available")
+            return {"error": "No database connection string available"}
+
         # Get all rules
         rules = validation_manager.get_rules(organization_id, table_name)
 

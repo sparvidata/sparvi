@@ -638,7 +638,12 @@ export const validationsAPI = {
     });
   },
 
-  runValidations: (connectionId, tableName, connectionString) => {
+  runValidations: (connectionId, tableName, connectionString, options = {}) => {
+    const {
+      timeout = 600000, // Default to 10 minutes, but allow override
+      requestId = `validations.run.${connectionId}.${tableName}`
+    } = options;
+
     return enhancedRequest({
       method: 'POST',
       url: '/run-validations',
@@ -647,7 +652,8 @@ export const validationsAPI = {
         table: tableName,
         connection_string: connectionString
       },
-      requestId: `validations.run.${connectionId}.${tableName}`
+      timeout, // Add custom timeout
+      requestId
     }).then(response => {
       // Invalidate validation rules cache to reflect new execution results
       clearCacheItem(`validations.rules.${tableName}`);

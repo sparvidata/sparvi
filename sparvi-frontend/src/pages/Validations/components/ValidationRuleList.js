@@ -5,11 +5,13 @@ import {
   PencilIcon,
   TrashIcon,
   ArrowPathIcon,
-  ExclamationCircleIcon
+  ExclamationCircleIcon,
+  BugAntIcon
 } from '@heroicons/react/24/outline';
 import LoadingSpinner from '../../../components/common/LoadingSpinner';
 import { validationsAPI } from '../../../api/enhancedApiService';
 import { useUI } from '../../../contexts/UIContext';
+import ValidationErrorHandler from './ValidationErrorHandler';
 
 const ValidationRuleList = ({
   validations = [],
@@ -17,13 +19,16 @@ const ValidationRuleList = ({
   onEdit,
   onRefreshList,
   tableName,
-  connectionId
+  connectionId,
+  onDebug
 }) => {
   const { showNotification } = useUI();
 
   const [runningValidation, setRunningValidation] = useState(null);
   const [isDeleting, setIsDeleting] = useState(false);
   const [validationToDelete, setValidationToDelete] = useState(null);
+  const [validationErrors, setValidationErrors] = useState(null);
+  const [runningAll, setRunningAll] = useState(false);
 
   // Run a single validation
   const handleRunValidation = async (validation) => {
@@ -31,6 +36,7 @@ const ValidationRuleList = ({
 
     try {
       setRunningValidation(validation.id);
+      setValidationErrors(null);
 
       // Build request with only the selected validation
       const response = await validationsAPI.runValidations(
@@ -39,20 +45,36 @@ const ValidationRuleList = ({
         null
       );
 
+      // Clear any previous errors
+      setValidationErrors(null);
+
       // Find the result for this specific validation
-      const result = response.data.results?.find((_, index) =>
+      const result = response.results?.find((_, index) =>
         validations[index]?.id === validation.id
       );
 
-      // Show notification based on result
-      if (result) {
-        if (result.is_valid) {
-          showNotification(`Validation "${validation.rule_name}" passed`, 'success');
-        } else {
-          showNotification(`Validation "${validation.rule_name}" failed`, 'error');
-        }
+      // Check if there are validation errors
+      if (response.results && response.results.some(r => r.error)) {
+        // Extract the error information
+        const errors = response.results.map((result, index) => ({
+          name: validations[index]?.rule_name || `Rule ${index + 1}`,
+          error: result.error || "Unknown error",
+          is_valid: result.is_valid
+        })).filter(r => r.error);
+
+        setValidationErrors(errors);
+        showNotification(`Encountered errors running validation "${validation.rule_name}"`, 'error');
       } else {
-        showNotification(`No result found for validation "${validation.rule_name}"`, 'warning');
+        // Show notification based on result
+        if (result) {
+          if (result.is_valid) {
+            showNotification(`Validation "${validation.rule_name}" passed`, 'success');
+          } else {
+            showNotification(`Validation "${validation.rule_name}" failed`, 'error');
+          }
+        } else {
+          showNotification(`No result found for validation "${validation.rule_name}"`, 'warning');
+        }
       }
 
       // Refresh the list to show updated results
@@ -62,6 +84,52 @@ const ValidationRuleList = ({
       showNotification(`Failed to run validation: ${error.message}`, 'error');
     } finally {
       setRunningValidation(null);
+    }
+  };
+
+  // Run all validations
+  const handleRunAllValidations = async () => {
+    if (!connectionId || !tableName) return;
+
+    try {
+      setRunningAll(true);
+      setValidationErrors(null);
+
+      const response = await validationsAPI.runValidations(
+        connectionId,
+        tableName,
+        null
+      );
+
+      // Check if there are validation errors
+      if (response.results && response.results.some(r => r.error)) {
+        // Extract the error information
+        const errors = response.results.map((result, index) => ({
+          name: validations[index]?.rule_name || `Rule ${index + 1}`,
+          error: result.error || "Unknown error",
+          is_valid: result.is_valid
+        })).filter(r => r.error);
+
+        setValidationErrors(errors);
+        showNotification(`Encountered errors running validations`, 'error');
+      } else {
+        // Count successes and failures
+        const passedCount = response.results?.filter(r => r.is_valid).length || 0;
+        const failedCount = response.results?.filter(r => !r.is_valid).length || 0;
+
+        showNotification(
+          `Ran ${response.results?.length || 0} validations: ${passedCount} passed, ${failedCount} failed`,
+          failedCount > 0 ? 'warning' : 'success'
+        );
+      }
+
+      // Refresh the list to show updated results
+      if (onRefreshList) onRefreshList();
+    } catch (error) {
+      console.error(`Error running all validations:`, error);
+      showNotification(`Failed to run validations: ${error.message}`, 'error');
+    } finally {
+      setRunningAll(false);
     }
   };
 
@@ -116,6 +184,40 @@ const ValidationRuleList = ({
 
   return (
     <div>
+      {/* Show error handler if we have validation errors */}
+      {validationErrors && validationErrors.length > 0 && (
+        <div className="mb-4">
+          <ValidationErrorHandler
+            errors={validationErrors}
+            onRefresh={handleRunAllValidations}
+            connectionId={connectionId}
+            tableName={tableName}
+          />
+        </div>
+      )}
+
+      {/* Run all validations button */}
+      <div className="py-3 px-6 border-b border-secondary-200">
+        <button
+          type="button"
+          onClick={handleRunAllValidations}
+          disabled={runningAll}
+          className="w-full flex justify-center items-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-primary-600 hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 disabled:opacity-50"
+        >
+          {runningAll ? (
+            <>
+              <LoadingSpinner size="sm" className="mr-2" />
+              Running All Validations...
+            </>
+          ) : (
+            <>
+              <ArrowPathIcon className="-ml-1 mr-2 h-5 w-5" aria-hidden="true" />
+              Run All Validations
+            </>
+          )}
+        </button>
+      </div>
+
       <ul className="divide-y divide-secondary-200">
         {validations.map((validation) => (
           <li key={validation.id} className="py-4 px-6 hover:bg-secondary-50">
@@ -153,7 +255,7 @@ const ValidationRuleList = ({
                 <button
                   type="button"
                   onClick={() => handleRunValidation(validation)}
-                  disabled={runningValidation === validation.id}
+                  disabled={runningValidation === validation.id || runningAll}
                   className="p-1 text-secondary-400 hover:text-secondary-500 focus:outline-none"
                   title="Run validation"
                 >
@@ -172,6 +274,17 @@ const ValidationRuleList = ({
                 >
                   <PencilIcon className="h-5 w-5" aria-hidden="true" />
                 </button>
+
+                {onDebug && (
+                  <button
+                    type="button"
+                    onClick={() => onDebug(validation)}
+                    className="p-1 text-secondary-400 hover:text-primary-500 focus:outline-none"
+                    title="Debug validation"
+                  >
+                    <BugAntIcon className="h-5 w-5" aria-hidden="true" />
+                  </button>
+                )}
 
                 <button
                   type="button"

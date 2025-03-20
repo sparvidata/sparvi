@@ -19,6 +19,8 @@ import LoadingSpinner from '../../components/common/LoadingSpinner';
 import EmptyState from '../../components/common/EmptyState';
 import ValidationRuleEditor from './components/ValidationRuleEditor';
 import ValidationRuleList from './components/ValidationRuleList';
+import ValidationErrorHandler from './components/ValidationErrorHandler';
+import ValidationDebugHelper from './components/ValidationDebugHelper';
 import SearchInput from '../../components/common/SearchInput';
 import { useTablesData } from '../../hooks/useTablesData';
 import { useTableValidations } from '../../hooks/useValidationsData';
@@ -35,6 +37,9 @@ const ValidationPage = () => {
   const [statusFilter, setStatusFilter] = useState('all');
   const [showEditor, setShowEditor] = useState(false);
   const [editingRule, setEditingRule] = useState(null);
+  const [showDebugHelper, setShowDebugHelper] = useState(false);
+  const [selectedValidationForDebug, setSelectedValidationForDebug] = useState(null);
+  const [validationErrors, setValidationErrors] = useState(null);
 
   // Set breadcrumbs
   useEffect(() => {
@@ -120,12 +125,25 @@ const ValidationPage = () => {
     setStatusFilter(status);
   };
 
+  // Handle debugging a validation rule
+  const handleDebugValidation = (rule) => {
+    setSelectedValidationForDebug(rule);
+    setShowDebugHelper(true);
+  };
+
+  // Close the debug helper
+  const handleCloseDebugHelper = () => {
+    setShowDebugHelper(false);
+    setSelectedValidationForDebug(null);
+  };
+
   // Handle run all validations
   const handleRunAll = async () => {
     if (!activeConnection || !selectedTable) return;
 
     try {
       setLoading('validations', true);
+      setValidationErrors(null);
 
       const response = await validationsAPI.runValidations(
         activeConnection.id,
@@ -133,13 +151,36 @@ const ValidationPage = () => {
         null
       );
 
+      // Check if there are validation errors
+      if (response.results && response.results.some(r => r.error)) {
+        // Extract the error information
+        const errors = response.results.map((result, index) => ({
+          name: filteredValidations[index]?.rule_name || `Rule ${index + 1}`,
+          error: result.error || "Unknown error",
+          is_valid: result.is_valid
+        })).filter(r => r.error);
+
+        setValidationErrors(errors);
+        showNotification('Some validations encountered errors. See details below.', 'warning');
+      } else {
+        // Clear any previous errors
+        setValidationErrors(null);
+
+        // Count successes and failures
+        const passedCount = response.results?.filter(r => r.is_valid).length || 0;
+        const failedCount = response.results?.filter(r => !r.is_valid).length || 0;
+
+        showNotification(
+          `Ran ${response.results?.length || 0} validations: ${passedCount} passed, ${failedCount} failed`,
+          failedCount > 0 ? 'warning' : 'success'
+        );
+      }
+
       // Invalidate the validations query to trigger a refetch
       queryClient.invalidateQueries(['table-validations', selectedTable]);
-
-      showNotification(`Ran ${response.data.results?.length || 0} validations for ${selectedTable}`, 'success');
     } catch (error) {
       console.error('Error running validations:', error);
-      showNotification('Failed to run validations', 'error');
+      showNotification('Failed to run validations. Error: ' + (error.message || 'Unknown error'), 'error');
     } finally {
       setLoading('validations', false);
     }
@@ -320,6 +361,18 @@ const ValidationPage = () => {
                 </div>
               </div>
 
+              {/* Display validation errors at the top if present */}
+              {validationErrors && validationErrors.length > 0 && (
+                <div className="px-4 py-3 bg-white">
+                  <ValidationErrorHandler
+                    errors={validationErrors}
+                    onRefresh={handleRunAll}
+                    connectionId={activeConnection?.id}
+                    tableName={selectedTable}
+                  />
+                </div>
+              )}
+
               {/* Search and filters */}
               <div className="px-4 py-3 border-b border-secondary-200 bg-secondary-50 sm:px-6">
                 <div className="flex items-center justify-between">
@@ -390,6 +443,7 @@ const ValidationPage = () => {
                 validations={filteredValidations}
                 isLoading={validationsQuery.isLoading}
                 onEdit={handleEditValidation}
+                onDebug={handleDebugValidation}
                 onRefreshList={() => validationsQuery.refetch()}
                 tableName={selectedTable}
                 connectionId={activeConnection?.id}
@@ -398,6 +452,18 @@ const ValidationPage = () => {
           )}
         </div>
       </div>
+
+      {/* Debug Helper Modal */}
+      {showDebugHelper && (
+        <div className="fixed inset-0 bg-secondary-900 bg-opacity-75 z-50 flex items-center justify-center px-4">
+          <ValidationDebugHelper
+            connectionId={activeConnection?.id}
+            tableName={selectedTable}
+            validationRule={selectedValidationForDebug}
+            onClose={handleCloseDebugHelper}
+          />
+        </div>
+      )}
     </div>
   );
 };
