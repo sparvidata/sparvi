@@ -27,6 +27,8 @@ const DashboardPage = () => {
   const [changesData, setChangesData] = useState(null);
   const [tablesLoading, setTablesLoading] = useState(true);
   const [changesLoading, setChangesLoading] = useState(true);
+  const [validationsData, setValidationsData] = useState(null);
+  const [validationsLoading, setValidationsLoading] = useState(false);
 
   // Use a ref to track mounted state
   const isMountedRef = useRef(true);
@@ -90,6 +92,43 @@ const DashboardPage = () => {
     }
   }, [connectionId]);
 
+  const loadValidationsData = useCallback(async (force = false) => {
+    if (!connectionId) {
+      setValidationsLoading(false);
+      return;
+    }
+
+    // Check if we should skip fetching due to recent fetch
+    const now = Date.now();
+    if (!force && now - lastFetchRef.current.validations < FETCH_INTERVAL_MS) {
+      return;
+    }
+
+    try {
+      console.log("Loading validations summary for connection", connectionId);
+      setValidationsLoading(true);
+      lastFetchRef.current.validations = now;
+
+      const response = await apiRequest(`validations/summary`, {
+        params: { connection_id: connectionId },
+        skipThrottle: force
+      });
+
+      console.log("Validations summary received:", response);
+
+      if (isMountedRef.current) {
+        setValidationsData(response);
+        setValidationsLoading(false);
+      }
+    } catch (error) {
+      if (isMountedRef.current) {
+        console.error('Error loading validations summary:', error);
+        setValidationsLoading(false);
+      }
+    }
+  }, [connectionId]);
+
+
   // Load changes data function
   const loadChangesData = useCallback(async (force = false) => {
     if (!connectionId) {
@@ -131,15 +170,18 @@ const DashboardPage = () => {
       // Load tables and changes data
       loadTablesData();
       loadChangesData();
-
+      loadValidationsData();
     } else {
       // Reset state when connection changes
       setTablesData(null);
       setChangesData(null);
+      setValidationsData(null);
+
       setTablesLoading(false);
       setChangesLoading(false);
+      setValidationsLoading(false);
     }
-  }, [connectionId, loadTablesData, loadChangesData]);
+  }, [connectionId, loadTablesData, loadChangesData, loadValidationsData]);
 
   useEffect(() => {
     console.log("Tables data changed:", {
@@ -151,6 +193,8 @@ const DashboardPage = () => {
   // Now calculate display values from state
   const tablesCount = tablesData?.tables?.length || 0;
   const changesCount = changesData?.changes?.length || 0;
+  const validationsCount = validationsData?.total_count || 0;
+
 
   // Handle manual refresh
   const handleRefreshData = async () => {
@@ -247,11 +291,12 @@ const DashboardPage = () => {
 
         {/* Validations count */}
         <StatisticCard
-            title="Validations"
-            value={0} // No validations data yet
-            icon={ClipboardDocumentCheckIcon}
-            href="/validations"
-            color="accent"
+          title="Validations"
+          value={validationsCount}
+          icon={ClipboardDocumentCheckIcon}
+          href="/validations"
+          color="accent"
+          loading={validationsLoading}
         />
 
         {/* Schema changes */}

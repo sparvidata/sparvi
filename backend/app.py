@@ -1550,6 +1550,78 @@ def get_validations(current_user, organization_id):
         return jsonify({"error": str(e)}), 500
 
 
+@app.route("/api/validations/summary", methods=["GET"])
+@token_required
+def get_validations_summary(current_user, organization_id):
+    """Get a summary of all validation rules across tables for a connection"""
+    connection_id = request.args.get("connection_id")
+    if not connection_id:
+        return jsonify({"error": "Connection ID is required"}), 400
+
+    try:
+        logger.info(
+            f"Getting validation rules summary for organization: {organization_id}, connection: {connection_id}")
+
+        # Check access to connection
+        connection = connection_access_check(connection_id, organization_id)
+        if not connection:
+            return jsonify({"error": "Connection not found or access denied"}), 404
+
+        # Get tables for this connection using the existing endpoint logic
+        storage_service = MetadataStorageService()
+        tables_metadata = storage_service.get_metadata(connection_id, "tables")
+
+        tables = []
+        if tables_metadata and "metadata" in tables_metadata:
+            tables = [table.get("name") for table in tables_metadata["metadata"].get("tables", [])]
+
+        # If no tables in metadata, try to get them directly from database
+        if not tables:
+            # Create connector for this connection
+            connector = get_connector_for_connection(connection)
+            connector.connect()
+
+            # Create metadata collector
+            collector = MetadataCollector(connection_id, connector)
+
+            # Get table list (limited for immediate response)
+            tables = collector.collect_table_list()
+
+        total_validations = 0
+        validations_by_table = {}
+        passing_validations = 0
+        failing_validations = 0
+
+        # Get validation rules for each table
+        for table in tables:
+            table_rules = validation_manager.get_rules(organization_id, table)
+            rule_count = len(table_rules)
+
+            if rule_count > 0:
+                validations_by_table[table] = rule_count
+                total_validations += rule_count
+
+                # Count passing/failing validations if last_result exists
+                for rule in table_rules:
+                    if rule.get("last_result") is True:
+                        passing_validations += 1
+                    elif rule.get("last_result") is False:
+                        failing_validations += 1
+
+        return jsonify({
+            "total_count": total_validations,
+            "tables_with_validations": len(validations_by_table),
+            "validations_by_table": validations_by_table,
+            "passing_count": passing_validations,
+            "failing_count": failing_validations,
+            "unknown_count": total_validations - (passing_validations + failing_validations)
+        })
+    except Exception as e:
+        logger.error(f"Error getting validation rules summary: {str(e)}")
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route("/api/validations", methods=["POST"])
 @token_required
 def add_validation_rule(current_user, organization_id):
