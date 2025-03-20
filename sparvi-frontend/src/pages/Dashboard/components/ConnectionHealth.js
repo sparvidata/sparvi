@@ -28,7 +28,7 @@ const ConnectionHealth = () => {
   // Add a fetch limit to prevent constant re-fetching
   const FETCH_INTERVAL_MS = 30000; // 30 seconds minimum between fetches
   // Add a polling interval
-  const POLL_INTERVAL_MS = 5000; // Poll every 5 seconds
+  const POLL_INTERVAL_MS = 10000; // Poll every 10 seconds
 
   // Add isMounted ref to track component mount state
   const isMountedRef = useRef(true);
