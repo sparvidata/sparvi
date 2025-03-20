@@ -735,13 +735,55 @@ logger = setup_comprehensive_logging()
 # Load environment variables from .env file
 load_dotenv()
 
+
+def setup_cors(app):
+    """
+    Configure CORS with detailed logging and error handling
+    """
+    try:
+        CORS(app,
+             resources={r"/api/*": {
+                 "origins": ["https://cloud.sparvi.io", "http://localhost:3000"],
+                 "supports_credentials": True
+             }},
+             supports_credentials=True,
+             allow_headers=["Content-Type", "Authorization", "X-Requested-With"],
+             expose_headers=["Content-Type", "Authorization"],
+             methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"])
+
+        # Add logging for CORS configuration
+        logging.info("CORS configured successfully")
+    except Exception as e:
+        logging.error(f"CORS configuration failed: {str(e)}")
+        # Optionally, you could add a fallback CORS configuration
+        CORS(app)  # Minimal CORS if primary config fails
+
+
+def create_error_handlers(app):
+    """
+    Add error handlers for common CORS and network-related issues
+    """
+
+    @app.errorhandler(400)
+    def bad_request(error):
+        return jsonify({
+            "error": "Bad Request",
+            "message": "The server cannot process the request due to a client error",
+            "status_code": 400
+        }), 400
+
+    @app.errorhandler(405)
+    def method_not_allowed(error):
+        return jsonify({
+            "error": "Method Not Allowed",
+            "message": "The method is not allowed for the requested URL",
+            "status_code": 405
+        }), 405
+
+
 app = Flask(__name__, template_folder="templates")
-CORS(app,
-     resources={r"/*": {"origins": ["https://cloud.sparvi.io", "http://localhost:3000"]}},
-     supports_credentials=True,
-     allow_headers=["Content-Type", "Authorization", "X-Requested-With"],
-     expose_headers=["Content-Type", "Authorization"],
-     methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"])
+setup_cors(app)
+create_error_handlers(app)
 
 # Set the secret key from environment variables
 app.config["SECRET_KEY"] = os.getenv("SECRET_KEY", "default_secret_key")
