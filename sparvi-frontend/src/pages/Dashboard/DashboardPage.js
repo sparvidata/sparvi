@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback, useRef } from 'react';
+import React, { useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import {
   ServerIcon,
@@ -10,41 +10,22 @@ import {
 } from '@heroicons/react/24/outline';
 import { useConnection } from '../../contexts/EnhancedConnectionContext';
 import { useUI } from '../../contexts/UIContext';
-import { apiRequest } from '../../utils/apiUtils';
 import LoadingSpinner from '../../components/common/LoadingSpinner';
 import ConnectionHealth from './components/ConnectionHealth';
 import OverviewCard from './components/OverviewCard';
 import RecentActivity from './components/RecentActivity';
 import StatisticCard from './components/StatisticsCard';
+import { useTablesData } from '../../hooks/useTablesData';
+import { useMetadataStatus } from '../../hooks/useMetadataStatus';
+import { useValidationsSummary } from '../../hooks/useValidationsData';
+import { useConnectionDashboard } from '../../hooks/useConnectionDashboard';
 
 const DashboardPage = () => {
   const { connections, activeConnection } = useConnection();
   const { updateBreadcrumbs, showNotification } = useUI();
-  const [refreshing, setRefreshing] = useState(false);
 
-  // State for individual sections
-  const [tablesData, setTablesData] = useState(null);
-  const [changesData, setChangesData] = useState(null);
-  const [tablesLoading, setTablesLoading] = useState(true);
-  const [changesLoading, setChangesLoading] = useState(true);
-  const [validationsData, setValidationsData] = useState(null);
-  const [validationsLoading, setValidationsLoading] = useState(false);
-
-  // Use a ref to track mounted state
-  const isMountedRef = useRef(true);
-  // Track last fetch time to prevent too frequent refreshes
-  const lastFetchRef = useRef({ tables: 0, changes: 0 });
-  const FETCH_INTERVAL_MS = 30000; // 30 seconds minimum between fetches
-
-  // Get connectionId to use as a dependency
+  // Get connectionId safely
   const connectionId = activeConnection?.id;
-
-  // Set up cleanup on unmount
-  useEffect(() => {
-    return () => {
-      isMountedRef.current = false;
-    };
-  }, []);
 
   // Set breadcrumbs
   useEffect(() => {
@@ -53,166 +34,59 @@ const DashboardPage = () => {
     ]);
   }, [updateBreadcrumbs]);
 
-  // Load tables data function
-  const loadTablesData = useCallback(async (force = false) => {
-    if (!connectionId) {
-      setTablesLoading(false);
-      return;
-    }
+  // Use React Query to fetch tables data
+  const tablesQuery = useTablesData(connectionId, {
+    enabled: !!connectionId
+  });
 
-    // Check if we should skip fetching due to recent fetch
-    const now = Date.now();
-    if (!force && now - lastFetchRef.current.tables < FETCH_INTERVAL_MS) {
-      return;
-    }
+  // Use React Query to fetch metadata status
+  const metadataQuery = useMetadataStatus(connectionId, {
+    enabled: !!connectionId
+  });
 
-    try {
-      console.log("Loading tables data for connection", connectionId);
-      setTablesLoading(true);
-      lastFetchRef.current.tables = now;
+  // Use React Query to fetch validations summary
+  const validationsQuery = useValidationsSummary(connectionId, {
+    enabled: !!connectionId
+  });
 
-      const response = await apiRequest(`connections/${connectionId}/tables`, {
-        skipThrottle: force // Skip throttling if forcing refresh
-      });
+  // Use our dashboard hook to get combined data
+  const dashboardQuery = useConnectionDashboard(connectionId, {
+    enabled: !!connectionId
+  });
 
-      console.log("Tables data received:", response);
+  // Extract data or provide defaults - handle different response structures
+  // Log data structures for debugging
+  console.log('Tables Query Data:', tablesQuery.data);
+  console.log('Metadata Query Data:', metadataQuery.data);
+  console.log('Validations Query Data:', validationsQuery.data);
 
-      if (isMountedRef.current) {
-        console.log("Setting tablesData state to:", response);
-        // Set the entire response object as tablesData
-        setTablesData(response);
-        console.log("Tables data set, tables count:", response?.tables?.length || 0);
-        setTablesLoading(false);
-      }
-    } catch (error) {
-      if (isMountedRef.current) {
-        console.error('Error loading tables data:', error);
-        setTablesLoading(false);
-      }
-    }
-  }, [connectionId]);
+  // Extract tables count - could be an array or a nested structure
+  const tablesCount = Array.isArray(tablesQuery.data)
+    ? tablesQuery.data.length
+    : (tablesQuery.data?.tables?.length || 0);
 
-  const loadValidationsData = useCallback(async (force = false) => {
-    if (!connectionId) {
-      setValidationsLoading(false);
-      return;
-    }
+  // Extract changes count
+  const changesCount = metadataQuery.data?.changes_detected || 0;
 
-    // Check if we should skip fetching due to recent fetch
-    const now = Date.now();
-    if (!force && now - lastFetchRef.current.validations < FETCH_INTERVAL_MS) {
-      return;
-    }
+  // Extract validations count
+  const validationsCount = validationsQuery.data?.total_count ||
+                          validationsQuery.data?.data?.total_count || 0;
 
-    try {
-      console.log("Loading validations summary for connection", connectionId);
-      setValidationsLoading(true);
-      lastFetchRef.current.validations = now;
-
-      const response = await apiRequest(`validations/summary`, {
-        params: { connection_id: connectionId },
-        skipThrottle: force
-      });
-
-      console.log("Validations summary received:", response);
-
-      if (isMountedRef.current) {
-        setValidationsData(response);
-        setValidationsLoading(false);
-      }
-    } catch (error) {
-      if (isMountedRef.current) {
-        console.error('Error loading validations summary:', error);
-        setValidationsLoading(false);
-      }
-    }
-  }, [connectionId]);
-
-
-  // Load changes data function
-  const loadChangesData = useCallback(async (force = false) => {
-    if (!connectionId) {
-      setChangesLoading(false);
-      return;
-    }
-
-    // Check if we should skip fetching due to recent fetch
-    const now = Date.now();
-    if (!force && now - lastFetchRef.current.changes < FETCH_INTERVAL_MS) {
-      return;
-    }
-
-    try {
-      setChangesLoading(true);
-      lastFetchRef.current.changes = now;
-
-      const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
-      const response = await apiRequest(`connections/${connectionId}/changes`, {
-        params: { since },
-        skipThrottle: force // Skip throttling if forcing refresh
-      });
-
-      if (isMountedRef.current) {
-        setChangesData(response);
-        setChangesLoading(false);
-      }
-    } catch (error) {
-      if (isMountedRef.current) {
-        console.error('Error loading changes data:', error);
-        setChangesLoading(false);
-      }
-    }
-  }, [connectionId]);
-
-  // Load dashboard data when connection changes
-  useEffect(() => {
-    if (connectionId) {
-      // Load tables and changes data
-      loadTablesData();
-      loadChangesData();
-      loadValidationsData();
-    } else {
-      // Reset state when connection changes
-      setTablesData(null);
-      setChangesData(null);
-      setValidationsData(null);
-
-      setTablesLoading(false);
-      setChangesLoading(false);
-      setValidationsLoading(false);
-    }
-  }, [connectionId, loadTablesData, loadChangesData, loadValidationsData]);
-
-  useEffect(() => {
-    console.log("Tables data changed:", {
-      hasTablesData: !!tablesData,
-      tablesCount: tablesData?.tables?.length || 0
-    });
-  }, [tablesData]);
-
-  // Now calculate display values from state
-  const tablesCount = tablesData?.tables?.length || 0;
-  const changesCount = changesData?.changes?.length || 0;
-  const validationsCount = validationsData?.total_count || 0;
-
-
-  // Handle manual refresh
+  // Handle refresh all data
   const handleRefreshData = async () => {
-    if (!connectionId || refreshing) return;
+    if (!connectionId) return;
 
-    setRefreshing(true);
-    try {
-      await Promise.all([
-        loadTablesData(true), // Pass true to force refresh
-        loadChangesData(true) // Pass true to force refresh
-      ]);
-      showNotification('Dashboard data refreshed', 'success');
-    } catch (error) {
-      console.error('Error refreshing dashboard data:', error);
-      showNotification('Failed to refresh dashboard data', 'error');
-    } finally {
-      setRefreshing(false);
-    }
+    showNotification('Refreshing dashboard data...', 'info');
+
+    // Refetch all queries in parallel
+    await Promise.all([
+      tablesQuery.refetch(),
+      metadataQuery.refetch(),
+      validationsQuery.refetch(),
+      dashboardQuery.refetch()
+    ]);
+
+    showNotification('Dashboard data refreshed', 'success');
   };
 
   // If no connections, show empty state
@@ -246,10 +120,10 @@ const DashboardPage = () => {
           {activeConnection && (
             <button
               onClick={handleRefreshData}
-              disabled={refreshing}
+              disabled={dashboardQuery.isFetching || tablesQuery.isFetching}
               className="inline-flex items-center px-3 py-1.5 border border-secondary-300 shadow-sm text-sm font-medium rounded-md text-secondary-700 bg-white hover:bg-secondary-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-secondary-500 disabled:opacity-50"
             >
-              {refreshing ? (
+              {dashboardQuery.isFetching || tablesQuery.isFetching ? (
                 <>
                   <LoadingSpinner size="sm" className="mr-2" />
                   Refreshing...
@@ -273,20 +147,16 @@ const DashboardPage = () => {
 
       {/* Statistics section */}
       <div className="mt-8 grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-4">
-        {/* Table count - Add the debug logging here */}
-        {console.log("Tables StatisticCard props:", {
-          value: tablesData?.tables?.length || 0,
-          loading: tablesLoading,
-          hasTablesData: !!tablesData,
-          tablesDataContent: tablesData
-        })}
+        {/* Table count */}
         <StatisticCard
           title="Tables"
           value={tablesCount}
           icon={TableCellsIcon}
           href="/explorer"
           color="primary"
-          loading={tablesLoading}
+          loading={tablesQuery.isLoading}
+          error={tablesQuery.isError}
+          isRefetching={tablesQuery.isRefetching && !tablesQuery.isLoading}
         />
 
         {/* Validations count */}
@@ -296,26 +166,33 @@ const DashboardPage = () => {
           icon={ClipboardDocumentCheckIcon}
           href="/validations"
           color="accent"
-          loading={validationsLoading}
+          loading={validationsQuery.isLoading}
+          error={validationsQuery.isError}
+          isRefetching={validationsQuery.isRefetching && !validationsQuery.isLoading}
         />
 
         {/* Schema changes */}
         <StatisticCard
-            title="Schema Changes"
-            value={changesCount}
-            icon={ArrowPathIcon}
-            href="/metadata"
-            color="warning"
-            loading={changesLoading && !changesData?.changes}
+          title="Schema Changes"
+          value={changesCount}
+          icon={ArrowPathIcon}
+          href="/metadata"
+          color="warning"
+          loading={metadataQuery.isLoading}
+          error={metadataQuery.isError}
+          isRefetching={metadataQuery.isRefetching && !metadataQuery.isLoading}
         />
 
         {/* Issues */}
         <StatisticCard
-            title="Issues"
-            value={0}
-            icon={ExclamationTriangleIcon}
-            href="/validations"
-            color="danger"
+          title="Issues"
+          value={validationsQuery.data?.data?.failed_count || 0}
+          icon={ExclamationTriangleIcon}
+          href="/validations"
+          color="danger"
+          loading={validationsQuery.isLoading}
+          error={validationsQuery.isError}
+          isRefetching={validationsQuery.isRefetching && !validationsQuery.isLoading}
         />
       </div>
 
@@ -323,27 +200,30 @@ const DashboardPage = () => {
       <div className="mt-5 grid grid-cols-1 gap-5 lg:grid-cols-2">
         {/* Recent activity */}
         <RecentActivity
-            recentChanges={changesData?.changes || []}
-            recentValidations={[]}
+          recentChanges={metadataQuery.data?.changes || []}
+          recentValidations={[]}
+          isLoading={metadataQuery.isLoading && !metadataQuery.data}
+          error={metadataQuery.isError}
+          onRetry={() => metadataQuery.refetch()}
         />
 
-        {/* Overview cards with connectionId prop - now with improved handling */}
+        {/* Overview cards */}
         <div className="space-y-5">
           {connectionId && (
-              <>
-                <OverviewCard
-                    key={`tables-${connectionId}`}
-                    title="Tables"
-                    type="tables"
-                    connectionId={connectionId}
-                />
-                <OverviewCard
-                    key={`validations-${connectionId}`}
-                    title="Validations"
-                    type="validations"
-                    connectionId={connectionId}
-                />
-              </>
+            <>
+              <OverviewCard
+                key={`tables-${connectionId}`}
+                title="Tables"
+                type="tables"
+                connectionId={connectionId}
+              />
+              <OverviewCard
+                key={`validations-${connectionId}`}
+                title="Validations"
+                type="validations"
+                connectionId={connectionId}
+              />
+            </>
           )}
         </div>
       </div>

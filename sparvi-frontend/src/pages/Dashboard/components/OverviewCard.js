@@ -1,138 +1,54 @@
-// src/pages/Dashboard/components/OverviewCard.js
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React from 'react';
 import { Link } from 'react-router-dom';
 import { ArrowRightIcon } from '@heroicons/react/20/solid';
 import { useUI } from '../../../contexts/UIContext';
-import { apiRequest } from '../../../utils/apiUtils';
 import LoadingSpinner from '../../../components/common/LoadingSpinner';
+import { useTablesData } from '../../../hooks/useTablesData';
+import { useTableValidations } from '../../../hooks/useValidationsData';
 
 const OverviewCard = ({ title, type = 'tables', connectionId }) => {
-  // State for component
-  const [data, setData] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
   const { showNotification } = useUI();
 
-  // Refs for tracking component state
-  const isMountedRef = useRef(true);
-  const lastFetchRef = useRef(0);
-  const fetchTimeoutRef = useRef(null);
-  const FETCH_INTERVAL_MS = 30000; // 30 seconds minimum between fetches
+  // Use the appropriate query hook based on the card type
+  const tablesQuery = useTablesData(connectionId, {
+    enabled: type === 'tables' && !!connectionId
+  });
 
-  // Debug logging for component lifecycle
-  console.log(`[${type}] Rendering with connectionId:`, connectionId);
+  // For validations, we need a table name
+  // We'll use the first table from the tables query for demo purposes
+  // In a real app, you might want to be more specific about which table to use
 
-  // Cleanup on unmount
-  useEffect(() => {
-    // Set mounted flag to true on mount
-    isMountedRef.current = true;
+  // Log the tables data to debug
+  console.log('Tables data in OverviewCard:', tablesQuery.data);
 
-    return () => {
-      console.log(`[${type}] Overview component unmounting`);
-      isMountedRef.current = false;
-      if (fetchTimeoutRef.current) {
-        clearTimeout(fetchTimeoutRef.current);
-        fetchTimeoutRef.current = null;
-      }
-    };
-  }, [type]);
+  // Safely extract the first table, handling different data structures
+  let firstTable = null;
+  if (Array.isArray(tablesQuery.data) && tablesQuery.data.length > 0) {
+    firstTable = tablesQuery.data[0];
+  } else if (tablesQuery.data?.tables && tablesQuery.data.tables.length > 0) {
+    firstTable = tablesQuery.data.tables[0];
+  }
 
-  // Create memoized load function with fetch throttling
-  const fetchData = useCallback(async (force = false) => {
-    // Skip if no connection
-    if (!connectionId) {
-      console.log(`[${type}] No connection, skipping fetch`);
-      setLoading(false);
-      return;
+  // For validations, use a dummy table name if we don't have real data yet
+  // This ensures the query is enabled for the validations tab
+  const validationsQuery = useTableValidations(
+    firstTable || (type === 'validations' ? 'dummy_table' : null),
+    {
+      // Enable for validations tab even if we don't have a specific table yet
+      enabled: type === 'validations' && !!connectionId,
+      // Skip actual API call if we're using the dummy table
+      ...((!firstTable && type === 'validations') ? { queryFn: () => ({ data: { rules: [] }}) } : {})
     }
+  );
 
-    // Check if we need to fetch again - avoid too frequent refreshes
-    const now = Date.now();
-    if (!force && now - lastFetchRef.current < FETCH_INTERVAL_MS) {
-      console.log(`[${type}] Skipping fetch, too soon since last fetch`);
-      setLoading(false);
-      return;
-    }
+  // Choose the appropriate data and query based on type
+  const query = type === 'tables' ? tablesQuery : validationsQuery;
+  const data = query.data || [];
 
-    // Update last fetch time right away
-    lastFetchRef.current = now;
-
-    // Set loading state immediately
-    setLoading(true);
-
-    try {
-      console.log(`[${type}] Starting to fetch data for connection:`, connectionId);
-
-      if (type === 'tables') {
-        // Direct fetch without setTimeout
-        const response = await apiRequest(`connections/${connectionId}/tables`, {
-          skipThrottle: true
-        });
-
-        // Check if component is still mounted
-        if (isMountedRef.current) {
-          console.log(`[${type}] Tables data received:`, response);
-
-          // Only show first 5 tables
-          const tablesToShow = (response?.tables || []).slice(0, 5);
-          setData(tablesToShow);
-          setLoading(false);
-        }
-      } else if (type === 'validations') {
-        // Fetch validations data (requires tables first)
-        const tablesResponse = await apiRequest(`connections/${connectionId}/tables`, {
-          skipThrottle: true
-        });
-        const tables = tablesResponse?.tables || [];
-
-        // Check if component is still mounted
-        if (!isMountedRef.current) return;
-
-        if (tables.length > 0) {
-          // Get validation rules for the first table
-          const validationResponse = await apiRequest('validations', {
-            params: { table: tables[0] },
-            skipThrottle: true
-          });
-
-          // Check if component is still mounted
-          if (isMountedRef.current) {
-            // Get first 5 validation rules
-            const validationsToShow = (validationResponse?.rules || []).slice(0, 5);
-            setData(validationsToShow);
-            setLoading(false);
-          }
-        } else {
-          if (isMountedRef.current) {
-            setData([]);
-            setLoading(false);
-          }
-        }
-      }
-    } catch (err) {
-      // Handle errors
-      if (isMountedRef.current) {
-        console.error(`[${type}] Error fetching data:`, err);
-        setError(err);
-        setLoading(false);
-        if (showNotification) {
-          showNotification(`Failed to load ${type} data`, 'error');
-        }
-      }
-    }
-  }, [connectionId, type, showNotification]);
-
-  // Load data when dependencies change
-  useEffect(() => {
-    if (connectionId) {
-      console.log(`[${type}] Triggering data fetch for connection:`, connectionId);
-      fetchData();
-    } else {
-      // Reset state when no connection
-      setData([]);
-      setLoading(false);
-    }
-  }, [connectionId, fetchData, type]);
+  // Get query states
+  const loading = query.isLoading;
+  const error = query.isError;
+  const isRefetching = query.isRefetching;
 
   // Get the appropriate link for the "View all" button
   const getLink = () => {
@@ -145,9 +61,6 @@ const OverviewCard = ({ title, type = 'tables', connectionId }) => {
         return '/dashboard';
     }
   };
-
-  // Debug render
-  console.log(`[${type}] Rendering with ${data.length} items, loading: ${loading}`);
 
   return (
     <div className="card overflow-hidden">
@@ -174,6 +87,16 @@ const OverviewCard = ({ title, type = 'tables', connectionId }) => {
               </div>
             ))}
           </div>
+        ) : error ? (
+          <div className="text-center py-6">
+            <p className="text-sm text-danger-500">Error loading {type}</p>
+            <button
+              onClick={() => query.refetch()}
+              className="mt-2 text-sm text-primary-600 hover:text-primary-500"
+            >
+              Try again
+            </button>
+          </div>
         ) : data.length === 0 ? (
           <div className="text-center py-6">
             <p className="text-sm text-secondary-500">No {type} found</p>
@@ -186,7 +109,7 @@ const OverviewCard = ({ title, type = 'tables', connectionId }) => {
           </div>
         ) : (
           <ul className="divide-y divide-secondary-200">
-            {data.map((item, index) => (
+            {data.slice(0, 5).map((item, index) => (
               <li key={index} className="py-3">
                 {type === 'tables' ? (
                   <Link
@@ -215,6 +138,14 @@ const OverviewCard = ({ title, type = 'tables', connectionId }) => {
               </li>
             ))}
           </ul>
+        )}
+
+        {/* Optional loading indicator for background refetches */}
+        {isRefetching && !loading && (
+          <div className="mt-2 flex justify-center">
+            <LoadingSpinner size="sm" className="opacity-50" />
+            <span className="ml-2 text-xs text-secondary-400">Refreshing...</span>
+          </div>
         )}
       </div>
     </div>

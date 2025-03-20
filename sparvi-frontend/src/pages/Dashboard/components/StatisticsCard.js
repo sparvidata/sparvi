@@ -1,11 +1,18 @@
-// Modified StatisticCard.js
 import React from 'react';
 import { Link } from 'react-router-dom';
 import { ArrowRightIcon } from '@heroicons/react/20/solid';
 import LoadingSpinner from '../../../components/common/LoadingSpinner';
 
-const StatisticCard = ({ title, value, icon: Icon, href, color = 'primary', loading = false }) => {
-  console.log(`StatisticCard "${title}" render:`, { value, loading });
+const StatisticCard = ({
+  title,
+  value,
+  icon: Icon,
+  href,
+  color = 'primary',
+  loading = false,
+  error = false,
+  isRefetching = false
+}) => {
   // Define color classes based on the color prop
   const colorClasses = {
     primary: {
@@ -41,9 +48,12 @@ const StatisticCard = ({ title, value, icon: Icon, href, color = 'primary', load
                   <LoadingSpinner size="sm" className="mr-2" />
                   <span className="text-secondary-400">Loading...</span>
                 </div>
+              ) : error ? (
+                <div className="text-danger-500 text-sm">Error loading data</div>
               ) : (
-                <div className="text-lg font-medium text-secondary-900">
+                <div className="text-lg font-medium text-secondary-900 flex items-center">
                   {value !== undefined && value !== null ? value : '-'}
+                  {isRefetching && <LoadingSpinner size="xs" className="ml-2 opacity-50" />}
                 </div>
               )}
             </dd>

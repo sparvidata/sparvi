@@ -74,15 +74,16 @@ backend/history.db
 node_modules/
 /.pnp
 .pnp.js
-frontend/build/
-frontend/dist/
-frontend/coverage/
-frontend/.env.local
-frontend/.env.development.local
-frontend/.env.test.local
-frontend/.env.production.local
+sparvi-frontend/build/
+sparvi-frontend/dist/
+sparvi-frontend/coverage/
+sparvi-frontend/.env.local
+sparvi-frontend/.env.development.local
+sparvi-frontend/.env.test.local
+sparvi-frontend/.env.production.local
 /build
 /dist
+package-lock.json
 
 # Testing
 .coverage

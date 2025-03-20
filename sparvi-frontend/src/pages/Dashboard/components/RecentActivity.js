@@ -9,8 +9,15 @@ import {
   MinusIcon,
   PencilIcon
 } from '@heroicons/react/24/outline';
+import LoadingSpinner from '../../../components/common/LoadingSpinner';
 
-const RecentActivity = ({ recentChanges = [], recentValidations = [] }) => {
+const RecentActivity = ({
+  recentChanges = [],
+  recentValidations = [],
+  isLoading = false,
+  error = false,
+  onRetry = () => {}
+}) => {
   // Combine and sort activities by date
   const activities = [
     ...recentChanges.map(change => ({
@@ -185,6 +192,45 @@ const RecentActivity = ({ recentChanges = [], recentValidations = [] }) => {
 
     return '/metadata';
   };
+
+  // Show loading state
+  if (isLoading) {
+    return (
+      <div className="card overflow-hidden">
+        <div className="px-4 py-5 sm:px-6 bg-white border-b border-secondary-200">
+          <h3 className="text-lg leading-6 font-medium text-secondary-900">Recent Activity</h3>
+        </div>
+        <div className="bg-white px-4 py-5 sm:p-6">
+          <div className="flex justify-center py-6">
+            <LoadingSpinner size="lg" />
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Show error state
+  if (error) {
+    return (
+      <div className="card overflow-hidden">
+        <div className="px-4 py-5 sm:px-6 bg-white border-b border-secondary-200">
+          <h3 className="text-lg leading-6 font-medium text-secondary-900">Recent Activity</h3>
+        </div>
+        <div className="bg-white px-4 py-5 sm:p-6">
+          <div className="text-center py-6">
+            <XCircleIcon className="mx-auto h-10 w-10 text-danger-400" />
+            <p className="mt-2 text-sm text-danger-600">Failed to load activity data</p>
+            <button
+              onClick={onRetry}
+              className="mt-2 inline-flex items-center px-3 py-1.5 border border-transparent text-xs font-medium rounded-md text-white bg-danger-600 hover:bg-danger-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-danger-500"
+            >
+              Try Again
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="card overflow-hidden">

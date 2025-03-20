@@ -1,5 +1,7 @@
 import React from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { QueryClientProvider } from '@tanstack/react-query';
+import { queryClient } from './api/queryClient';
 
 // Contexts
 import { AuthProvider } from './contexts/AuthContext';
@@ -32,60 +34,62 @@ import NotFoundPage from './pages/NotFoundPage';
 
 function App() {
   return (
-    <BrowserRouter>
-      <AuthProvider>
-        <UIProvider>
-          <ConnectionProvider>
-            <Routes>
-              {/* Public routes */}
-              <Route path="/login" element={<LoginPage />} />
-              <Route path="/register" element={<RegisterPage />} />
-              <Route path="/forgot-password" element={<ForgotPasswordPage />} />
-              <Route path="/reset-password" element={<ResetPasswordPage />} />
+    <QueryClientProvider client={queryClient}>
+      <BrowserRouter>
+        <AuthProvider>
+          <UIProvider>
+            <ConnectionProvider>
+              <Routes>
+                {/* Public routes */}
+                <Route path="/login" element={<LoginPage />} />
+                <Route path="/register" element={<RegisterPage />} />
+                <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+                <Route path="/reset-password" element={<ResetPasswordPage />} />
 
-              {/* Protected routes */}
-              <Route element={
-                <ProtectedRoute>
-                  <MainLayout />
-                </ProtectedRoute>
-              }>
-                {/* Dashboard */}
-                <Route path="/dashboard" element={<DashboardPage />} />
+                {/* Protected routes */}
+                <Route element={
+                  <ProtectedRoute>
+                    <MainLayout />
+                  </ProtectedRoute>
+                }>
+                  {/* Dashboard */}
+                  <Route path="/dashboard" element={<DashboardPage />} />
 
-                {/* Connections */}
-                <Route path="/connections" element={<ConnectionsPage />} />
-                <Route path="/connections/new" element={<NewConnectionPage />} />
-                <Route path="/connections/:id" element={<ConnectionDetailPage />} />
+                  {/* Connections */}
+                  <Route path="/connections" element={<ConnectionsPage />} />
+                  <Route path="/connections/new" element={<NewConnectionPage />} />
+                  <Route path="/connections/:id" element={<ConnectionDetailPage />} />
 
-                {/* Data Explorer */}
-                <Route path="/explorer" element={<DataExplorerPage />} />
-                <Route path="/explorer/:connectionId/tables/:tableName" element={<TableDetailPage />} />
+                  {/* Data Explorer */}
+                  <Route path="/explorer" element={<DataExplorerPage />} />
+                  <Route path="/explorer/:connectionId/tables/:tableName" element={<TableDetailPage />} />
 
-                {/* Validations */}
-                <Route path="/validations" element={<ValidationPage />} />
+                  {/* Validations */}
+                  <Route path="/validations" element={<ValidationPage />} />
 
-                {/* Metadata */}
-                <Route path="/metadata" element={<MetadataPage />} />
+                  {/* Metadata */}
+                  <Route path="/metadata" element={<MetadataPage />} />
 
-                {/* Admin */}
-                <Route path="/admin/users" element={<AdminUsersPage />} />
-                <Route path="/admin/settings" element={<AdminSettingsPage />} />
-                <Route path="/admin" element={<Navigate to="/admin/users" replace />} />
+                  {/* Admin */}
+                  <Route path="/admin/users" element={<AdminUsersPage />} />
+                  <Route path="/admin/settings" element={<AdminSettingsPage />} />
+                  <Route path="/admin" element={<Navigate to="/admin/users" replace />} />
 
-                {/* Settings */}
-                <Route path="/settings" element={<UserSettingsPage />} />
+                  {/* Settings */}
+                  <Route path="/settings" element={<UserSettingsPage />} />
 
-                {/* Root redirect */}
-                <Route path="/" element={<Navigate to="/dashboard" replace />} />
+                  {/* Root redirect */}
+                  <Route path="/" element={<Navigate to="/dashboard" replace />} />
 
-                {/* 404 */}
-                <Route path="*" element={<NotFoundPage />} />
-              </Route>
-            </Routes>
-          </ConnectionProvider>
-        </UIProvider>
-      </AuthProvider>
-    </BrowserRouter>
+                  {/* 404 */}
+                  <Route path="*" element={<NotFoundPage />} />
+                </Route>
+              </Routes>
+            </ConnectionProvider>
+          </UIProvider>
+        </AuthProvider>
+      </BrowserRouter>
+    </QueryClientProvider>
   );
 }
 

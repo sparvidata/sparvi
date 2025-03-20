@@ -626,6 +626,18 @@ export const validationsAPI = {
     });
   },
 
+  getSummary: (connectionId, options = {}) => {
+    const { forceFresh = false, requestId = `validations.summary.${connectionId}` } = options;
+    return enhancedRequest({
+      url: '/validations/summary',
+      params: { connection_id: connectionId },
+      cacheKey: `validations.summary.${connectionId}`,
+      cacheTTL: 5 * 60 * 1000, // 5 minutes
+      requestId,
+      forceFresh
+    });
+  },
+
   runValidations: (connectionId, tableName, connectionString) => {
     return enhancedRequest({
       method: 'POST',
