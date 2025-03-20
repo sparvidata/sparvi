@@ -1,10 +1,12 @@
+// src/pages/Dashboard/components/OverviewCard.js
+
 import React from 'react';
 import { Link } from 'react-router-dom';
 import { ArrowRightIcon } from '@heroicons/react/20/solid';
 import { useUI } from '../../../contexts/UIContext';
 import LoadingSpinner from '../../../components/common/LoadingSpinner';
 import { useTablesData } from '../../../hooks/useTablesData';
-import { useTableValidations } from '../../../hooks/useValidationsData';
+import { useValidationsSummary } from '../../../hooks/useValidationsData';
 
 const OverviewCard = ({ title, type = 'tables', connectionId }) => {
   const { showNotification } = useUI();
@@ -14,41 +16,47 @@ const OverviewCard = ({ title, type = 'tables', connectionId }) => {
     enabled: type === 'tables' && !!connectionId
   });
 
-  // For validations, we need a table name
-  // We'll use the first table from the tables query for demo purposes
-  // In a real app, you might want to be more specific about which table to use
-
-  // Log the tables data to debug
-  console.log('Tables data in OverviewCard:', tablesQuery.data);
-
-  // Safely extract the first table, handling different data structures
-  let firstTable = null;
-  if (Array.isArray(tablesQuery.data) && tablesQuery.data.length > 0) {
-    firstTable = tablesQuery.data[0];
-  } else if (tablesQuery.data?.tables && tablesQuery.data.tables.length > 0) {
-    firstTable = tablesQuery.data.tables[0];
-  }
-
-  // For validations, use a dummy table name if we don't have real data yet
-  // This ensures the query is enabled for the validations tab
-  const validationsQuery = useTableValidations(
-    firstTable || (type === 'validations' ? 'dummy_table' : null),
-    {
-      // Enable for validations tab even if we don't have a specific table yet
-      enabled: type === 'validations' && !!connectionId,
-      // Skip actual API call if we're using the dummy table
-      ...((!firstTable && type === 'validations') ? { queryFn: () => ({ data: { rules: [] }}) } : {})
-    }
-  );
+  // For validations, we use the summary query
+  const validationsSummaryQuery = useValidationsSummary(connectionId, {
+    enabled: type === 'validations' && !!connectionId
+  });
 
   // Choose the appropriate data and query based on type
-  const query = type === 'tables' ? tablesQuery : validationsQuery;
-  const data = query.data || [];
+  const query = type === 'tables' ? tablesQuery : validationsSummaryQuery;
 
-  // Get query states
-  const loading = query.isLoading;
-  const error = query.isError;
-  const isRefetching = query.isRefetching;
+  // For tables, data is just the array of tables
+  // For validations, we'll handle different potential response formats
+  let data = [];
+
+  if (type === 'tables' && tablesQuery.data) {
+    data = tablesQuery.data;
+    console.log(`[${type}] Tables data in OverviewCard:`, data);
+  } else if (type === 'validations' && validationsSummaryQuery.data) {
+    // Extract validation summary data
+    const summary = validationsSummaryQuery.data;
+    console.log(`[${type}] Validations summary in OverviewCard:`, summary);
+
+    if (summary.validations_by_table) {
+      // First format: has validations_by_table property
+      data = Object.entries(summary.validations_by_table).map(([tableName, count]) => ({
+        tableName,
+        count,
+        passingCount: summary.passing_count || 0,
+        failingCount: summary.failing_count || 0,
+        unknownCount: summary.unknown_count || 0
+      }));
+    } else if (summary.total_count > 0) {
+      // Second format: has total_count but no validations_by_table
+      // We'll create a single entry for all validations
+      data = [{
+        tableName: 'All Tables',
+        count: summary.total_count,
+        passingCount: summary.passed_count || 0,
+        failingCount: summary.failed_count || 0,
+        unknownCount: summary.not_run_count || 0
+      }];
+    }
+  }
 
   // Get the appropriate link for the "View all" button
   const getLink = () => {
@@ -60,6 +68,20 @@ const OverviewCard = ({ title, type = 'tables', connectionId }) => {
       default:
         return '/dashboard';
     }
+  };
+
+  // Determine status class for validation items
+  const getStatusClass = (item) => {
+    if (item.failingCount > 0) return 'bg-danger-100 text-danger-800';
+    if (item.passingCount > 0) return 'bg-accent-100 text-accent-800';
+    return 'bg-secondary-100 text-secondary-800';
+  };
+
+  // Determine status text for validation items
+  const getStatusText = (item) => {
+    if (item.failingCount > 0) return 'Has failures';
+    if (item.passingCount > 0) return 'All passing';
+    return 'Not run';
   };
 
   return (
@@ -75,7 +97,7 @@ const OverviewCard = ({ title, type = 'tables', connectionId }) => {
         </Link>
       </div>
       <div className="bg-white px-4 py-5 sm:p-6">
-        {loading ? (
+        {query.isLoading ? (
           <div className="space-y-3">
             {[...Array(3)].map((_, i) => (
               <div key={i} className="animate-pulse flex space-x-4">
@@ -87,7 +109,7 @@ const OverviewCard = ({ title, type = 'tables', connectionId }) => {
               </div>
             ))}
           </div>
-        ) : error ? (
+        ) : query.isError ? (
           <div className="text-center py-6">
             <p className="text-sm text-danger-500">Error loading {type}</p>
             <button
@@ -110,7 +132,7 @@ const OverviewCard = ({ title, type = 'tables', connectionId }) => {
         ) : (
           <ul className="divide-y divide-secondary-200">
             {data.slice(0, 5).map((item, index) => (
-              <li key={index} className="py-3">
+              <li key={type === 'tables' ? item : `${item.tableName}-${index}`} className="py-3">
                 {type === 'tables' ? (
                   <Link
                     to={`/explorer/${connectionId}/tables/${item}`}
@@ -121,17 +143,17 @@ const OverviewCard = ({ title, type = 'tables', connectionId }) => {
                   </Link>
                 ) : (
                   <Link
-                    to={`/validations/${item.id}`}
+                    to={item.tableName === 'All Tables' ? '/validations' : `/validations?table=${item.tableName}`}
                     className="flex justify-between items-center hover:bg-secondary-50 px-2 py-1 rounded-md"
                   >
                     <div>
-                      <span className="text-sm font-medium text-secondary-900">{item.rule_name}</span>
-                      <p className="text-xs text-secondary-500 truncate">{item.description}</p>
+                      <span className="text-sm font-medium text-secondary-900">{item.tableName}</span>
+                      <p className="text-xs text-secondary-500 truncate">
+                        {item.count} validation rule{item.count !== 1 ? 's' : ''}
+                      </p>
                     </div>
-                    <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
-                      item.last_result ? 'bg-accent-100 text-accent-800' : 'bg-danger-100 text-danger-800'
-                    }`}>
-                      {item.last_result ? 'Passed' : 'Failed'}
+                    <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getStatusClass(item)}`}>
+                      {getStatusText(item)}
                     </span>
                   </Link>
                 )}
@@ -141,7 +163,7 @@ const OverviewCard = ({ title, type = 'tables', connectionId }) => {
         )}
 
         {/* Optional loading indicator for background refetches */}
-        {isRefetching && !loading && (
+        {query.isRefetching && !query.isLoading && (
           <div className="mt-2 flex justify-center">
             <LoadingSpinner size="sm" className="opacity-50" />
             <span className="ml-2 text-xs text-secondary-400">Refreshing...</span>
