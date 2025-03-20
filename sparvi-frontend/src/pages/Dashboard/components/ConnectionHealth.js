@@ -176,22 +176,24 @@ const ConnectionHealth = () => {
     const currentStatus = statusValue || 'unknown';
 
     const statusColors = {
-      recent: 'bg-accent-100 text-accent-800',
-      stale: 'bg-warning-100 text-warning-800',
+      fresh: 'bg-success-100 text-success-800',     // Green for fresh (< 1 hour)
+      recent: 'bg-accent-100 text-accent-800',      // Blue for recent (< 1 day)
+      stale: 'bg-warning-100 text-warning-800',     // Yellow/orange for stale (> 1 day)
       unknown: 'bg-secondary-100 text-secondary-800',
       error: 'bg-danger-100 text-danger-800'
     };
 
     const statusLabels = {
-      recent: 'Fresh',
-      stale: 'Stale',
+      fresh: 'Fresh',       // Less than 1 hour old
+      recent: 'Recent',     // Less than 1 day old
+      stale: 'Stale',       // More than 1 day old
       unknown: 'Unknown',
       error: 'Error'
     };
 
       return (
       <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${statusColors[currentStatus] || statusColors.unknown}`}>
-        {currentStatus === 'recent' ? (
+        {(currentStatus === 'fresh' || currentStatus === 'recent') ? (
           <CheckCircleIcon className="-ml-0.5 mr-1.5 h-3 w-3 text-current" aria-hidden="true" />
         ) : currentStatus === 'error' ? (
           <ExclamationCircleIcon className="-ml-0.5 mr-1.5 h-3 w-3 text-current" aria-hidden="true" />
