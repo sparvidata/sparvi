@@ -73,6 +73,11 @@ export const apiRequest = async (endpoint, options = {}) => {
     console.log(`Making ${method} request to ${endpoint}`);
     const client = await createApiClient();
 
+    // Add these new debug logging lines
+    const session = await getSession();
+    const token = session?.access_token;
+    console.log(`Auth token available for ${endpoint}:`, !!token);
+
     // Override client timeout if specified
     if (timeout !== 60000) {
       client.defaults.timeout = timeout;

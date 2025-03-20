@@ -19,6 +19,8 @@ const ConnectionHealth = () => {
 
   // Use connectionId instead of the entire connection object to prevent re-renders
   const connectionId = activeConnection?.id;
+  console.log("ConnectionHealth rendering with connectionId:", connectionId);
+
 
   // Add a last fetch time tracker
   const lastFetchRef = useRef(0);
@@ -30,18 +32,26 @@ const ConnectionHealth = () => {
   // Add a timeout ref to track and clear pending fetches
   const fetchTimeoutRef = useRef(null);
 
-  // Cleanup on unmount
+  // Mount and cleanup effect
   useEffect(() => {
+    // Set mounted flag to true when the component mounts
+    isMountedRef.current = true;
+    console.log("Component mounted, setting isMountedRef to true");
+
+    // Cleanup function when component unmounts
     return () => {
+      console.log("Component unmounting, setting isMountedRef to false");
       isMountedRef.current = false;
       if (fetchTimeoutRef.current) {
         clearTimeout(fetchTimeoutRef.current);
+        fetchTimeoutRef.current = null;
       }
     };
   }, []);
 
   // Create memoized fetch function to avoid recreation on every render
   const fetchStatus = useCallback(async (force = false) => {
+
     if (!connectionId) {
       setLoading(false);
       return;
@@ -49,67 +59,50 @@ const ConnectionHealth = () => {
 
     // Check if we need to fetch again - avoid too frequent refreshes
     const now = Date.now();
+
     if (!force && now - lastFetchRef.current < FETCH_INTERVAL_MS) {
-      console.log("Skipping fetch, too soon since last fetch");
       setLoading(false);
       return;
     }
 
-    // Clear any pending fetch timeouts
-    if (fetchTimeoutRef.current) {
-      clearTimeout(fetchTimeoutRef.current);
+    // No more setTimeout - just make the API call directly
+    try {
+      setLoading(true);
+      lastFetchRef.current = now; // Update last fetch time
+
+      const response = await apiRequest(`connections/${connectionId}/metadata/status`, {
+        timeout: 60000, // 60 seconds timeout
+        skipThrottle: force // Skip throttling for manual refreshes
+      });
+
+      // Make sure response is valid and component is still mounted
+      if (isMountedRef.current) {
+        setStatus(response);
+        setLoading(false); // Explicitly set loading to false here
+      } else {
+      }
+    } catch (error) {
+      if (error.throttled) {
+      } else if (isMountedRef.current) {
+        showNotification('Failed to load connection health data', 'error');
+      }
+
+      // Always set loading to false
+      if (isMountedRef.current) {
+        setLoading(false);
+      }
     }
-
-    // Add a small delay before fetching to avoid race conditions
-    fetchTimeoutRef.current = setTimeout(async () => {
-      // Check if component is still mounted
-      if (!isMountedRef.current) {
-        return;
-      }
-
-      try {
-        setLoading(true);
-        console.log("Fetching metadata status for connection", connectionId);
-        lastFetchRef.current = now; // Update last fetch time
-
-        // Make request with longer timeout
-        const response = await apiRequest(`connections/${connectionId}/metadata/status`, {
-          timeout: 60000, // 60 seconds timeout
-          skipThrottle: force // Skip throttling for manual refreshes
-        });
-
-        // Make sure response is valid and component is still mounted
-        if (isMountedRef.current) {
-          console.log("Setting metadata status:", response);
-          setStatus(response);
-          setLoading(false); // Explicitly set loading to false here
-        }
-      } catch (error) {
-        if (error.throttled) {
-          console.log("Metadata status request throttled");
-        } else if (isMountedRef.current) {
-          console.error('Error fetching metadata status:', error);
-          showNotification('Failed to load connection health data', 'error');
-        }
-
-        // Always set loading to false
-        if (isMountedRef.current) {
-          setLoading(false);
-        }
-      } finally {
-        // Belt and suspenders approach
-        if (isMountedRef.current) {
-          setLoading(false);
-        }
-      }
-    }, 100);
   }, [connectionId, showNotification]);
+
 
   // Only fetch data when connection changes
   useEffect(() => {
+    console.log("ConnectionHealth useEffect triggered with connectionId:", connectionId);
     if (connectionId) {
+      console.log("About to call fetchStatus");
       fetchStatus();
     } else {
+      console.log("No connectionId, skipping fetchStatus");
       setLoading(false);
     }
   }, [connectionId, fetchStatus]);
@@ -196,12 +189,12 @@ const ConnectionHealth = () => {
       error: 'Error'
     };
 
-    return (
+      return (
       <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${statusColors[currentStatus] || statusColors.unknown}`}>
-        {currentStatus === 'fresh' ? (
-          <CheckCircleIcon className="-ml-0.5 mr-1.5 h-3 w-3" aria-hidden="true" />
+        {currentStatus === 'recent' ? (
+          <CheckCircleIcon className="-ml-0.5 mr-1.5 h-3 w-3 text-current" aria-hidden="true" />
         ) : currentStatus === 'error' ? (
-          <ExclamationCircleIcon className="-ml-0.5 mr-1.5 h-3 w-3" aria-hidden="true" />
+          <ExclamationCircleIcon className="-ml-0.5 mr-1.5 h-3 w-3 text-current" aria-hidden="true" />
         ) : null}
         {statusLabels[currentStatus] || 'Unknown'}
       </span>
