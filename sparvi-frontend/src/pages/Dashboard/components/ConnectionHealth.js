@@ -117,7 +117,7 @@ const ConnectionHealth = () => {
       // Simplified request using new helper
       await apiRequest(`connections/${connectionId}/metadata/refresh`, {
         method: 'POST',
-        data: { metadata_type: 'schema' },
+        data: { metadata_type: 'full' },
         skipThrottle: true // Skip throttling for manual refreshes
       });
 
