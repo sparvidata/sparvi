@@ -1,3 +1,4 @@
+// src/pages/Validations/ValidationPage.js
 import React, { useState, useEffect } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import {
@@ -13,22 +14,22 @@ import {
 } from '@heroicons/react/24/outline';
 import { useConnection } from '../../contexts/EnhancedConnectionContext';
 import { useUI } from '../../contexts/UIContext';
-import { validationsAPI, schemaAPI } from '../../api/enhancedApiService';
+import { validationsAPI } from '../../api/enhancedApiService';
 import LoadingSpinner from '../../components/common/LoadingSpinner';
 import EmptyState from '../../components/common/EmptyState';
 import ValidationRuleEditor from './components/ValidationRuleEditor';
 import ValidationRuleList from './components/ValidationRuleList';
 import SearchInput from '../../components/common/SearchInput';
+import { useTablesData } from '../../hooks/useTablesData';
+import { useTableValidations } from '../../hooks/useValidationsData';
+import { queryClient } from '../../api/queryClient';
 
 const ValidationPage = () => {
   const [searchParams, setSearchParams] = useSearchParams();
   const { connections, activeConnection, setCurrentConnection } = useConnection();
   const { updateBreadcrumbs, showNotification, setLoading } = useUI();
 
-  const [validations, setValidations] = useState([]);
   const [filteredValidations, setFilteredValidations] = useState([]);
-  const [tables, setTables] = useState([]);
-  const [loading, setIsLoading] = useState(true);
   const [selectedTable, setSelectedTable] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
@@ -50,56 +51,31 @@ const ValidationPage = () => {
     }
   }, [searchParams]);
 
-  // Load tables for active connection
+  // Use React Query to fetch tables data
+  const tablesQuery = useTablesData(
+    activeConnection?.id,
+    { enabled: !!activeConnection }
+  );
+
+  // Use React Query to fetch validation rules using your existing hook
+  const validationsQuery = useTableValidations(
+    selectedTable,
+    {
+      enabled: !!selectedTable
+    }
+  );
+
+  // When validations data loads, update local state
   useEffect(() => {
-    const loadTables = async () => {
-      if (!activeConnection) return;
+    if (validationsQuery.data) {
+      // Apply filters when the data changes
+      applyFilters(validationsQuery.data);
+    }
+  }, [validationsQuery.data, searchQuery, statusFilter]);
 
-      try {
-        setIsLoading(true);
-
-        const response = await schemaAPI.getTables(activeConnection.id);
-        setTables(response.data.tables || []);
-      } catch (error) {
-        console.error('Error loading tables:', error);
-        showNotification('Failed to load tables', 'error');
-      } finally {
-        setIsLoading(false);
-      }
-    };
-
-    loadTables();
-  }, [activeConnection]);
-
-  // Load validations for selected table
-  useEffect(() => {
-    const loadValidations = async () => {
-      if (!selectedTable) {
-        setValidations([]);
-        setFilteredValidations([]);
-        return;
-      }
-
-      try {
-        setIsLoading(true);
-
-        const response = await validationsAPI.getRules(selectedTable);
-        setValidations(response.data.rules || []);
-        setFilteredValidations(response.data.rules || []);
-      } catch (error) {
-        console.error(`Error loading validations for ${selectedTable}:`, error);
-        showNotification(`Failed to load validations for ${selectedTable}`, 'error');
-      } finally {
-        setIsLoading(false);
-      }
-    };
-
-    loadValidations();
-  }, [selectedTable]);
-
-  // Apply filters and search
-  useEffect(() => {
-    if (!validations.length) {
+  // Apply filters to validation rules
+  const applyFilters = (validations) => {
+    if (!validations || !validations.length) {
       setFilteredValidations([]);
       return;
     }
@@ -126,7 +102,7 @@ const ValidationPage = () => {
     }
 
     setFilteredValidations(filtered);
-  }, [validations, searchQuery, statusFilter]);
+  };
 
   // Handle table selection
   const handleTableSelect = (tableName) => {
@@ -157,9 +133,8 @@ const ValidationPage = () => {
         null
       );
 
-      // Refresh validation list
-      const validationsResponse = await validationsAPI.getRules(selectedTable);
-      setValidations(validationsResponse.data.rules || []);
+      // Invalidate the validations query to trigger a refetch
+      queryClient.invalidateQueries(['table-validations', selectedTable]);
 
       showNotification(`Ran ${response.data.results?.length || 0} validations for ${selectedTable}`, 'success');
     } catch (error) {
@@ -190,13 +165,8 @@ const ValidationPage = () => {
 
   // Save validation
   const handleSaveValidation = async () => {
-    // Refresh validation list
-    try {
-      const response = await validationsAPI.getRules(selectedTable);
-      setValidations(response.data.rules || []);
-    } catch (error) {
-      console.error('Error refreshing validations:', error);
-    }
+    // Invalidate the query to refetch validation rules
+    queryClient.invalidateQueries(['table-validations', selectedTable]);
 
     setShowEditor(false);
     setEditingRule(null);
@@ -215,9 +185,8 @@ const ValidationPage = () => {
         null
       );
 
-      // Refresh validation list
-      const validationsResponse = await validationsAPI.getRules(selectedTable);
-      setValidations(validationsResponse.data.rules || []);
+      // Invalidate the query to refetch validation rules
+      queryClient.invalidateQueries(['table-validations', selectedTable]);
 
       showNotification(`Generated ${response.data.count} default validations for ${selectedTable}`, 'success');
     } catch (error) {
@@ -255,17 +224,27 @@ const ValidationPage = () => {
               <h3 className="text-sm font-medium text-secondary-900">Tables</h3>
             </div>
             <div className="p-4">
-              {loading && !tables.length ? (
+              {tablesQuery.isLoading ? (
                 <div className="flex justify-center py-4">
                   <LoadingSpinner size="md" />
                 </div>
-              ) : tables.length === 0 ? (
+              ) : tablesQuery.isError ? (
+                <div className="text-center py-4">
+                  <p className="text-sm text-danger-500">Error loading tables</p>
+                  <button
+                    onClick={() => tablesQuery.refetch()}
+                    className="mt-2 text-sm text-primary-600 hover:text-primary-500"
+                  >
+                    Try again
+                  </button>
+                </div>
+              ) : !tablesQuery.data || tablesQuery.data.length === 0 ? (
                 <div className="text-center py-4">
                   <p className="text-sm text-secondary-500">No tables found</p>
                 </div>
               ) : (
                 <div className="space-y-1 max-h-96 overflow-y-auto">
-                  {tables.map(table => (
+                  {tablesQuery.data.map(table => (
                     <button
                       key={table}
                       className={`w-full text-left px-3 py-2 rounded-md text-sm ${
@@ -409,9 +388,9 @@ const ValidationPage = () => {
               {/* Validation list */}
               <ValidationRuleList
                 validations={filteredValidations}
-                isLoading={loading}
+                isLoading={validationsQuery.isLoading}
                 onEdit={handleEditValidation}
-                onRefreshList={handleSaveValidation}
+                onRefreshList={() => validationsQuery.refetch()}
                 tableName={selectedTable}
                 connectionId={activeConnection?.id}
               />

@@ -98,3 +98,62 @@ export const useRunValidations = (connectionId, tableName) => {
     }
   });
 };
+
+/**
+ * Custom hook to generate default validations
+ * @param {string} connectionId - The connection ID
+ * @param {string} tableName - The table name
+ * @returns {Object} Mutation result object
+ */
+export const useGenerateValidations = (connectionId, tableName) => {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: () =>
+      validationsAPI.generateDefaultValidations(connectionId, tableName, null),
+    onSuccess: () => {
+      // Invalidate validations queries to trigger a refetch
+      queryClient.invalidateQueries(['table-validations', tableName]);
+      queryClient.invalidateQueries(['validations-summary', connectionId]);
+    }
+  });
+};
+
+/**
+ * Custom hook to create, update or delete validation rules
+ * @param {string} tableName - The table name
+ * @returns {Object} Mutation functions for CRUD operations
+ */
+export const useValidationRuleMutations = (tableName) => {
+  const queryClient = useQueryClient();
+
+  // Create validation rule
+  const createRule = useMutation({
+    mutationFn: (rule) => validationsAPI.createRule(tableName, rule),
+    onSuccess: () => {
+      queryClient.invalidateQueries(['table-validations', tableName]);
+    }
+  });
+
+  // Update validation rule
+  const updateRule = useMutation({
+    mutationFn: ({ ruleId, rule }) => validationsAPI.updateRule(ruleId, tableName, rule),
+    onSuccess: () => {
+      queryClient.invalidateQueries(['table-validations', tableName]);
+    }
+  });
+
+  // Delete validation rule
+  const deleteRule = useMutation({
+    mutationFn: (ruleName) => validationsAPI.deleteRule(tableName, ruleName),
+    onSuccess: () => {
+      queryClient.invalidateQueries(['table-validations', tableName]);
+    }
+  });
+
+  return {
+    createRule,
+    updateRule,
+    deleteRule
+  };
+};

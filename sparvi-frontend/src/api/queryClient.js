@@ -1,19 +1,28 @@
 // src/api/queryClient.js
 import { QueryClient } from '@tanstack/react-query';
 
-// Create a client with default settings
 export const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
-      // Default settings for all queries
-      staleTime: 5 * 60 * 1000, // 5 minutes before data is considered stale
-      cacheTime: 30 * 60 * 1000, // Cache data for 30 minutes (even after component unmounts)
-      refetchOnWindowFocus: false, // Don't refetch when window regains focus
-      retry: 1, // Only retry failed queries once
-      retryDelay: 3000, // Wait 3 seconds between retries
+      staleTime: 10 * 60 * 1000, // Increase to 10 minutes
+      cacheTime: 60 * 60 * 1000, // Cache for 1 hour even after unmounting
+      refetchOnWindowFocus: false,
+      retry: 1,
+      retryDelay: 3000,
+      refetchOnMount: false, // Don't refetch when component mounts if data exists
+      refetchOnReconnect: false, // Don't refetch on reconnection
     },
   },
 });
+
+// Helper to prefetch query data (use for critical paths)
+export const prefetchQuery = async (queryKey, queryFn) => {
+  return queryClient.prefetchQuery({
+    queryKey,
+    queryFn,
+    staleTime: 10 * 60 * 1000,
+  });
+};
 
 // Helper to invalidate queries by prefix
 export const invalidateQueries = (queryKeyPrefix) => {

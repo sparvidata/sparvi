@@ -1,3 +1,4 @@
+// src/pages/Dashboard/DashboardPage.js
 import React, { useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import {
@@ -18,7 +19,7 @@ import StatisticCard from './components/StatisticsCard';
 import { useTablesData } from '../../hooks/useTablesData';
 import { useMetadataStatus } from '../../hooks/useMetadataStatus';
 import { useValidationsSummary } from '../../hooks/useValidationsData';
-import { useConnectionDashboard } from '../../hooks/useConnectionDashboard';
+import { queryClient } from '../../api/queryClient';
 
 const DashboardPage = () => {
   const { connections, activeConnection } = useConnection();
@@ -34,43 +35,30 @@ const DashboardPage = () => {
     ]);
   }, [updateBreadcrumbs]);
 
-  // Use React Query to fetch tables data
+  // Use React Query with existing hooks
   const tablesQuery = useTablesData(connectionId, {
     enabled: !!connectionId
   });
 
-  // Use React Query to fetch metadata status
+  // Use React Query for metadata status
   const metadataQuery = useMetadataStatus(connectionId, {
-    enabled: !!connectionId
+    enabled: !!connectionId,
+    // Only poll if there are pending tasks
+    refetchInterval: (data) => {
+      return (data?.pending_tasks?.length > 0) ? 5000 : false;
+    },
   });
 
-  // Use React Query to fetch validations summary
+  // Use React Query for validations summary
   const validationsQuery = useValidationsSummary(connectionId, {
     enabled: !!connectionId
   });
 
-  // Use our dashboard hook to get combined data
-  const dashboardQuery = useConnectionDashboard(connectionId, {
-    enabled: !!connectionId
-  });
-
-  // Extract data or provide defaults - handle different response structures
-  // Log data structures for debugging
-  console.log('Tables Query Data:', tablesQuery.data);
-  console.log('Metadata Query Data:', metadataQuery.data);
-  console.log('Validations Query Data:', validationsQuery.data);
-
-  // Extract tables count - could be an array or a nested structure
-  const tablesCount = Array.isArray(tablesQuery.data)
-    ? tablesQuery.data.length
-    : (tablesQuery.data?.tables?.length || 0);
-
-  // Extract changes count
+  // Extract data safely with fallbacks
+  const tablesCount = Array.isArray(tablesQuery.data) ? tablesQuery.data.length : 0;
   const changesCount = metadataQuery.data?.changes_detected || 0;
-
-  // Extract validations count
-  const validationsCount = validationsQuery.data?.total_count ||
-                          validationsQuery.data?.data?.total_count || 0;
+  const validationsCount = validationsQuery.data?.total_count || 0;
+  const failedValidations = validationsQuery.data?.failed_count || 0;
 
   // Handle refresh all data
   const handleRefreshData = async () => {
@@ -78,13 +66,10 @@ const DashboardPage = () => {
 
     showNotification('Refreshing dashboard data...', 'info');
 
-    // Refetch all queries in parallel
-    await Promise.all([
-      tablesQuery.refetch(),
-      metadataQuery.refetch(),
-      validationsQuery.refetch(),
-      dashboardQuery.refetch()
-    ]);
+    // Invalidate all queries related to this connection
+    queryClient.invalidateQueries(['schema-tables', connectionId]);
+    queryClient.invalidateQueries(['metadata-status', connectionId]);
+    queryClient.invalidateQueries(['validations-summary', connectionId]);
 
     showNotification('Dashboard data refreshed', 'success');
   };
@@ -120,10 +105,10 @@ const DashboardPage = () => {
           {activeConnection && (
             <button
               onClick={handleRefreshData}
-              disabled={dashboardQuery.isFetching || tablesQuery.isFetching}
+              disabled={tablesQuery.isFetching || metadataQuery.isFetching || validationsQuery.isFetching}
               className="inline-flex items-center px-3 py-1.5 border border-secondary-300 shadow-sm text-sm font-medium rounded-md text-secondary-700 bg-white hover:bg-secondary-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-secondary-500 disabled:opacity-50"
             >
-              {dashboardQuery.isFetching || tablesQuery.isFetching ? (
+              {tablesQuery.isFetching || metadataQuery.isFetching || validationsQuery.isFetching ? (
                 <>
                   <LoadingSpinner size="sm" className="mr-2" />
                   Refreshing...
@@ -186,7 +171,7 @@ const DashboardPage = () => {
         {/* Issues */}
         <StatisticCard
           title="Issues"
-          value={validationsQuery.data?.data?.failed_count || 0}
+          value={failedValidations}
           icon={ExclamationTriangleIcon}
           href="/validations"
           color="danger"

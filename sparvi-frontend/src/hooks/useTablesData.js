@@ -22,7 +22,7 @@ export const useTablesData = (connectionId, options = {}) => {
     refetchInterval: refetchInterval,
     ...queryOptions,
     select: (data) => {
-      // Handle various response formats from the API
+      // More robust data normalization
       console.log("Tables data received:", data);
 
       // Handle different response structures
@@ -47,10 +47,6 @@ export const useTablesData = (connectionId, options = {}) => {
 
       // Default empty array
       return [];
-    },
-    // Keep the data for 30 minutes
-    cacheTime: 30 * 60 * 1000,
-    // Consider it stale after 5 minutes
-    staleTime: 5 * 60 * 1000,
+    }
   });
 };
