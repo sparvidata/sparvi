@@ -1,23 +1,11 @@
-// src/pages/Dashboard/components/StatisticCard.js
-import React, {useEffect, useState} from 'react';
+// Modified StatisticCard.js
+import React from 'react';
 import { Link } from 'react-router-dom';
 import { ArrowRightIcon } from '@heroicons/react/20/solid';
 import LoadingSpinner from '../../../components/common/LoadingSpinner';
 
 const StatisticCard = ({ title, value, icon: Icon, href, color = 'primary', loading = false }) => {
-    const [hasValue, setHasValue] = useState(false);
-
-  // Set hasValue when value changes
-  useEffect(() => {
-    // Check if value is defined and not null
-    if (value !== undefined && value !== null) {
-      setHasValue(true);
-    }
-  }, [value]);
-
-  // Only consider it loading if both: external loading flag is true AND we don't have a value yet
-  const isLoading = loading && !hasValue;
-
+  console.log(`StatisticCard "${title}" render:`, { value, loading });
   // Define color classes based on the color prop
   const colorClasses = {
     primary: {
@@ -48,13 +36,15 @@ const StatisticCard = ({ title, value, icon: Icon, href, color = 'primary', load
           <dl>
             <dt className="text-sm font-medium text-secondary-500 truncate">{title}</dt>
             <dd>
-              {isLoading ? (
+              {loading ? (
                 <div className="flex items-center h-8">
                   <LoadingSpinner size="sm" className="mr-2" />
                   <span className="text-secondary-400">Loading...</span>
                 </div>
               ) : (
-                <div className="text-lg font-medium text-secondary-900">{value}</div>
+                <div className="text-lg font-medium text-secondary-900">
+                  {value !== undefined && value !== null ? value : '-'}
+                </div>
               )}
             </dd>
           </dl>

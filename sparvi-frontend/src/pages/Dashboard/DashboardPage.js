@@ -73,8 +73,13 @@ const DashboardPage = () => {
         skipThrottle: force // Skip throttling if forcing refresh
       });
 
+      console.log("Tables data received:", response);
+
       if (isMountedRef.current) {
+        console.log("Setting tablesData state to:", response);
+        // Set the entire response object as tablesData
         setTablesData(response);
+        console.log("Tables data set, tables count:", response?.tables?.length || 0);
         setTablesLoading(false);
       }
     } catch (error) {
@@ -135,6 +140,17 @@ const DashboardPage = () => {
       setChangesLoading(false);
     }
   }, [connectionId, loadTablesData, loadChangesData]);
+
+  useEffect(() => {
+    console.log("Tables data changed:", {
+      hasTablesData: !!tablesData,
+      tablesCount: tablesData?.tables?.length || 0
+    });
+  }, [tablesData]);
+
+  // Now calculate display values from state
+  const tablesCount = tablesData?.tables?.length || 0;
+  const changesCount = changesData?.changes?.length || 0;
 
   // Handle manual refresh
   const handleRefreshData = async () => {
@@ -213,42 +229,48 @@ const DashboardPage = () => {
 
       {/* Statistics section */}
       <div className="mt-8 grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-4">
-        {/* Table count - Explicitly handle the loading and value state */}
+        {/* Table count - Add the debug logging here */}
+        {console.log("Tables StatisticCard props:", {
+          value: tablesData?.tables?.length || 0,
+          loading: tablesLoading,
+          hasTablesData: !!tablesData,
+          tablesDataContent: tablesData
+        })}
         <StatisticCard
           title="Tables"
-          value={tablesData?.tables?.length || 0}
+          value={tablesCount}
           icon={TableCellsIcon}
           href="/explorer"
           color="primary"
-          loading={tablesLoading && !tablesData?.tables}
+          loading={tablesLoading}
         />
 
         {/* Validations count */}
         <StatisticCard
-          title="Validations"
-          value={0} // No validations data yet
-          icon={ClipboardDocumentCheckIcon}
-          href="/validations"
-          color="accent"
+            title="Validations"
+            value={0} // No validations data yet
+            icon={ClipboardDocumentCheckIcon}
+            href="/validations"
+            color="accent"
         />
 
         {/* Schema changes */}
         <StatisticCard
-          title="Schema Changes"
-          value={changesData?.changes?.length || 0}
-          icon={ArrowPathIcon}
-          href="/metadata"
-          color="warning"
-          loading={changesLoading && !changesData?.changes}
+            title="Schema Changes"
+            value={changesCount}
+            icon={ArrowPathIcon}
+            href="/metadata"
+            color="warning"
+            loading={changesLoading && !changesData?.changes}
         />
 
         {/* Issues */}
         <StatisticCard
-          title="Issues"
-          value={0}
-          icon={ExclamationTriangleIcon}
-          href="/validations"
-          color="danger"
+            title="Issues"
+            value={0}
+            icon={ExclamationTriangleIcon}
+            href="/validations"
+            color="danger"
         />
       </div>
 
@@ -256,8 +278,8 @@ const DashboardPage = () => {
       <div className="mt-5 grid grid-cols-1 gap-5 lg:grid-cols-2">
         {/* Recent activity */}
         <RecentActivity
-          recentChanges={changesData?.changes || []}
-          recentValidations={[]}
+            recentChanges={changesData?.changes || []}
+            recentValidations={[]}
         />
 
         {/* Overview cards with connectionId prop - now with improved handling */}
