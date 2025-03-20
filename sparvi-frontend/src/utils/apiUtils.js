@@ -105,6 +105,3 @@ export const apiRequest = async (endpoint, options = {}) => {
     throw error;
   }
 };
-
-export { apiRequest };  // Named export
-export default apiRequest;  // Default export
