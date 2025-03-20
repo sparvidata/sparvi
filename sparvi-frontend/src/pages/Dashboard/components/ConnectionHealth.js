@@ -15,22 +15,80 @@ const ConnectionHealth = () => {
     pending_tasks: []
   });
   const [loading, setLoading] = useState(true);
+  const [polling, setPolling] = useState(false);
+  const [activeTasks, setActiveTasks] = useState([]);
   const { showNotification } = useUI();
 
   // Use connectionId instead of the entire connection object to prevent re-renders
   const connectionId = activeConnection?.id;
   console.log("ConnectionHealth rendering with connectionId:", connectionId);
 
-
   // Add a last fetch time tracker
   const lastFetchRef = useRef(0);
   // Add a fetch limit to prevent constant re-fetching
   const FETCH_INTERVAL_MS = 30000; // 30 seconds minimum between fetches
+  // Add a polling interval
+  const POLL_INTERVAL_MS = 5000; // Poll every 5 seconds
 
   // Add isMounted ref to track component mount state
   const isMountedRef = useRef(true);
   // Add a timeout ref to track and clear pending fetches
   const fetchTimeoutRef = useRef(null);
+  // Add a polling timer ref
+  const pollTimerRef = useRef(null);
+
+  // Start polling function
+  const startPolling = useCallback(() => {
+    if (polling) return; // Don't start if already polling
+
+    console.log("Starting status polling");
+    setPolling(true);
+
+    // Define the polling function
+    const pollStatus = async () => {
+      if (!connectionId || !isMountedRef.current) return;
+
+      try {
+        const response = await apiRequest(`connections/${connectionId}/metadata/status`, {
+          skipThrottle: true // Skip throttling for polling requests
+        });
+
+        if (isMountedRef.current) {
+          console.log("Polled metadata status:", response);
+          setStatus(response);
+
+          // Check if we have any non-terminal tasks (pending or running)
+          const pendingTasks = (response?.pending_tasks || []).filter(
+            task => task.status === "pending" || task.status === "running"
+          );
+
+          setActiveTasks(pendingTasks);
+
+          // If no more pending tasks, stop polling
+          if (pendingTasks.length === 0) {
+            console.log("No more pending tasks, stopping poll");
+            setPolling(false);
+            if (pollTimerRef.current) {
+              clearTimeout(pollTimerRef.current);
+              pollTimerRef.current = null;
+            }
+          } else {
+            // Schedule next poll
+            pollTimerRef.current = setTimeout(pollStatus, POLL_INTERVAL_MS);
+          }
+        }
+      } catch (error) {
+        console.error("Error polling metadata status:", error);
+        // If there's an error, stop polling
+        if (isMountedRef.current) {
+          setPolling(false);
+        }
+      }
+    };
+
+    // Start the first poll immediately
+    pollStatus();
+  }, [connectionId, polling]);
 
   // Mount and cleanup effect
   useEffect(() => {
@@ -46,12 +104,16 @@ const ConnectionHealth = () => {
         clearTimeout(fetchTimeoutRef.current);
         fetchTimeoutRef.current = null;
       }
+      // Clean up polling timer
+      if (pollTimerRef.current) {
+        clearTimeout(pollTimerRef.current);
+        pollTimerRef.current = null;
+      }
     };
   }, []);
 
   // Create memoized fetch function to avoid recreation on every render
   const fetchStatus = useCallback(async (force = false) => {
-
     if (!connectionId) {
       setLoading(false);
       return;
@@ -78,11 +140,22 @@ const ConnectionHealth = () => {
       // Make sure response is valid and component is still mounted
       if (isMountedRef.current) {
         setStatus(response);
+
+        // Check if there are pending tasks that we should poll for
+        const pendingTasks = (response?.pending_tasks || []).filter(
+          task => task.status === "pending" || task.status === "running"
+        );
+
+        if (pendingTasks.length > 0 && !polling) {
+          setActiveTasks(pendingTasks);
+          startPolling();
+        }
+
         setLoading(false); // Explicitly set loading to false here
-      } else {
       }
     } catch (error) {
       if (error.throttled) {
+        // Handle throttled errors silently
       } else if (isMountedRef.current) {
         showNotification('Failed to load connection health data', 'error');
       }
@@ -92,8 +165,7 @@ const ConnectionHealth = () => {
         setLoading(false);
       }
     }
-  }, [connectionId, showNotification]);
-
+  }, [connectionId, showNotification, polling, startPolling]);
 
   // Only fetch data when connection changes
   useEffect(() => {
@@ -123,29 +195,35 @@ const ConnectionHealth = () => {
 
       showNotification('Metadata refresh initiated', 'success');
 
-      // Fetch updated status after a short delay
-      setTimeout(async () => {
-        if (!isMountedRef.current) return;
+      // Fetch updated status once immediately after refresh
+      try {
+        const response = await apiRequest(`connections/${connectionId}/metadata/status`, {
+          skipThrottle: true // Skip throttling for post-refresh update
+        });
 
-        try {
-          const response = await apiRequest(`connections/${connectionId}/metadata/status`, {
-            skipThrottle: true // Skip throttling for post-refresh update
-          });
+        if (response && isMountedRef.current) {
+          console.log("Setting metadata status after refresh:", response);
+          setStatus(response);
 
-          if (response && isMountedRef.current) {
-            console.log("Setting metadata status after refresh:", response);
-            setStatus(response);
-          }
-        } catch (error) {
-          if (isMountedRef.current) {
-            console.error('Error fetching updated metadata status:', error);
-          }
-        } finally {
-          if (isMountedRef.current) {
-            setLoading(false);
+          // Start polling if there are pending tasks
+          const pendingTasks = (response?.pending_tasks || []).filter(
+            task => task.status === "pending" || task.status === "running"
+          );
+
+          if (pendingTasks.length > 0) {
+            setActiveTasks(pendingTasks);
+            startPolling();
           }
         }
-      }, 1000);
+      } catch (error) {
+        if (isMountedRef.current) {
+          console.error('Error fetching updated metadata status:', error);
+        }
+      } finally {
+        if (isMountedRef.current) {
+          setLoading(false);
+        }
+      }
     } catch (error) {
       if (isMountedRef.current) {
         console.error('Error refreshing metadata:', error);
@@ -191,7 +269,7 @@ const ConnectionHealth = () => {
       error: 'Error'
     };
 
-      return (
+    return (
       <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${statusColors[currentStatus] || statusColors.unknown}`}>
         {(currentStatus === 'fresh' || currentStatus === 'recent') ? (
           <CheckCircleIcon className="-ml-0.5 mr-1.5 h-3 w-3 text-current" aria-hidden="true" />
@@ -287,11 +365,39 @@ const ConnectionHealth = () => {
             </div>
             <div className="sm:col-span-1">
               <dt className="text-sm font-medium text-secondary-500">Pending Tasks</dt>
-              <dd className="mt-1 text-sm text-secondary-900">
-                {status?.pending_tasks?.length || 0} tasks pending
+              <dd className="mt-1 text-sm text-secondary-900 flex items-center">
+                <span>{status?.pending_tasks?.length || 0} tasks pending</span>
+                {polling && <LoadingSpinner size="xs" className="ml-2" />}
               </dd>
             </div>
           </dl>
+        )}
+
+        {/* Task status section - show when polling or tasks are present */}
+        {(polling || activeTasks.length > 0) && (
+          <div className="mt-6 border-t border-secondary-200 pt-4">
+            <h4 className="text-sm font-medium text-secondary-700 mb-2">Active Tasks</h4>
+            {activeTasks.length > 0 ? (
+              <ul className="divide-y divide-secondary-100">
+                {activeTasks.map((task, index) => (
+                  <li key={task.id || index} className="py-2 flex justify-between">
+                    <div className="flex items-center">
+                      <LoadingSpinner size="xs" className="mr-2" />
+                      <span className="text-sm text-secondary-600">
+                        {task.task_type || 'Unknown task'}
+                        {task.object_name && ` - ${task.object_name}`}
+                      </span>
+                    </div>
+                    <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-primary-100 text-primary-700">
+                      {task.status || 'pending'}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="text-sm text-secondary-500">No active tasks</p>
+            )}
+          </div>
         )}
       </div>
     </div>
