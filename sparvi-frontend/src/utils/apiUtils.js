@@ -44,4 +44,64 @@ export const createApiClient = async () => {
   }
 };
 
-// Rest of the file remains the same...
+/**
+ * Make an authenticated API request
+ * @param {string} endpoint - API endpoint (without leading slash)
+ * @param {Object} options - Request options
+ * @returns {Promise} Promise resolving to response data
+ */
+export const apiRequest = async (endpoint, options = {}) => {
+  const {
+    method = 'GET',
+    data = null,
+    params = null,
+    timeout = 60000, // 60 seconds default timeout
+    skipThrottle = false // Add option to skip throttle
+  } = options;
+
+  // Check throttling unless explicitly skipped
+  if (!skipThrottle) {
+    const now = Date.now();
+    const key = `${method}:${endpoint}`;
+    const lastCall = apiCallTracker[key];
+
+    if (lastCall && now - lastCall < THROTTLE_WINDOW_MS) {
+      console.log(`Throttling request to ${endpoint} - too recent`);
+      return Promise.reject({
+        throttled: true,
+        message: 'Request throttled - too frequent'
+      });
+    }
+
+    // Track this call
+    apiCallTracker[key] = now;
+  }
+
+  try {
+    console.log(`Making ${method} request to ${endpoint}`);
+    const client = await createApiClient();
+
+    // Add these new debug logging lines
+    const session = await getSession();
+    const token = session?.access_token;
+    console.log(`Auth token available for ${endpoint}:`, !!token);
+
+    // Override client timeout if specified
+    if (timeout !== 60000) {
+      client.defaults.timeout = timeout;
+    }
+
+    const response = await client({
+      method,
+      url: endpoint,
+      data,
+      params
+    });
+
+    console.log(`Response from ${endpoint}:`, response.data);
+    return response.data;
+  } catch (error) {
+    console.error(`API request failed for ${endpoint}:`, error);
+    throw error;
+  }
+};
