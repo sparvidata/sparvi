@@ -477,12 +477,14 @@ class ImprovedTaskManager:
             self.stats["tasks_processed"] += 1
             self.stats["tasks_succeeded"] += 1
             logger.info(f"Task {task_id} completed successfully")
+            logger.debug(f"Task status is now: {task.status.value}")
         except Exception as e:
             task.error = str(e)
             task.status = TaskStatus.FAILED
             self.stats["tasks_processed"] += 1
             self.stats["tasks_failed"] += 1
             logger.error(f"Task {task_id} failed: {str(e)}")
+            logger.debug(f"Task status is now: {task.status.value}")
 
     def submit_collection_task(self, connection_id, params, priority="medium"):
         """Submit a full collection task"""
@@ -4566,13 +4568,19 @@ def get_metadata_status(current_user, organization_id, connection_id):
 
         # Get any pending tasks - limit to this connection only
         tasks = metadata_task_manager.get_recent_tasks(5, connection_id)
-        pending_tasks = [
-            task for task in tasks
-            if task.get("task", {}).get("status") == "pending"
-        ]
+
+        # IMPORTANT: Fix the filter to properly detect pending tasks
+        pending_tasks = []
+        for task in tasks:
+            task_status = task.get("status")
+            if task_status in ["pending", "running"]:
+                pending_tasks.append(task)
+            elif task.get("task") and task["task"].get("status") in ["pending", "running"]:
+                pending_tasks.append(task)
 
         # Add to status
         status["pending_tasks"] = pending_tasks
+        status["has_pending_tasks"] = len(pending_tasks) > 0
 
         # Add connection info
         status["connection"] = {
