@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, {useEffect, useRef, useState} from 'react';
 import {
   CheckCircleIcon,
   XCircleIcon,
@@ -30,29 +30,44 @@ const ValidationRuleList = ({
   const [validationToDelete, setValidationToDelete] = useState(null);
   const [validationErrors, setValidationErrors] = useState(null);
   const [runningAll, setRunningAll] = useState(false);
+  const componentIsMounted = useRef(true);
+
+  // Add useEffect for cleanup
+  useEffect(() => {
+    // Set mounted flag
+    componentIsMounted.current = true;
+
+    // Cleanup function
+    return () => {
+      componentIsMounted.current = false;
+    };
+  }, []);
 
   // Run a single validation
   const handleRunValidation = async (validation) => {
     if (!connectionId || !tableName) return;
 
     try {
+      // Set running state once
       setRunningValidation(validation.id);
+
+      // Clear errors once - reducing state updates
       setValidationErrors(null);
 
-      // Build request with only the selected validation
+      // Run the validation
       const response = await validationsAPI.runValidations(
-        connectionId,
+        connectionId,  // Pass connectionId first
         tableName,
         null
       );
 
+      // Process results only if component is still mounted (use a ref for this)
+      if (!componentIsMounted.current) return;
+
       console.log("Single validation response:", response);
 
-      // Clear any previous errors
-      setValidationErrors(null);
-
       // Check if response contains meaningful results
-      if (response && response.results && Array.isArray(response.results)) {
+      if (response?.results && Array.isArray(response.results)) {
         // Find the result that matches our validation name
         const result = response.results.find(r => r.rule_name === validation.rule_name);
 
@@ -67,7 +82,7 @@ const ValidationRuleList = ({
             last_run_at: new Date().toISOString()
           };
 
-          // Update the validations list with this updated validation
+          // Update the validations list with this updated validation - in a single state update
           if (typeof onUpdate === 'function') {
             const updatedValidations = validations.map(v =>
               v.id === validation.id ? updatedValidation : v
@@ -75,21 +90,22 @@ const ValidationRuleList = ({
             onUpdate(updatedValidations);
           }
 
-          // Check if the result has an error
+          // Show appropriate notification
           if (result.error) {
             const errors = [{
               name: validation.rule_name,
               error: result.error,
               is_valid: false
             }];
+
+            // Batch state updates
             setValidationErrors(errors);
             showNotification(`Error in validation "${validation.rule_name}"`, 'error');
           } else {
-            // Success or failure based on is_valid
             if (result.is_valid) {
               showNotification(`Validation "${validation.rule_name}" passed`, 'success');
             } else {
-              const message = `Validation "${validation.rule_name}" failed - Expected: ${result.expected_value}, Actual: ${result.actual_value}`;
+              const message = `Validation "${validation.rule_name}" failed - Expected: ${validation.expected_value}, Actual: ${result.actual_value}`;
               showNotification(message, 'warning');
             }
           }
@@ -100,17 +116,22 @@ const ValidationRuleList = ({
         showNotification(`Unexpected response format from server`, 'error');
       }
 
-      // Refresh the list to show updated results
+      // Refresh the list only once after we're done - avoiding excessive refetches
       if (onRefreshList) {
         onRefreshList();
       }
     } catch (error) {
+      if (!componentIsMounted.current) return;
+
       console.error(`Error running validation ${validation.rule_name}:`, error);
       showNotification(`Failed to run validation: ${error.message}`, 'error');
     } finally {
-      setRunningValidation(null);
+      if (componentIsMounted.current) {
+        setRunningValidation(null);
+      }
     }
   };
+
 
   // Run all validations
   const handleRunAllValidations = async () => {
@@ -121,7 +142,7 @@ const ValidationRuleList = ({
       setValidationErrors(null);
 
       const response = await validationsAPI.runValidations(
-        connectionId,
+        connectionId,  // Pass connectionId first
         tableName,
         null
       );
@@ -210,7 +231,11 @@ const ValidationRuleList = ({
     if (!validationToDelete || !tableName) return;
 
     try {
-      await validationsAPI.deleteRule(tableName, validationToDelete.rule_name);
+      await validationsAPI.deleteRule(
+        tableName,
+        validationToDelete.rule_name,
+        connectionId  // Pass connectionId
+      );
 
       showNotification(`Validation "${validationToDelete.rule_name}" deleted`, 'success');
 

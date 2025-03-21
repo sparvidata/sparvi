@@ -125,11 +125,11 @@ const ValidationRuleEditor = ({
 
       if (rule) {
         // Update existing rule
-        await validationsAPI.updateRule(rule.id, tableName, ruleData);
+        await validationsAPI.updateRule(rule.id, tableName, ruleData, connectionId);
         showNotification('Validation rule updated successfully', 'success');
       } else {
         // Create new rule
-        await validationsAPI.createRule(tableName, ruleData);
+        await validationsAPI.createRule(tableName, ruleData, connectionId);
         showNotification('Validation rule created successfully', 'success');
       }
 

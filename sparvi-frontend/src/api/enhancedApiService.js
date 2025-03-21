@@ -572,7 +572,6 @@ export const profilingAPI = {
 };
 
 // Enhanced Validations API
-// Changes to validationsAPI in enhancedApiService.js
 export const validationsAPI = {
   getRules: (tableName, options = {}) => {
     const { forceFresh = false, requestId = `validations.rules.${tableName}`, connectionId } = options;

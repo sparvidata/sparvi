@@ -48,28 +48,61 @@ class SupabaseValidationManager:
         self.supabase = SupabaseManager()
         logger.info("Supabase Validation Manager initialized")
 
-    def get_rules(self, organization_id: str, table_name: str) -> List[Dict[str, Any]]:
-        """Get all validation rules for a specific table"""
+    def get_rules(self, organization_id: str, table_name: str, connection_id: str = None) -> List[Dict[str, Any]]:
+        """Get all validation rules for a specific table, optionally filtered by connection_id"""
         try:
-            logging.info(f"Getting validation rules for org {organization_id}, table {table_name}")
-            return self.supabase.get_validation_rules(organization_id, table_name)
+            logging.info(
+                f"Getting validation rules for org {organization_id}, table {table_name}, connection {connection_id}")
+
+            # Try to pass connection_id parameter
+            try:
+                return self.supabase.get_validation_rules(organization_id, table_name, connection_id)
+            except TypeError:
+                # If it fails due to unexpected argument, fall back to old method
+                rules = self.supabase.get_validation_rules(organization_id, table_name)
+
+                # Filter manually if connection_id is provided
+                if connection_id and rules:
+                    rules = [rule for rule in rules if rule.get('connection_id') == connection_id]
+
+                return rules
         except Exception as e:
             logging.error(f"Error getting validation rules: {str(e)}")
             return []
 
-    def add_rule(self, organization_id: str, table_name: str, rule: Dict[str, Any]) -> str:
+    def add_rule(self, organization_id: str, table_name: str, connection_id: str, rule: Dict[str, Any]) -> str:
         """
         Add a new validation rule
         Returns the ID of the inserted rule
         """
-        return self.supabase.add_validation_rule(organization_id, table_name, rule)
+        try:
+            # Try with connection_id parameter first
+            try:
+                return self.supabase.add_validation_rule(organization_id, table_name, connection_id, rule)
+            except TypeError:
+                # If that fails, try adding connection_id to the rule data
+                rule_copy = rule.copy()
+                rule_copy['connection_id'] = connection_id
+                return self.supabase.add_validation_rule(organization_id, table_name, rule_copy)
+        except Exception as e:
+            logger.error(f"Error adding validation rule: {str(e)}")
+            return None
 
-    def delete_rule(self, organization_id: str, table_name: str, rule_name: str) -> bool:
+    def delete_rule(self, organization_id: str, table_name: str, rule_name: str, connection_id: str = None) -> bool:
         """
         Delete a validation rule
         Returns True if successful, False if rule not found
         """
-        return self.supabase.delete_validation_rule(organization_id, table_name, rule_name)
+        try:
+            # Try with connection_id parameter
+            try:
+                return self.supabase.delete_validation_rule(organization_id, table_name, rule_name, connection_id)
+            except TypeError:
+                # Fallback to older version without connection_id
+                return self.supabase.delete_validation_rule(organization_id, table_name, rule_name)
+        except Exception as e:
+            logger.error(f"Error deleting validation rule: {str(e)}")
+            return False
 
     def execute_rules(self, organization_id: str, connection_string: str, table_name: str) -> List[Dict[str, Any]]:
         """Execute all validation rules for a table against the specified database"""
@@ -202,9 +235,7 @@ class SupabaseValidationManager:
         return self.supabase.get_validation_history(organization_id, table_name, limit)
 
     def update_rule(self, organization_id: str, rule_id: str, rule: Dict[str, Any]) -> bool:
-        """
-        Update an existing validation rule without deleting and recreating it
-        """
+        """Update an existing validation rule without deleting and recreating it"""
         try:
             # Ensure expected_value is stored as a JSON string
             expected_value = json.dumps(rule.get("expected_value", ""))
@@ -217,17 +248,7 @@ class SupabaseValidationManager:
                 "expected_value": expected_value
             }
 
-            # Create a direct Supabase client
-            import os
-            from supabase import create_client
-
-            # Get credentials from environment
-            supabase_url = os.getenv("SUPABASE_URL")
-            supabase_key = os.getenv("SUPABASE_SERVICE_KEY")
-
-            # Create the client and update data
-            direct_client = create_client(supabase_url, supabase_key)
-            response = direct_client.table("validation_rules") \
+            response = self.supabase.table("validation_rules") \
                 .update(data) \
                 .eq("id", rule_id) \
                 .eq("organization_id", organization_id) \
@@ -239,42 +260,26 @@ class SupabaseValidationManager:
             logger.error(f"Error updating validation rule: {str(e)}")
             return False
 
-    # In backend/core/validations/supabase_validation_manager.py line ~330
     def store_validation_result(self, organization_id: str, rule_id: str, is_valid: bool, actual_value: Any,
-                                profile_history_id: str = None) -> str:
+                                connection_id: str = None, profile_history_id: str = None) -> str:
         """Store a validation result"""
         try:
             # Ensure actual_value is stored as a JSON string
             actual_value_str = json.dumps(actual_value) if actual_value is not None else None
 
-            data = {
-                "organization_id": organization_id,
-                "rule_id": rule_id,
-                "is_valid": is_valid,
-                "actual_value": actual_value_str
-            }
+            # Log what parameters we're using
+            logger.info(
+                f"Storing validation result with connection_id: {connection_id} and profile_history_id: {profile_history_id}")
 
-            # Add profile_history_id if provided
-            if profile_history_id:
-                data["profile_history_id"] = profile_history_id
-                logger.info(f"Including profile_history_id: {profile_history_id} in validation result")
-
-            # Create a direct Supabase client
-            import os
-            from supabase import create_client
-
-            # Get credentials from environment
-            supabase_url = os.getenv("SUPABASE_URL")
-            supabase_key = os.getenv("SUPABASE_SERVICE_KEY")
-
-            # Create the client and insert data
-            direct_client = create_client(supabase_url, supabase_key)
-            logger.info(f"Storing validation result with profile_history_id: {profile_history_id}")
-            response = direct_client.table("validation_results").insert(data).execute()
-
-            if response.data and len(response.data) > 0:
-                return response.data[0]["id"]  # Return the ID of the new result
-            return None
+            # Pass both parameters to the supabase manager's store_validation_result method
+            return self.supabase.store_validation_result(
+                organization_id=organization_id,
+                rule_id=rule_id,
+                is_valid=is_valid,
+                actual_value=actual_value,
+                connection_id=connection_id,  # Pass connection_id
+                profile_history_id=profile_history_id
+            )
 
         except Exception as e:
             logger.error(f"Error storing validation result: {str(e)}")

@@ -1,5 +1,4 @@
-// src/pages/Validations/ValidationPage.js
-import React, { useState, useEffect, useMemo } from 'react';
+import React, {useState, useEffect, useMemo, useRef} from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import {
   ClipboardDocumentCheckIcon,
@@ -41,6 +40,7 @@ const ValidationPage = () => {
   const [selectedValidationForDebug, setSelectedValidationForDebug] = useState(null);
   const [validationErrors, setValidationErrors] = useState(null);
   const [initialLoadComplete, setInitialLoadComplete] = useState(false);
+  const runInitialValidationsComplete = useRef(false);
 
   // Set breadcrumbs
   useEffect(() => {
@@ -67,7 +67,8 @@ const ValidationPage = () => {
   const validationsQuery = useTableValidations(
     selectedTable,
     {
-      enabled: !!selectedTable
+      enabled: !!selectedTable,
+      connectionId: activeConnection?.id  // Pass connectionId to the hook
     }
   );
 
@@ -76,14 +77,47 @@ const ValidationPage = () => {
     if (validationsQuery.data && !initialLoadComplete) {
       setCurrentValidations(validationsQuery.data);
       setInitialLoadComplete(true);
-
-      // If we have validations but no results yet, run validations to get initial results
-      if (validationsQuery.data.length > 0 &&
-          !validationsQuery.data.some(v => v.last_result !== undefined)) {
-        handleRunAll(); // Auto-run validations on first load
-      }
     }
   }, [validationsQuery.data, initialLoadComplete]);
+
+  // Separate effect for running validations - prevents the loop
+  useEffect(() => {
+    // Only run initial validations once when data first loads and we have validations
+    if (validationsQuery.data?.length > 0 &&
+        initialLoadComplete &&
+        !runInitialValidationsComplete.current &&
+        activeConnection?.id) {
+
+      // This ensures we only run this code once
+      runInitialValidationsComplete.current = true;
+
+      // Only auto-run if no validation has results yet
+      if (!validationsQuery.data.some(v => v.last_result !== undefined)) {
+        console.log("Running initial validations");
+
+        // Use a setTimeout to prevent potential render loop issues
+        setTimeout(() => {
+          validationsAPI.runValidations(
+            activeConnection.id,
+            selectedTable,
+            null
+          ).then(response => {
+            // Process response and update state...
+            if (response?.results) {
+              // Update validation results in component state
+              const newValidations = updateValidationsWithResults(
+                currentValidations,
+                response.results
+              );
+              setCurrentValidations(newValidations);
+            }
+          }).catch(error => {
+            console.error("Error running initial validations:", error);
+          });
+        }, 500); // Add a small delay
+      }
+    }
+  }, [validationsQuery.data, initialLoadComplete, activeConnection?.id, selectedTable]);
 
   // Compute filtered validations for display based on filters
   const filteredValidations = useMemo(() => {
@@ -151,7 +185,7 @@ const ValidationPage = () => {
       setValidationErrors(null);
 
       const response = await validationsAPI.runValidations(
-        activeConnection.id,
+        activeConnection.id,  // Pass connectionId first
         selectedTable,
         null
       );
@@ -267,7 +301,7 @@ const ValidationPage = () => {
       setLoading('generating', true);
 
       const response = await validationsAPI.generateDefaultValidations(
-        activeConnection.id,
+        activeConnection.id,  // Pass connectionId first
         selectedTable,
         null
       );
@@ -282,6 +316,34 @@ const ValidationPage = () => {
     } finally {
       setLoading('generating', false);
     }
+  };
+
+  // Helper function to update validations with results
+  const updateValidationsWithResults = (validations, results) => {
+    if (!results || !Array.isArray(results)) return validations;
+
+    // Create a map of results by rule_name
+    const resultsByRuleName = {};
+    results.forEach(result => {
+      if (result.rule_name) {
+        resultsByRuleName[result.rule_name] = result;
+      }
+    });
+
+    // Update validations with results
+    return validations.map(validation => {
+      const result = resultsByRuleName[validation.rule_name];
+      if (result) {
+        return {
+          ...validation,
+          last_result: result.error ? null : result.is_valid,
+          actual_value: result.actual_value,
+          error: result.error,
+          last_run_at: new Date().toISOString()
+        };
+      }
+      return validation;
+    });
   };
 
   // If no connections, show empty state
