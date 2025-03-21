@@ -572,12 +572,18 @@ export const profilingAPI = {
 };
 
 // Enhanced Validations API
+// Changes to validationsAPI in enhancedApiService.js
 export const validationsAPI = {
   getRules: (tableName, options = {}) => {
-    const { forceFresh = false, requestId = `validations.rules.${tableName}` } = options;
+    const { forceFresh = false, requestId = `validations.rules.${tableName}`, connectionId } = options;
+
+    if (!connectionId) {
+      console.warn('connectionId is required for getRules');
+    }
+
     return enhancedRequest({
       url: '/validations',
-      params: { table: tableName },
+      params: { table: tableName, connection_id: connectionId },
       cacheKey: `validations.rules.${tableName}`,
       cacheTTL: 10 * 60 * 1000, // 10 minutes
       requestId,
@@ -585,11 +591,15 @@ export const validationsAPI = {
     });
   },
 
-  createRule: (tableName, rule) => {
+  createRule: (tableName, rule, connectionId) => {
+    if (!connectionId) {
+      console.warn('connectionId is required for createRule');
+    }
+
     return enhancedRequest({
       method: 'POST',
       url: '/validations',
-      params: { table: tableName },
+      params: { table: tableName, connection_id: connectionId },
       data: rule,
       requestId: `validations.create.${tableName}`
     }).then(response => {
@@ -599,11 +609,15 @@ export const validationsAPI = {
     });
   },
 
-  updateRule: (ruleId, tableName, rule) => {
+  updateRule: (ruleId, tableName, rule, connectionId) => {
+    if (!connectionId) {
+      console.warn('connectionId is required for updateRule');
+    }
+
     return enhancedRequest({
       method: 'PUT',
       url: `/validations/${ruleId}`,
-      params: { table: tableName },
+      params: { table: tableName, connection_id: connectionId },
       data: rule,
       requestId: `validations.update.${tableName}.${ruleId}`
     }).then(response => {
@@ -613,11 +627,15 @@ export const validationsAPI = {
     });
   },
 
-  deleteRule: (tableName, ruleName) => {
+  deleteRule: (tableName, ruleName, connectionId) => {
+    if (!connectionId) {
+      console.warn('connectionId is required for deleteRule');
+    }
+
     return enhancedRequest({
       method: 'DELETE',
       url: '/validations',
-      params: { table: tableName, rule_name: ruleName },
+      params: { table: tableName, rule_name: ruleName, connection_id: connectionId },
       requestId: `validations.delete.${tableName}.${ruleName}`
     }).then(response => {
       // Invalidate rules cache for this table
@@ -628,6 +646,11 @@ export const validationsAPI = {
 
   getSummary: (connectionId, options = {}) => {
     const { forceFresh = false, requestId = `validations.summary.${connectionId}` } = options;
+
+    if (!connectionId) {
+      console.warn('connectionId is required for getSummary');
+    }
+
     return enhancedRequest({
       url: '/validations/summary',
       params: { connection_id: connectionId },
@@ -639,6 +662,11 @@ export const validationsAPI = {
   },
 
   runValidations: (connectionId, tableName, connectionString, options = {}) => {
+    if (!connectionId) {
+      console.error('connectionId is required for runValidations');
+      return Promise.reject(new Error('connectionId is required'));
+    }
+
     const {
       timeout = 600000, // Default to 10 minutes, but allow override
       requestId = `validations.run.${connectionId}.${tableName}`
@@ -689,18 +717,59 @@ export const validationsAPI = {
     });
   },
 
-  getValidationHistory: (profileId, options = {}) => {
-    const { forceFresh = false, requestId = `validations.history.${profileId}` } = options;
+  // Updated to use new path pattern from docs
+  getValidationHistory: (tableName, connectionId, options = {}) => {
+    const {
+      limit = 10,
+      forceFresh = false,
+      requestId = `validations.history.${tableName}`
+    } = options;
+
+    if (!connectionId) {
+      console.warn('connectionId is required for getValidationHistory');
+    }
+
     return enhancedRequest({
-      url: `/validation-history/${profileId}`,
-      cacheKey: `validations.history.${profileId}`,
+      url: '/validation-history',
+      params: {
+        table: tableName,
+        connection_id: connectionId,
+        limit
+      },
+      cacheKey: `validations.history.${tableName}.${connectionId}`,
       cacheTTL: 30 * 60 * 1000, // 30 minutes (historical data changes rarely)
       requestId,
       forceFresh
     });
   },
 
+  // New method for getting latest validation results
+  getLatestValidationResults: (connectionId, tableName, options = {}) => {
+    const {
+      forceFresh = false,
+      requestId = `validations.latest.${connectionId}.${tableName}`
+    } = options;
+
+    if (!connectionId || !tableName) {
+      console.warn('connectionId and tableName are required for getLatestValidationResults');
+      return Promise.reject(new Error('Missing required parameters'));
+    }
+
+    return enhancedRequest({
+      url: `/validations/latest/${connectionId}/${tableName}`,
+      cacheKey: `validations.latest.${connectionId}.${tableName}`,
+      cacheTTL: 5 * 60 * 1000, // 5 minutes
+      requestId,
+      forceFresh
+    });
+  },
+
   generateDefaultValidations: (connectionId, tableName, connectionString) => {
+    if (!connectionId) {
+      console.error('connectionId is required for generateDefaultValidations');
+      return Promise.reject(new Error('connectionId is required'));
+    }
+
     return enhancedRequest({
       method: 'POST',
       url: '/generate-default-validations',

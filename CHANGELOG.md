@@ -2,6 +2,20 @@
 
 All notable changes to Sparvi will be documented in this file.
 
+## [0.5.3] - 2025-03-21
+### Added
+- Added new `getLatestValidationResults()` method to validationsAPI for accessing latest validation results
+
+### Changed
+- Updated validation-related API calls to consistently include connectionId parameter
+- Improved response handling for validation API responses to handle different formats
+- Enhanced error handling for validation operations
+
+### Fixed
+- Fixed inconsistencies between API documentation and implementation
+- Added proper error handling when connectionId is missing in validation endpoints
+- Fixed validation history endpoint to match API documentation
+
 ## [0.5.2] - 2025-03-18
 ### Added
 - None
