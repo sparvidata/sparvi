@@ -56,34 +56,85 @@ export const useTableValidations = (tableName, options = {}) => {
     ...queryOptions
   } = options;
 
+  const queryClient = useQueryClient();
+
   return useQuery({
     queryKey: ['table-validations', tableName],
     // Use provided queryFn or default to API call
-    queryFn: queryFn || (() => {
+    queryFn: queryFn || (async () => {
       console.log(`Fetching validations for table: ${tableName}`);
-      return validationsAPI.getRules(tableName);
-    }),
-    enabled: enabled,
-    refetchInterval: refetchInterval,
-    ...queryOptions,
-    select: (data) => {
-      console.log("Validations data received:", data);
 
-      // Handle different response formats
-      if (data?.data?.rules) {
-        return data.data.rules;
-      } else if (data?.rules) {
-        return data.rules;
-      } else if (Array.isArray(data)) {
-        // If the data is already an array, return it directly
-        return data;
-      } else if (data?.results && Array.isArray(data.results)) {
-        // Some endpoints might return a results array instead
-        return data.results;
+      // Get the validation rules
+      const response = await validationsAPI.getRules(tableName);
+
+      // Process the response to handle different formats
+      let rules = [];
+
+      if (response?.data?.rules) {
+        rules = response.data.rules;
+      } else if (response?.rules) {
+        rules = response.rules;
+      } else if (Array.isArray(response)) {
+        rules = response;
+      } else if (response?.results && Array.isArray(response.results)) {
+        rules = response.results;
       }
 
-      // Default to empty array if no recognizable format
-      return [];
+      // Check if we have any validation history to load
+      if (rules.length > 0) {
+        try {
+          // For the initial load, try to run validations to get latest results
+          // This will make sure we have current results on page load
+
+          const connectionId = queryClient.getQueryData(['current-connection-id']);
+
+          if (connectionId) {
+            console.log("Loading latest validation results on initial mount");
+            const resultsResponse = await validationsAPI.runValidations(
+              connectionId,
+              tableName,
+              null
+            );
+
+            if (resultsResponse?.results && Array.isArray(resultsResponse.results)) {
+              // Create a map of results by rule_name
+              const resultsByRuleName = {};
+              resultsResponse.results.forEach(result => {
+                if (result.rule_name) {
+                  resultsByRuleName[result.rule_name] = result;
+                }
+              });
+
+              // Merge the results with the rules
+              rules = rules.map(rule => {
+                const result = resultsByRuleName[rule.rule_name];
+                if (result) {
+                  return {
+                    ...rule,
+                    last_result: result.error ? null : result.is_valid,
+                    actual_value: result.actual_value,
+                    error: result.error,
+                    last_run_at: new Date().toISOString()
+                  };
+                }
+                return rule;
+              });
+            }
+          }
+        } catch (error) {
+          console.log("Error loading initial validation results:", error);
+          // Continue with the rules we have
+        }
+      }
+
+      return rules;
+    }),
+    enabled,
+    refetchInterval,
+    ...queryOptions,
+    select: (data) => {
+      console.log("Validations data processed:", data);
+      return data;
     },
 
     // Useful settings for validation data

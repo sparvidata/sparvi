@@ -1,5 +1,5 @@
 // src/pages/Validations/ValidationPage.js
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import {
   ClipboardDocumentCheckIcon,
@@ -31,7 +31,7 @@ const ValidationPage = () => {
   const { connections, activeConnection, setCurrentConnection } = useConnection();
   const { updateBreadcrumbs, showNotification, setLoading } = useUI();
 
-  const [filteredValidations, setFilteredValidations] = useState([]);
+  const [currentValidations, setCurrentValidations] = useState([]);
   const [selectedTable, setSelectedTable] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
@@ -40,7 +40,7 @@ const ValidationPage = () => {
   const [showDebugHelper, setShowDebugHelper] = useState(false);
   const [selectedValidationForDebug, setSelectedValidationForDebug] = useState(null);
   const [validationErrors, setValidationErrors] = useState(null);
-  const [currentValidations, setCurrentValidations] = useState([]);
+  const [initialLoadComplete, setInitialLoadComplete] = useState(false);
 
   // Set breadcrumbs
   useEffect(() => {
@@ -48,11 +48,6 @@ const ValidationPage = () => {
       { name: 'Validations', href: '/validations' }
     ]);
   }, [updateBreadcrumbs]);
-
-  useEffect(() => {
-    setCurrentValidations(filteredValidations);
-  }, [filteredValidations]);
-
 
   // Handle table selection from URL params
   useEffect(() => {
@@ -68,7 +63,7 @@ const ValidationPage = () => {
     { enabled: !!activeConnection }
   );
 
-  // Use React Query to fetch validation rules using your existing hook
+  // Use React Query to fetch validation rules using existing hook
   const validationsQuery = useTableValidations(
     selectedTable,
     {
@@ -76,22 +71,25 @@ const ValidationPage = () => {
     }
   );
 
-  // When validations data loads, update local state
+  // When validations data loads initially, update local state
   useEffect(() => {
-    if (validationsQuery.data) {
-      // Apply filters when the data changes
-      applyFilters(validationsQuery.data);
-    }
-  }, [validationsQuery.data, searchQuery, statusFilter]);
+    if (validationsQuery.data && !initialLoadComplete) {
+      setCurrentValidations(validationsQuery.data);
+      setInitialLoadComplete(true);
 
-  // Modify the applyFilters function to update currentValidations too
-  const applyFilters = (validations) => {
-    if (!validations || !validations.length) {
-      setFilteredValidations([]);
-      return;
+      // If we have validations but no results yet, run validations to get initial results
+      if (validationsQuery.data.length > 0 &&
+          !validationsQuery.data.some(v => v.last_result !== undefined)) {
+        handleRunAll(); // Auto-run validations on first load
+      }
     }
+  }, [validationsQuery.data, initialLoadComplete]);
 
-    let filtered = [...validations];
+  // Compute filtered validations for display based on filters
+  const filteredValidations = useMemo(() => {
+    if (!currentValidations || !currentValidations.length) return [];
+
+    let filtered = [...currentValidations];
 
     // Apply search query
     if (searchQuery) {
@@ -112,15 +110,14 @@ const ValidationPage = () => {
       });
     }
 
-    setFilteredValidations(filtered);
-    // Also update currentValidations to match
-    setCurrentValidations(validations);
-  };
+    return filtered;
+  }, [currentValidations, searchQuery, statusFilter]);
 
   // Handle table selection
   const handleTableSelect = (tableName) => {
     setSelectedTable(tableName);
     setSearchParams({ table: tableName });
+    setInitialLoadComplete(false); // Reset for the new table
   };
 
   // Handle search
@@ -183,8 +180,8 @@ const ValidationPage = () => {
         });
 
         // Update each validation with its current result
-        if (filteredValidations.length > 0) {
-          const updatedValidations = filteredValidations.map(validation => {
+        if (currentValidations.length > 0) {
+          const updatedValidations = currentValidations.map(validation => {
             const result = resultsByRuleName[validation.rule_name];
             if (result) {
               return {
@@ -198,7 +195,7 @@ const ValidationPage = () => {
             return validation;
           });
 
-          // Update the current validations immediately
+          // Update the current validations with new results
           setCurrentValidations(updatedValidations);
         }
 
@@ -428,7 +425,7 @@ const ValidationPage = () => {
                   <div className="flex-1">
                     <SearchInput
                       onSearch={handleSearch}
-                      placeholder="Search tables..."
+                      placeholder="Search validations..."
                       initialValue={searchQuery}
                     />
                   </div>
@@ -489,21 +486,12 @@ const ValidationPage = () => {
 
               {/* Validation list */}
               <ValidationRuleList
-                validations={currentValidations}
+                validations={filteredValidations}
                 isLoading={validationsQuery.isLoading}
                 onEdit={handleEditValidation}
                 onDebug={handleDebugValidation}
                 onRefreshList={() => validationsQuery.refetch()}
-                onUpdate={updatedValidations => {
-                  // Update local state immediately
-                  setCurrentValidations(updatedValidations);
-
-                  // Also update the filtered validations if they exist
-                  if (updatedValidations.length > 0) {
-                    // Apply filters to the updated validations
-                    applyFilters(updatedValidations);
-                  }
-                }}
+                onUpdate={setCurrentValidations}
                 tableName={selectedTable}
                 connectionId={activeConnection?.id}
               />

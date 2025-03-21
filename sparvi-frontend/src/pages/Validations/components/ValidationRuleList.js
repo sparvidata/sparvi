@@ -18,10 +18,10 @@ const ValidationRuleList = ({
   isLoading,
   onEdit,
   onRefreshList,
-  onUpdate,
   tableName,
   connectionId,
-  onDebug
+  onDebug,
+  onUpdate // Added this prop
 }) => {
   const { showNotification } = useUI();
 
@@ -68,7 +68,7 @@ const ValidationRuleList = ({
           };
 
           // Update the validations list with this updated validation
-          if (onUpdate) {
+          if (typeof onUpdate === 'function') {
             const updatedValidations = validations.map(v =>
               v.id === validation.id ? updatedValidation : v
             );
@@ -180,7 +180,7 @@ const ValidationRuleList = ({
         }
 
         // Update the validations locally while we wait for the refresh
-        if (onUpdate) {
+        if (typeof onUpdate === 'function') {
           onUpdate(updatedValidations);
         }
       } else {
@@ -367,18 +367,22 @@ const ValidationRuleList = ({
               {validation.query} {validation.operator} {validation.expected_value}
             </div>
 
-            {validation.last_run_at && (
-              <div className="mt-2 text-xs text-secondary-500">
-                Last run: {new Date(validation.last_run_at).toLocaleString()}
-                {validation.actual_value !== undefined && (
-                  <span className="ml-2">
-                    Actual value: <span className={`font-medium ${
-                      validation.last_result === true ? 'text-accent-600' : 'text-danger-600'
-                    }`}>{validation.actual_value}</span>
-                  </span>
-                )}
-              </div>
-            )}
+            <div className="mt-2 text-xs text-secondary-500">
+              {validation.last_run_at ? (
+                <>
+                  Last run: <span className="font-medium">{new Date(validation.last_run_at).toLocaleString()}</span>
+                  {validation.actual_value !== undefined && (
+                    <span className="ml-2">
+                      Actual value: <span className={`font-medium ${
+                        validation.last_result === true ? 'text-accent-600' : 'text-danger-600'
+                      }`}>{validation.actual_value}</span>
+                    </span>
+                  )}
+                </>
+              ) : (
+                <span className="italic">Not run yet</span>
+              )}
+            </div>
 
             {/* Display error message if available */}
             {validation.error && (
