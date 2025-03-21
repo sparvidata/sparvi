@@ -1638,14 +1638,14 @@ def get_validations(current_user, organization_id):
 @app.route("/api/validations/summary", methods=["GET"])
 @token_required
 def get_validations_summary(current_user, organization_id):
-    """Get a summary of all validation rules across tables for a connection"""
+    """Get a summary of all validation rules and their latest results across tables for a connection"""
     connection_id = request.args.get("connection_id")
     if not connection_id:
         return jsonify({"error": "Connection ID is required"}), 400
 
     try:
         logger.info(
-            f"Getting validation rules summary for organization: {organization_id}, connection: {connection_id}")
+            f"Getting validation summary for organization: {organization_id}, connection: {connection_id}")
 
         # Check access to connection
         connection = connection_access_check(connection_id, organization_id)
@@ -1672,37 +1672,128 @@ def get_validations_summary(current_user, organization_id):
             # Get table list (limited for immediate response)
             tables = collector.collect_table_list()
 
+        # Initialize counters and data structures
         total_validations = 0
         validations_by_table = {}
-        passing_validations = 0
-        failing_validations = 0
+        passing_count = 0
+        failing_count = 0
+        unknown_count = 0
+        tables_with_validations = 0
+        tables_with_failures = 0
+        recently_run_tables = 0
+        supabase_mgr = SupabaseManager()
 
-        # Get validation rules for each table
+        # Get validation data for each table
         for table in tables:
-            table_rules = validation_manager.get_rules(organization_id, table)
-            rule_count = len(table_rules)
+            # Get rules for this table+connection
+            rules = validation_manager.get_rules(organization_id, table, connection_id)
+            if not rules:
+                continue
 
-            if rule_count > 0:
-                validations_by_table[table] = rule_count
-                total_validations += rule_count
+            tables_with_validations += 1
+            rule_count = len(rules)
+            total_validations += rule_count
 
-                # Count passing/failing validations if last_result exists
-                for rule in table_rules:
-                    if rule.get("last_result") is True:
-                        passing_validations += 1
-                    elif rule.get("last_result") is False:
-                        failing_validations += 1
+            # Track results for this table
+            table_results = {
+                "total": rule_count,
+                "passing": 0,
+                "failing": 0,
+                "unknown": 0,
+                "last_run": None,
+                "health_score": 0
+            }
 
-        return jsonify({
+            # Create a lookup map for rules
+            rule_map = {rule["id"]: rule for rule in rules}
+            has_failures = False
+            most_recent_run = None
+
+            # Check the latest results for each rule
+            for rule in rules:
+                rule_id = rule["id"]
+                try:
+                    # Query the most recent result for this rule
+                    result_response = supabase_mgr.supabase.table("validation_results") \
+                        .select("*") \
+                        .eq("rule_id", rule_id) \
+                        .eq("organization_id", organization_id) \
+                        .eq("connection_id", connection_id) \
+                        .order("run_at", desc=True) \
+                        .limit(1) \
+                        .execute()
+
+                    if result_response.data and len(result_response.data) > 0:
+                        result = result_response.data[0]
+
+                        # Track the most recent run time
+                        if most_recent_run is None or result["run_at"] > most_recent_run:
+                            most_recent_run = result["run_at"]
+
+                        # Count based on result status
+                        if result["is_valid"]:
+                            table_results["passing"] += 1
+                            passing_count += 1
+                        else:
+                            table_results["failing"] += 1
+                            failing_count += 1
+                            has_failures = True
+                    else:
+                        # No result found
+                        table_results["unknown"] += 1
+                        unknown_count += 1
+
+                except Exception as e:
+                    logger.error(f"Error getting result for rule {rule_id}: {str(e)}")
+                    # Count as unknown
+                    table_results["unknown"] += 1
+                    unknown_count += 1
+
+            # Calculate health score for this table (% of passing validations out of known results)
+            total_known = table_results["passing"] + table_results["failing"]
+            if total_known > 0:
+                table_results["health_score"] = (table_results["passing"] / total_known) * 100
+
+            # Set the last run time
+            if most_recent_run:
+                table_results["last_run"] = most_recent_run
+                recently_run_tables += 1
+
+            # Track tables with failures
+            if has_failures:
+                tables_with_failures += 1
+
+            # Add this table's results to the aggregate data
+            validations_by_table[table] = table_results
+
+        # Calculate overall health score
+        overall_health_score = 0
+        if (passing_count + failing_count) > 0:
+            overall_health_score = (passing_count / (passing_count + failing_count)) * 100
+
+        # Check how recently validations were run
+        freshness_status = "stale"
+        if recently_run_tables > 0:
+            # Determine if validations are recent (within the last 24 hours)
+            freshness_status = "recent"
+
+        # Build comprehensive summary
+        summary = {
             "total_count": total_validations,
-            "tables_with_validations": len(validations_by_table),
+            "tables_with_validations": tables_with_validations,
+            "tables_with_failures": tables_with_failures,
             "validations_by_table": validations_by_table,
-            "passing_count": passing_validations,
-            "failing_count": failing_validations,
-            "unknown_count": total_validations - (passing_validations + failing_validations)
-        })
+            "passing_count": passing_count,
+            "failing_count": failing_count,
+            "unknown_count": unknown_count,
+            "overall_health_score": overall_health_score,
+            "freshness_status": freshness_status,
+            "connection_name": connection.get("name", "Unknown")
+        }
+
+        return jsonify(summary)
     except Exception as e:
-        logger.error(f"Error getting validation rules summary: {str(e)}")
+        logger.error(f"Error getting validation summary: {str(e)}")
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
@@ -1928,12 +2019,13 @@ def get_latest_validation_results(current_user, organization_id, connection_id, 
             rule_id = rule["id"]
             try:
                 # Query the most recent result for this rule
+                supabase_mgr = SupabaseManager()
                 result_response = supabase_mgr.supabase.table("validation_results") \
                     .select("*") \
                     .eq("rule_id", rule_id) \
                     .eq("organization_id", organization_id) \
                     .eq("connection_id", connection_id) \
-                    .order("run_at", {"ascending": False}) \
+                    .order("run_at", desc=True) \
                     .limit(1) \
                     .execute()
 
@@ -2276,6 +2368,7 @@ def update_validation(current_user, organization_id, rule_id):
         logger.info(f"Updating validation rule {rule_id} for table {table_name} in connection {connection_id}")
 
         # First check if this rule belongs to the connection
+        supabase_mgr = SupabaseManager()
         rule_check = supabase_mgr.supabase.table("validation_rules") \
             .select("connection_id") \
             .eq("id", rule_id) \
