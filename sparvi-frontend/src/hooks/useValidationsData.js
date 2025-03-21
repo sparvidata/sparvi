@@ -68,14 +68,28 @@ export const useTableValidations = (tableName, options = {}) => {
     ...queryOptions,
     select: (data) => {
       console.log("Validations data received:", data);
-      // Return the rules array or empty array if not found
+
+      // Handle different response formats
       if (data?.data?.rules) {
         return data.data.rules;
       } else if (data?.rules) {
         return data.rules;
+      } else if (Array.isArray(data)) {
+        // If the data is already an array, return it directly
+        return data;
+      } else if (data?.results && Array.isArray(data.results)) {
+        // Some endpoints might return a results array instead
+        return data.results;
       }
+
+      // Default to empty array if no recognizable format
       return [];
-    }
+    },
+
+    // Useful settings for validation data
+    refetchOnWindowFocus: false,
+    cacheTime: 10 * 60 * 1000, // 10 minutes
+    staleTime: 5 * 60 * 1000,  // 5 minutes
   });
 };
 

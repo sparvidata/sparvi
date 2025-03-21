@@ -655,9 +655,37 @@ export const validationsAPI = {
       timeout, // Add custom timeout
       requestId
     }).then(response => {
+      // Log the response to debug
+      console.log("Raw validation response:", response);
+
       // Invalidate validation rules cache to reflect new execution results
       clearCacheItem(`validations.rules.${tableName}`);
-      return response;
+
+      // Process and normalize the response if needed
+      if (response && typeof response === 'object') {
+        // If response is already in the expected format with 'results' array, return it
+        if (response.results && Array.isArray(response.results)) {
+          return response;
+        }
+        // If response is an array directly, wrap it in an object with results property
+        else if (Array.isArray(response)) {
+          return { results: response };
+        }
+        // If we have data nested under a data property
+        else if (response.data) {
+          if (Array.isArray(response.data)) {
+            return { results: response.data };
+          } else if (response.data.results) {
+            return { results: response.data.results };
+          }
+        }
+      }
+
+      // Return the original response as a fallback
+      return { results: Array.isArray(response) ? response : [response] };
+    }).catch(error => {
+      console.error("Error in runValidations:", error);
+      throw error;
     });
   },
 

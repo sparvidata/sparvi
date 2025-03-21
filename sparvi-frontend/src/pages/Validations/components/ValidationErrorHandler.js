@@ -17,13 +17,20 @@ const ValidationErrorHandler = ({
 }) => {
   // Parse the error pattern to determine the error type
   const getErrorType = (errorMessage) => {
-    const pluginError = errorMessage.includes("_instantiate_plugins");
-    const connectionError = errorMessage.includes("connection") || errorMessage.includes("Authentication");
-    const schemaError =
-      errorMessage.includes("no such column") ||
-      errorMessage.includes("table not found") ||
-      errorMessage.includes("does not exist");
+    if (!errorMessage || errorMessage === "Unknown error") {
+      return "unknown";
+    }
 
+    const pluginError = errorMessage.includes("_instantiate_plugins");
+    const connectionError = errorMessage.includes("connection") ||
+                           errorMessage.includes("Authentication") ||
+                           errorMessage.includes("Failed to connect");
+    const schemaError = errorMessage.includes("no such column") ||
+                        errorMessage.includes("table not found") ||
+                        errorMessage.includes("does not exist");
+    const regexError = errorMessage.includes("Invalid regular expression");
+
+    if (regexError) return "regex";
     if (pluginError) return "plugin";
     if (connectionError) return "connection";
     if (schemaError) return "schema";
@@ -44,6 +51,8 @@ const ValidationErrorHandler = ({
   // Get a friendly message based on the error type
   const getErrorMessage = () => {
     switch (primaryErrorType) {
+      case "regex":
+        return "There appears to be a syntax issue with a regular expression in one or more validation rules.";
       case "plugin":
         return "The validation system is having trouble with plugins. This is likely a backend configuration issue.";
       case "connection":
@@ -58,6 +67,31 @@ const ValidationErrorHandler = ({
   // Get action suggestions based on the error type
   const getActionSuggestions = () => {
     switch (primaryErrorType) {
+      case "regex":
+        return (
+          <div className="mt-2 space-y-2">
+            <div className="flex items-start">
+              <div className="flex-shrink-0">
+                <InformationCircleIcon className="h-5 w-5 text-primary-500" />
+              </div>
+              <div className="ml-3 text-sm">
+                <p className="text-secondary-700">
+                  There's an issue with a regular expression in your validation rule. Check the syntax of any REGEXP_LIKE functions.
+                </p>
+              </div>
+            </div>
+            <div className="flex items-start">
+              <div className="flex-shrink-0">
+                <ArrowPathIcon className="h-5 w-5 text-primary-500" />
+              </div>
+              <div className="ml-3 text-sm">
+                <p className="text-secondary-700">
+                  Common issues include: escaping special characters, proper grouping with parentheses, and syntax differences between databases.
+                </p>
+              </div>
+            </div>
+          </div>
+        );
       case "plugin":
         return (
           <div className="mt-2 space-y-2">
@@ -186,7 +220,12 @@ const ValidationErrorHandler = ({
               <ul className="text-xs text-secondary-700 font-mono space-y-1">
                 {errors.map((error, index) => (
                   <li key={index} className="border-b border-danger-100 pb-1">
-                    <span className="font-semibold">{error.name}:</span> {error.error}
+                    <span className="font-semibold">{error.name}:</span> {
+                      // Replace "Unknown error" with a more helpful message
+                      error.error === "Unknown error"
+                        ? "Failed to execute validation rule. Check the rule syntax."
+                        : error.error
+                    }
                   </li>
                 ))}
               </ul>

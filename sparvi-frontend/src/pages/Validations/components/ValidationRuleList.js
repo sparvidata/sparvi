@@ -45,40 +45,45 @@ const ValidationRuleList = ({
         null
       );
 
+      console.log("Single validation response:", response);
+
       // Clear any previous errors
       setValidationErrors(null);
 
-      // Find the result for this specific validation
-      const result = response.results?.find((_, index) =>
-        validations[index]?.id === validation.id
-      );
+      // Check if response contains meaningful results
+      if (response && response.results && Array.isArray(response.results)) {
+        // Find the result that matches our validation name
+        const result = response.results.find(r => r.rule_name === validation.rule_name);
 
-      // Check if there are validation errors
-      if (response.results && response.results.some(r => r.error)) {
-        // Extract the error information
-        const errors = response.results.map((result, index) => ({
-          name: validations[index]?.rule_name || `Rule ${index + 1}`,
-          error: result.error || "Unknown error",
-          is_valid: result.is_valid
-        })).filter(r => r.error);
-
-        setValidationErrors(errors);
-        showNotification(`Encountered errors running validation "${validation.rule_name}"`, 'error');
-      } else {
-        // Show notification based on result
+        // Process the result
         if (result) {
-          if (result.is_valid) {
-            showNotification(`Validation "${validation.rule_name}" passed`, 'success');
+          // Check if the result has an error
+          if (result.error) {
+            const errors = [{
+              name: validation.rule_name,
+              error: result.error,
+              is_valid: false
+            }];
+            setValidationErrors(errors);
+            showNotification(`Error in validation "${validation.rule_name}"`, 'error');
           } else {
-            showNotification(`Validation "${validation.rule_name}" failed`, 'error');
+            // Success or failure based on is_valid
+            if (result.is_valid) {
+              showNotification(`Validation "${validation.rule_name}" passed`, 'success');
+            } else {
+              const message = `Validation "${validation.rule_name}" failed - Expected: ${result.expected_value}, Actual: ${result.actual_value}`;
+              showNotification(message, 'warning');
+            }
+
+            // Update the validation in the local state with result data
+            if (onRefreshList) onRefreshList();
           }
         } else {
           showNotification(`No result found for validation "${validation.rule_name}"`, 'warning');
         }
+      } else {
+        showNotification(`Unexpected response format from server`, 'error');
       }
-
-      // Refresh the list to show updated results
-      if (onRefreshList) onRefreshList();
     } catch (error) {
       console.error(`Error running validation ${validation.rule_name}:`, error);
       showNotification(`Failed to run validation: ${error.message}`, 'error');
@@ -101,30 +106,43 @@ const ValidationRuleList = ({
         null
       );
 
-      // Check if there are validation errors
-      if (response.results && response.results.some(r => r.error)) {
-        // Extract the error information
-        const errors = response.results.map((result, index) => ({
-          name: validations[index]?.rule_name || `Rule ${index + 1}`,
-          error: result.error || "Unknown error",
-          is_valid: result.is_valid
-        })).filter(r => r.error);
+      console.log("Validation results response:", response);
 
-        setValidationErrors(errors);
-        showNotification(`Encountered errors running validations`, 'error');
+      // Check if response contains meaningful results
+      if (response && response.results && Array.isArray(response.results)) {
+        // Extract validation results and any errors
+        const errors = [];
+
+        response.results.forEach(result => {
+          if (result.error) {
+            errors.push({
+              name: result.rule_name || "Unknown validation",
+              error: result.error,
+              is_valid: false
+            });
+          }
+        });
+
+        // Handle errors if any exist
+        if (errors.length > 0) {
+          setValidationErrors(errors);
+          showNotification(`Encountered ${errors.length} errors running validations`, 'error');
+        } else {
+          // Count successes and failures
+          const passedCount = response.results.filter(r => r.is_valid === true).length;
+          const failedCount = response.results.filter(r => r.is_valid === false).length;
+
+          showNotification(
+            `Ran ${response.results.length} validations: ${passedCount} passed, ${failedCount} failed`,
+            failedCount > 0 ? 'warning' : 'success'
+          );
+        }
+
+        // Refresh the list to show updated results
+        if (onRefreshList) onRefreshList();
       } else {
-        // Count successes and failures
-        const passedCount = response.results?.filter(r => r.is_valid).length || 0;
-        const failedCount = response.results?.filter(r => !r.is_valid).length || 0;
-
-        showNotification(
-          `Ran ${response.results?.length || 0} validations: ${passedCount} passed, ${failedCount} failed`,
-          failedCount > 0 ? 'warning' : 'success'
-        );
+        showNotification(`Unexpected response format from server`, 'error');
       }
-
-      // Refresh the list to show updated results
-      if (onRefreshList) onRefreshList();
     } catch (error) {
       console.error(`Error running all validations:`, error);
       showNotification(`Failed to run validations: ${error.message}`, 'error');
@@ -306,9 +324,18 @@ const ValidationRuleList = ({
                 Last run: {new Date(validation.last_run_at).toLocaleString()}
                 {validation.actual_value !== undefined && (
                   <span className="ml-2">
-                    Actual value: <span className="font-medium">{validation.actual_value}</span>
+                    Actual value: <span className={`font-medium ${
+                      validation.last_result === true ? 'text-accent-600' : 'text-danger-600'
+                    }`}>{validation.actual_value}</span>
                   </span>
                 )}
+              </div>
+            )}
+
+            {/* Display error message if available */}
+            {validation.error && (
+              <div className="mt-2 text-xs text-danger-600 bg-danger-50 p-2 rounded-md">
+                <span className="font-medium">Error:</span> {validation.error}
               </div>
             )}
           </li>
