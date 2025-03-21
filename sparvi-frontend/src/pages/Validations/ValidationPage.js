@@ -20,6 +20,7 @@ import ValidationRuleEditor from './components/ValidationRuleEditor';
 import ValidationRuleList from './components/ValidationRuleList';
 import ValidationErrorHandler from './components/ValidationErrorHandler';
 import ValidationDebugHelper from './components/ValidationDebugHelper';
+import ValidationHistorySummary from './components/ValidationHistorySummary';
 import SearchInput from '../../components/common/SearchInput';
 import { useTablesData } from '../../hooks/useTablesData';
 import { useTableValidations } from '../../hooks/useValidationsData';
@@ -28,7 +29,7 @@ import { queryClient } from '../../api/queryClient';
 const ValidationPage = () => {
   const [searchParams, setSearchParams] = useSearchParams();
   const { connections, activeConnection, setCurrentConnection } = useConnection();
-  const { updateBreadcrumbs, showNotification, setLoading } = useUI();
+  const { updateBreadcrumbs, showNotification, setLoading, loadingStates } = useUI();
 
   const [currentValidations, setCurrentValidations] = useState([]);
   const [selectedTable, setSelectedTable] = useState('');
@@ -71,6 +72,15 @@ const ValidationPage = () => {
       connectionId: activeConnection?.id  // Pass connectionId to the hook
     }
   );
+
+  // Get last run timestamp for all validations
+  const getLastRunTimestamp = (validations) => {
+    const timestamps = validations
+      .filter(v => v.last_run_at)
+      .map(v => new Date(v.last_run_at).getTime());
+
+    return timestamps.length > 0 ? new Date(Math.max(...timestamps)) : null;
+  };
 
   // When validations data loads initially, update local state
   useEffect(() => {
@@ -451,15 +461,6 @@ const ValidationPage = () => {
 
                   <button
                     type="button"
-                    onClick={handleRunAll}
-                    className="inline-flex items-center px-3 py-1.5 border border-secondary-300 shadow-sm text-sm font-medium rounded-md text-secondary-700 bg-white hover:bg-secondary-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-secondary-500"
-                  >
-                    <ArrowPathIcon className="-ml-1 mr-2 h-4 w-4" aria-hidden="true" />
-                    Run All
-                  </button>
-
-                  <button
-                    type="button"
                     onClick={handleNewValidation}
                     className="inline-flex items-center px-3 py-1.5 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-primary-600 hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500"
                   >
@@ -480,6 +481,16 @@ const ValidationPage = () => {
                   />
                 </div>
               )}
+
+              {/* Validation History Summary */}
+              <ValidationHistorySummary
+                validations={currentValidations}
+                lastRunTimestamp={getLastRunTimestamp(currentValidations)}
+                onRunAll={handleRunAll}
+                isRunning={loadingStates?.validations}
+                connectionId={activeConnection?.id}
+                tableName={selectedTable}
+              />
 
               {/* Search and filters */}
               <div className="px-4 py-3 border-b border-secondary-200 bg-secondary-50 sm:px-6">
@@ -546,7 +557,7 @@ const ValidationPage = () => {
                 </div>
               </div>
 
-              {/* Validation list */}
+              {/* Validation rule list */}
               <ValidationRuleList
                 validations={filteredValidations}
                 isLoading={validationsQuery.isLoading}
@@ -556,6 +567,7 @@ const ValidationPage = () => {
                 onUpdate={setCurrentValidations}
                 tableName={selectedTable}
                 connectionId={activeConnection?.id}
+                showResults={false} // New prop to hide results
               />
             </div>
           )}
