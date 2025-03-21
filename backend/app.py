@@ -908,6 +908,9 @@ def run_validation_rules_internal(user_id, organization_id, data):
     table_name = data["table"]
     profile_history_id = data.get("profile_history_id")
 
+    if not connection_id:
+        return {"error": "Connection ID is required"}
+
     try:
         force_gc()
 
@@ -944,7 +947,7 @@ def run_validation_rules_internal(user_id, organization_id, data):
             return {"error": "No database connection string available"}
 
         # Get all rules
-        rules = validation_manager.get_rules(organization_id, table_name)
+        rules = validation_manager.get_rules(organization_id, table_name, connection_id)
 
         if not rules:
             return {"results": []}
@@ -1007,6 +1010,7 @@ def run_validation_rules_internal(user_id, organization_id, data):
                             rules[i]["id"],
                             result["is_valid"],
                             actual_value,
+                            connection_id,  # Pass connection_id
                             profile_history_id
                         )
                 except Exception as e:
@@ -1613,12 +1617,15 @@ def login():
 def get_validations(current_user, organization_id):
     """Get all validation rules for a table"""
     table_name = request.args.get("table")
+    connection_id = request.args.get("connection_id")
+
     if not table_name:
         return jsonify({"error": "Table name is required"}), 400
 
     try:
-        logger.info(f"Getting validation rules for organization: {organization_id}, table: {table_name}")
-        rules = validation_manager.get_rules(organization_id, table_name)
+        logger.info(
+            f"Getting validation rules for organization: {organization_id}, table: {table_name}, connection: {connection_id}")
+        rules = validation_manager.get_rules(organization_id, table_name, connection_id)
         logger.info(f"Retrieved {len(rules)} validation rules")
         logger.debug(f"Rules content: {rules}")
         return jsonify({"rules": rules})
@@ -1705,8 +1712,12 @@ def get_validations_summary(current_user, organization_id):
 def add_validation_rule(current_user, organization_id):
     """Add a new validation rule for a table"""
     table_name = request.args.get("table")
+    connection_id = request.args.get("connection_id")
+
     if not table_name:
         return jsonify({"error": "Table name is required"}), 400
+    if not connection_id:
+        return jsonify({"error": "Connection ID is required"}), 400
 
     rule_data = request.get_json()
     if not rule_data:
@@ -1718,8 +1729,9 @@ def add_validation_rule(current_user, organization_id):
             return jsonify({"error": f"Missing required field: {field}"}), 400
 
     try:
-        logger.info(f"Adding validation rule for organization: {organization_id}, table: {table_name}")
-        rule_id = validation_manager.add_rule(organization_id, table_name, rule_data)
+        logger.info(
+            f"Adding validation rule for organization: {organization_id}, table: {table_name}, connection: {connection_id}")
+        rule_id = validation_manager.add_rule(organization_id, table_name, connection_id, rule_data)
 
         if rule_id:
             return jsonify({"success": True, "id": rule_id})
@@ -1737,6 +1749,7 @@ def delete_validation_rule(current_user, organization_id):
     """Delete a validation rule"""
     table_name = request.args.get("table")
     rule_name = request.args.get("rule_name")
+    connection_id = request.args.get("connection_id")
 
     if not table_name:
         return jsonify({"error": "Table name is required"}), 400
@@ -1744,8 +1757,8 @@ def delete_validation_rule(current_user, organization_id):
         return jsonify({"error": "Rule name is required"}), 400
 
     try:
-        logger.info(f"Deleting validation rule {rule_name} for organization: {organization_id}, table: {table_name}")
-        success = validation_manager.delete_rule(organization_id, table_name, rule_name)
+        logger.info(f"Deleting validation rule {rule_name} for organization: {organization_id}, table: {table_name}, connection: {connection_id}")
+        success = validation_manager.delete_rule(organization_id, table_name, rule_name, connection_id)
 
         if success:
             return jsonify({"success": True})
@@ -1775,10 +1788,13 @@ def run_validation_rules(current_user, organization_id):
     table_name = data["table"]
     profile_history_id = data.get("profile_history_id")
 
+    if not connection_id:
+        return jsonify({"error": "Connection ID is required"}), 400
+
     logger.info(f"Running validations with profile_history_id: {profile_history_id}")
 
     try:
-        logger.info(f"Running validations for org: {organization_id}, table: {table_name}")
+        logger.info(f"Running validations for org: {organization_id}, table: {table_name}, connection: {connection_id}")
 
         log_memory_usage()
 
@@ -1831,16 +1847,20 @@ def generate_default_validations(current_user, organization_id):
     if not data or "table" not in data:
         return jsonify({"error": "Table name is required"}), 400
 
+    if not data.get("connection_id"):
+        return jsonify({"error": "Connection ID is required"}), 400
+
     # Extract values and provide fallbacks
     connection_string = data.get("connection_string")
     if not connection_string:
         connection_string = os.getenv("DEFAULT_CONNECTION_STRING")
 
     table_name = data["table"]
+    connection_id = data.get("connection_id")
 
     try:
         # Get existing rules
-        existing_rules = validation_manager.get_rules(organization_id, table_name)
+        existing_rules = validation_manager.get_rules(organization_id, table_name, connection_id)
         existing_rule_names = {rule['rule_name'] for rule in existing_rules}
 
         # Generate potential new validations using sparvi-core
@@ -1856,7 +1876,7 @@ def generate_default_validations(current_user, organization_id):
                     count_skipped += 1
                     continue
 
-                validation_manager.add_rule(organization_id, table_name, validation)
+                validation_manager.add_rule(organization_id, table_name, connection_id, validation)
                 count_added += 1
             except Exception as e:
                 logger.error(f"Failed to add validation rule {validation['name']}: {str(e)}")
@@ -1880,6 +1900,84 @@ def generate_default_validations(current_user, organization_id):
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
+
+@app.route("/api/validations/latest/<connection_id>/<table_name>", methods=["GET"])
+@token_required
+def get_latest_validation_results(current_user, organization_id, connection_id, table_name):
+    """Get the latest validation results for all rules for a specific table"""
+    try:
+        logger.info(f"Fetching latest validation results for table {table_name} in connection {connection_id}")
+
+        # First check if user has access to connection
+        connection = connection_access_check(connection_id, organization_id)
+        if not connection:
+            return jsonify({"error": "Connection not found or access denied"}), 404
+
+        # Get rules for this table+connection
+        rules = validation_manager.get_rules(organization_id, table_name, connection_id)
+
+        if not rules:
+            return jsonify({"results": [], "message": "No validation rules found for this table"}), 200
+
+        # Create a rule lookup map
+        rule_map = {rule["id"]: rule for rule in rules}
+
+        # Get latest results for each rule
+        results = []
+        for rule in rules:
+            rule_id = rule["id"]
+            try:
+                # Query the most recent result for this rule
+                result_response = supabase_mgr.supabase.table("validation_results") \
+                    .select("*") \
+                    .eq("rule_id", rule_id) \
+                    .eq("organization_id", organization_id) \
+                    .eq("connection_id", connection_id) \
+                    .order("run_at", {"ascending": False}) \
+                    .limit(1) \
+                    .execute()
+
+                if result_response.data and len(result_response.data) > 0:
+                    result = result_response.data[0]
+
+                    # Parse values from JSON strings
+                    try:
+                        actual_value = json.loads(result["actual_value"]) if result["actual_value"] else None
+                    except (json.JSONDecodeError, TypeError):
+                        actual_value = result["actual_value"]
+
+                    try:
+                        expected_value = json.loads(rule.get("expected_value", "null"))
+                    except (json.JSONDecodeError, TypeError):
+                        expected_value = rule.get("expected_value")
+
+                    # Add the formatted result
+                    results.append({
+                        "id": result["id"],
+                        "rule_id": rule_id,
+                        "rule_name": rule.get("rule_name", "Unknown"),
+                        "description": rule.get("description", ""),
+                        "is_valid": result["is_valid"],
+                        "actual_value": actual_value,
+                        "expected_value": expected_value,
+                        "operator": rule.get("operator", "equals"),
+                        "run_at": result["run_at"]
+                    })
+            except Exception as e:
+                logger.error(f"Error getting result for rule {rule_id}: {str(e)}")
+                # Continue with other rules even if one fails
+
+        return jsonify({
+            "results": results,
+            "table_name": table_name,
+            "connection_id": connection_id,
+            "count": len(results)
+        })
+
+    except Exception as e:
+        logger.error(f"Error getting latest validation results: {str(e)}")
+        logger.error(traceback.format_exc())
+        return jsonify({"error": str(e)}), 500
 
 @app.route("/api/tables", methods=["GET"])
 @token_required
@@ -2152,13 +2250,18 @@ def get_profile(current_user, organization_id):
         logger.info(f"About to return response for profile of table {table_name}")
         return jsonify(result)
 
+
 @app.route("/api/validations/<rule_id>", methods=["PUT"])
 @token_required
 def update_validation(current_user, organization_id, rule_id):
     """Update an existing validation rule"""
     table_name = request.args.get("table")
+    connection_id = request.args.get("connection_id")
+
     if not table_name:
         return jsonify({"error": "Table name is required"}), 400
+    if not connection_id:
+        return jsonify({"error": "Connection ID is required"}), 400
 
     rule_data = request.get_json()
     if not rule_data:
@@ -2170,7 +2273,20 @@ def update_validation(current_user, organization_id, rule_id):
             return jsonify({"error": f"Missing required field: {field}"}), 400
 
     try:
-        logger.info(f"Updating validation rule {rule_id} for table {table_name}")
+        logger.info(f"Updating validation rule {rule_id} for table {table_name} in connection {connection_id}")
+
+        # First check if this rule belongs to the connection
+        rule_check = supabase_mgr.supabase.table("validation_rules") \
+            .select("connection_id") \
+            .eq("id", rule_id) \
+            .eq("organization_id", organization_id) \
+            .single() \
+            .execute()
+
+        if not rule_check.data or rule_check.data.get("connection_id") != connection_id:
+            return jsonify({"error": "Rule not found or belongs to a different connection"}), 404
+
+        # Now update the rule
         success = validation_manager.update_rule(organization_id, rule_id, rule_data)
 
         if success:
@@ -2981,44 +3097,29 @@ def get_profile_history(current_user, organization_id):
         return jsonify({"error": str(e)}), 500
 
 
-@app.route("/api/validation-history/<profile_id>", methods=["GET"])
+@app.route("/api/validation-history", methods=["GET"])
 @token_required
-def get_validation_history_by_profile(current_user, organization_id, profile_id):
-    """Get validation results for a specific profile run"""
+def get_validation_history(current_user, organization_id):
+    """Get history of validation results for a table"""
+    table_name = request.args.get("table")
+    connection_id = request.args.get("connection_id")
+    limit = request.args.get("limit", 10, type=int)
+
+    if not table_name:
+        return jsonify({"error": "Table name is required"}), 400
+    if not connection_id:
+        return jsonify({"error": "Connection ID is required"}), 400
+
     try:
-        logger.info(f"Fetching validation history for profile ID: {profile_id}")
+        logger.info(
+            f"Getting validation history for organization: {organization_id}, table: {table_name}, connection: {connection_id}")
 
-        # Get direct Supabase client credentials
-        import os
-        from supabase import create_client
+        history = validation_manager.get_validation_history(organization_id, table_name, connection_id, limit)
 
-        # Get credentials from environment
-        supabase_url = os.getenv("SUPABASE_URL")
-        supabase_key = os.getenv("SUPABASE_SERVICE_KEY")
-
-        if not supabase_url or not supabase_key:
-            logger.error("Missing Supabase configuration")
-            return jsonify({"error": "Server configuration error"}), 500
-
-        # Create direct client
-        direct_client = create_client(supabase_url, supabase_key)
-
-        # Query validation results linked to this profile
-        response = direct_client.table("validation_results") \
-            .select("*, validation_rules(*)") \
-            .eq("organization_id", organization_id) \
-            .eq("profile_history_id", profile_id) \
-            .execute()
-
-        if not response.data:
-            logger.info(f"No validation results found for profile ID: {profile_id}")
-            return jsonify({"results": []})
-
-        logger.info(f"Found {len(response.data)} validation results for profile ID: {profile_id}")
-        return jsonify({"results": response.data})
+        return jsonify({"history": history})
     except Exception as e:
         logger.error(f"Error getting validation history: {str(e)}")
-        logger.error(traceback.format_exc())
+        traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
 
