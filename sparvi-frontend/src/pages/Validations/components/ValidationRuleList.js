@@ -18,6 +18,7 @@ const ValidationRuleList = ({
   isLoading,
   onEdit,
   onRefreshList,
+  onUpdate,
   tableName,
   connectionId,
   onDebug

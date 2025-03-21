@@ -53,14 +53,6 @@ const ValidationPage = () => {
     setCurrentValidations(filteredValidations);
   }, [filteredValidations]);
 
-  // Add this useEffect
-  useEffect(() => {
-    if (validationsQuery.data) {
-      setCurrentValidations(validationsQuery.data);
-      // Apply filters when the data changes
-      applyFilters(validationsQuery.data);
-    }
-  }, [validationsQuery.data]);
 
   // Handle table selection from URL params
   useEffect(() => {
