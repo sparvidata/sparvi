@@ -11,6 +11,7 @@ import LoadingSpinner from '../../../components/common/LoadingSpinner';
 
 /**
  * Component to display the latest validation history summary
+ * with mutually exclusive categories for statistics
  */
 const ValidationHistorySummary = ({
   validations = [],
@@ -22,15 +23,29 @@ const ValidationHistorySummary = ({
 }) => {
   const [isExpanded, setIsExpanded] = useState(false);
 
-  // Calculate summary statistics
+  // Calculate summary statistics with mutually exclusive categories
   const totalValidations = validations.length;
-  const passedValidations = validations.filter(v => v.last_result === true).length;
-  const failedValidations = validations.filter(v => v.last_result === false).length;
-  const notRunValidations = validations.filter(v => v.last_result === undefined || v.last_result === null).length;
 
-  // Determine if there are any errors
-  const hasErrors = validations.some(v => v.error);
-  const errorCount = validations.filter(v => v.error).length;
+  // First, count validations with errors
+  const errorsValidations = validations.filter(v => v.error).length;
+
+  // Then count passed, failed, and not run (excluding those with errors)
+  const passedValidations = validations.filter(v => v.last_result === true && !v.error).length;
+  const failedValidations = validations.filter(v => v.last_result === false && !v.error).length;
+  const notRunValidations = validations.filter(v =>
+    (v.last_result === undefined || v.last_result === null) && !v.error
+  ).length;
+
+  // Sanity check - these should now add up to the total
+  const calculatedTotal = passedValidations + failedValidations + notRunValidations + errorsValidations;
+  if (calculatedTotal !== totalValidations) {
+    console.warn(
+      `Validation count mismatch: total=${totalValidations}, ` +
+      `calculated=${calculatedTotal} (passed=${passedValidations}, ` +
+      `failed=${failedValidations}, not run=${notRunValidations}, ` +
+      `errors=${errorsValidations})`
+    );
+  }
 
   // Format timestamp
   const formatTimestamp = (timestamp) => {
@@ -56,7 +71,7 @@ const ValidationHistorySummary = ({
   const getHealthStatusColor = () => {
     if (totalValidations === 0) return 'secondary';
     if (notRunValidations === totalValidations) return 'secondary';
-    if (hasErrors) return 'warning';
+    if (errorsValidations > 0) return 'warning';
     if (failedValidations > 0) return 'danger';
     return 'accent';
   };
@@ -64,8 +79,8 @@ const ValidationHistorySummary = ({
   // Get health status message
   const getHealthStatusMessage = () => {
     if (totalValidations === 0) return 'No validations defined';
-    if (notRunValidations === totalValidations) return 'Validations not run yet';
-    if (hasErrors) return `${errorCount} validation ${errorCount === 1 ? 'error' : 'errors'} detected`;
+    if (notRunValidations + errorsValidations === totalValidations) return 'Validations not run yet';
+    if (errorsValidations > 0) return `${errorsValidations} validation ${errorsValidations === 1 ? 'error' : 'errors'} detected`;
     if (failedValidations > 0) return `${failedValidations} of ${totalValidations} validations failing`;
     return 'All validations passing';
   };
@@ -107,9 +122,9 @@ const ValidationHistorySummary = ({
               <span className="font-medium text-secondary-700">{notRunValidations}</span> not run
             </div>
 
-            {hasErrors && (
+            {errorsValidations > 0 && (
               <div className="mr-6 mb-2">
-                <span className="font-medium text-warning-600">{errorCount}</span> with errors
+                <span className="font-medium text-warning-600">{errorsValidations}</span> with errors
               </div>
             )}
 
@@ -118,76 +133,6 @@ const ValidationHistorySummary = ({
               <span>Last run: {formatTimestamp(lastRunTimestamp)}</span>
             </div>
           </div>
-
-          {/* Show expanded results */}
-          {isExpanded && validations.length > 0 && (
-            <div className="mt-4 space-y-2 pt-3 border-t border-secondary-200">
-              <h4 className="text-sm font-medium text-secondary-900">Latest Results</h4>
-              <div className="max-h-64 overflow-y-auto">
-                <table className="min-w-full divide-y divide-secondary-200">
-                  <thead className="bg-secondary-50">
-                    <tr>
-                      <th scope="col" className="px-3 py-2 text-left text-xs font-medium text-secondary-500 uppercase tracking-wider">
-                        Rule
-                      </th>
-                      <th scope="col" className="px-3 py-2 text-left text-xs font-medium text-secondary-500 uppercase tracking-wider">
-                        Status
-                      </th>
-                      <th scope="col" className="px-3 py-2 text-left text-xs font-medium text-secondary-500 uppercase tracking-wider">
-                        Value
-                      </th>
-                      <th scope="col" className="px-3 py-2 text-left text-xs font-medium text-secondary-500 uppercase tracking-wider">
-                        Time
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody className="bg-white divide-y divide-secondary-200">
-                    {validations.map((validation, index) => (
-                      <tr key={validation.id || index} className={index % 2 === 0 ? 'bg-white' : 'bg-secondary-50'}>
-                        <td className="px-3 py-2 whitespace-nowrap text-sm font-medium text-secondary-900">
-                          {validation.rule_name}
-                        </td>
-                        <td className="px-3 py-2 whitespace-nowrap text-sm">
-                          {validation.error ? (
-                            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-warning-100 text-warning-800">
-                              <ExclamationTriangleIcon className="-ml-0.5 mr-1 h-3 w-3" />
-                              Error
-                            </span>
-                          ) : validation.last_result === true ? (
-                            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-accent-100 text-accent-800">
-                              <CheckCircleIcon className="-ml-0.5 mr-1 h-3 w-3" />
-                              Passed
-                            </span>
-                          ) : validation.last_result === false ? (
-                            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-danger-100 text-danger-800">
-                              <XCircleIcon className="-ml-0.5 mr-1 h-3 w-3" />
-                              Failed
-                            </span>
-                          ) : (
-                            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-secondary-100 text-secondary-800">
-                              Not run
-                            </span>
-                          )}
-                        </td>
-                        <td className="px-3 py-2 whitespace-nowrap text-sm text-secondary-500">
-                          {validation.actual_value !== undefined && validation.actual_value !== null ?
-                              <span className={validation.last_result === true ? 'text-accent-600' : 'text-danger-600'}>
-                              {validation.actual_value}
-                            </span>
-                           : '—'}
-                        </td>
-                        <td className="px-3 py-2 whitespace-nowrap text-xs text-secondary-500">
-                          {validation.last_run_at ?
-                            formatTimestamp(validation.last_run_at) :
-                            '—'}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
         </div>
 
         {/* Action Buttons */}
@@ -220,6 +165,76 @@ const ValidationHistorySummary = ({
           </button>
         </div>
       </div>
+
+      {/* Results table moved outside the flex container for full width */}
+      {isExpanded && validations.length > 0 && (
+        <div className="mt-4 space-y-2 pt-3 border-t border-secondary-200 w-full">
+          <h4 className="text-sm font-medium text-secondary-900 mb-2">Latest Results</h4>
+          <div className="max-h-64 overflow-y-auto w-full">
+            <table className="w-full table-fixed divide-y divide-secondary-200">
+              <thead className="bg-secondary-50">
+                <tr>
+                  <th scope="col" className="px-3 py-2 text-left text-xs font-medium text-secondary-500 uppercase tracking-wider w-1/3">
+                    Rule
+                  </th>
+                  <th scope="col" className="px-3 py-2 text-left text-xs font-medium text-secondary-500 uppercase tracking-wider w-1/6">
+                    Status
+                  </th>
+                  <th scope="col" className="px-3 py-2 text-left text-xs font-medium text-secondary-500 uppercase tracking-wider w-1/4">
+                    Value
+                  </th>
+                  <th scope="col" className="px-3 py-2 text-left text-xs font-medium text-secondary-500 uppercase tracking-wider w-1/4">
+                    Time
+                  </th>
+                </tr>
+              </thead>
+              <tbody className="bg-white divide-y divide-secondary-200">
+                {validations.map((validation, index) => (
+                  <tr key={validation.id || index} className={index % 2 === 0 ? 'bg-white' : 'bg-secondary-50'}>
+                    <td className="px-3 py-2 whitespace-nowrap text-sm font-medium text-secondary-900 truncate">
+                      {validation.rule_name}
+                    </td>
+                    <td className="px-3 py-2 whitespace-nowrap text-sm">
+                      {validation.error ? (
+                        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-warning-100 text-warning-800">
+                          <ExclamationTriangleIcon className="-ml-0.5 mr-1 h-3 w-3" />
+                          Error
+                        </span>
+                      ) : validation.last_result === true ? (
+                        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-accent-100 text-accent-800">
+                          <CheckCircleIcon className="-ml-0.5 mr-1 h-3 w-3" />
+                          Passed
+                        </span>
+                      ) : validation.last_result === false ? (
+                        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-danger-100 text-danger-800">
+                          <XCircleIcon className="-ml-0.5 mr-1 h-3 w-3" />
+                          Failed
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-secondary-100 text-secondary-800">
+                          Not run
+                        </span>
+                      )}
+                    </td>
+                    <td className="px-3 py-2 whitespace-nowrap text-sm text-secondary-500">
+                      {validation.actual_value !== undefined && validation.actual_value !== null ?
+                          <span className={validation.last_result === true ? 'text-accent-600' : 'text-danger-600'}>
+                          {validation.actual_value}
+                        </span>
+                       : '—'}
+                    </td>
+                    <td className="px-3 py-2 whitespace-nowrap text-xs text-secondary-500">
+                      {validation.last_run_at ?
+                        formatTimestamp(validation.last_run_at) :
+                        '—'}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
