@@ -57,6 +57,23 @@ const ValidationRuleList = ({
 
         // Process the result
         if (result) {
+          // Update this validation with its result
+          const updatedValidation = {
+            ...validation,
+            last_result: result.error ? null : result.is_valid,
+            actual_value: result.actual_value,
+            error: result.error,
+            last_run_at: new Date().toISOString()
+          };
+
+          // Update the validations list with this updated validation
+          if (onUpdate) {
+            const updatedValidations = validations.map(v =>
+              v.id === validation.id ? updatedValidation : v
+            );
+            onUpdate(updatedValidations);
+          }
+
           // Check if the result has an error
           if (result.error) {
             const errors = [{
@@ -74,15 +91,17 @@ const ValidationRuleList = ({
               const message = `Validation "${validation.rule_name}" failed - Expected: ${result.expected_value}, Actual: ${result.actual_value}`;
               showNotification(message, 'warning');
             }
-
-            // Update the validation in the local state with result data
-            if (onRefreshList) onRefreshList();
           }
         } else {
           showNotification(`No result found for validation "${validation.rule_name}"`, 'warning');
         }
       } else {
         showNotification(`Unexpected response format from server`, 'error');
+      }
+
+      // Refresh the list to show updated results
+      if (onRefreshList) {
+        onRefreshList();
       }
     } catch (error) {
       console.error(`Error running validation ${validation.rule_name}:`, error);
@@ -113,7 +132,13 @@ const ValidationRuleList = ({
         // Extract validation results and any errors
         const errors = [];
 
+        // Create a map of results by rule_name for easier access
+        const resultsByRuleName = {};
         response.results.forEach(result => {
+          if (result.rule_name) {
+            resultsByRuleName[result.rule_name] = result;
+          }
+
           if (result.error) {
             errors.push({
               name: result.rule_name || "Unknown validation",
@@ -121,6 +146,21 @@ const ValidationRuleList = ({
               is_valid: false
             });
           }
+        });
+
+        // Update each validation with its current result
+        const updatedValidations = validations.map(validation => {
+          const result = resultsByRuleName[validation.rule_name];
+          if (result) {
+            return {
+              ...validation,
+              last_result: result.error ? null : result.is_valid,
+              actual_value: result.actual_value,
+              error: result.error,
+              last_run_at: new Date().toISOString()
+            };
+          }
+          return validation;
         });
 
         // Handle errors if any exist
@@ -138,10 +178,17 @@ const ValidationRuleList = ({
           );
         }
 
-        // Refresh the list to show updated results
-        if (onRefreshList) onRefreshList();
+        // Update the validations locally while we wait for the refresh
+        if (onUpdate) {
+          onUpdate(updatedValidations);
+        }
       } else {
         showNotification(`Unexpected response format from server`, 'error');
+      }
+
+      // Refresh the list to show updated results
+      if (onRefreshList) {
+        onRefreshList();
       }
     } catch (error) {
       console.error(`Error running all validations:`, error);

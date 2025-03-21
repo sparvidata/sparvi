@@ -40,6 +40,7 @@ const ValidationPage = () => {
   const [showDebugHelper, setShowDebugHelper] = useState(false);
   const [selectedValidationForDebug, setSelectedValidationForDebug] = useState(null);
   const [validationErrors, setValidationErrors] = useState(null);
+  const [currentValidations, setCurrentValidations] = useState([]);
 
   // Set breadcrumbs
   useEffect(() => {
@@ -47,6 +48,19 @@ const ValidationPage = () => {
       { name: 'Validations', href: '/validations' }
     ]);
   }, [updateBreadcrumbs]);
+
+  useEffect(() => {
+    setCurrentValidations(filteredValidations);
+  }, [filteredValidations]);
+
+  // Add this useEffect
+  useEffect(() => {
+    if (validationsQuery.data) {
+      setCurrentValidations(validationsQuery.data);
+      // Apply filters when the data changes
+      applyFilters(validationsQuery.data);
+    }
+  }, [validationsQuery.data]);
 
   // Handle table selection from URL params
   useEffect(() => {
@@ -78,7 +92,7 @@ const ValidationPage = () => {
     }
   }, [validationsQuery.data, searchQuery, statusFilter]);
 
-  // Apply filters to validation rules
+  // Modify the applyFilters function to update currentValidations too
   const applyFilters = (validations) => {
     if (!validations || !validations.length) {
       setFilteredValidations([]);
@@ -107,6 +121,8 @@ const ValidationPage = () => {
     }
 
     setFilteredValidations(filtered);
+    // Also update currentValidations to match
+    setCurrentValidations(validations);
   };
 
   // Handle table selection
@@ -137,7 +153,7 @@ const ValidationPage = () => {
     setSelectedValidationForDebug(null);
   };
 
-  // Handle run all validations
+  // Handle run all validations with status updating
   const handleRunAll = async () => {
     if (!activeConnection || !selectedTable) return;
 
@@ -151,33 +167,74 @@ const ValidationPage = () => {
         null
       );
 
-      // Check if there are validation errors
-      if (response.results && response.results.some(r => r.error)) {
-        // Extract the error information
-        const errors = response.results.map((result, index) => ({
-          name: filteredValidations[index]?.rule_name || `Rule ${index + 1}`,
-          error: result.error || "Unknown error",
-          is_valid: result.is_valid
-        })).filter(r => r.error);
+      console.log("Full validation response:", response);
 
-        setValidationErrors(errors);
-        showNotification('Some validations encountered errors. See details below.', 'warning');
+      // Check if we have a valid response with results
+      if (response && response.results && Array.isArray(response.results)) {
+        // Process each validation result
+        const errors = [];
+
+        // Create a map of results by rule_name for easier access
+        const resultsByRuleName = {};
+        response.results.forEach(result => {
+          if (result.rule_name) {
+            resultsByRuleName[result.rule_name] = result;
+          }
+
+          if (result.error) {
+            errors.push({
+              name: result.rule_name || "Unknown validation",
+              error: result.error,
+              is_valid: false
+            });
+          }
+        });
+
+        // Update each validation with its current result
+        if (filteredValidations.length > 0) {
+          const updatedValidations = filteredValidations.map(validation => {
+            const result = resultsByRuleName[validation.rule_name];
+            if (result) {
+              return {
+                ...validation,
+                last_result: result.error ? null : result.is_valid,
+                actual_value: result.actual_value,
+                error: result.error,
+                last_run_at: new Date().toISOString()
+              };
+            }
+            return validation;
+          });
+
+          // Update the current validations immediately
+          setCurrentValidations(updatedValidations);
+        }
+
+        if (errors.length > 0) {
+          setValidationErrors(errors);
+          showNotification(`${errors.length} validations encountered errors. See details below.`, 'warning');
+        } else {
+          // Clear any previous errors
+          setValidationErrors(null);
+
+          // Count successes and failures
+          const passedCount = response.results.filter(r => r.is_valid === true).length;
+          const failedCount = response.results.filter(r => r.is_valid === false).length;
+
+          showNotification(
+            `Ran ${response.results.length} validations: ${passedCount} passed, ${failedCount} failed`,
+            failedCount > 0 ? 'warning' : 'success'
+          );
+        }
+
+        // Invalidate the validations query to trigger a refetch after a short delay
+        // This helps ensure our UI updates have time to apply first
+        setTimeout(() => {
+          queryClient.invalidateQueries(['table-validations', selectedTable]);
+        }, 500);
       } else {
-        // Clear any previous errors
-        setValidationErrors(null);
-
-        // Count successes and failures
-        const passedCount = response.results?.filter(r => r.is_valid).length || 0;
-        const failedCount = response.results?.filter(r => !r.is_valid).length || 0;
-
-        showNotification(
-          `Ran ${response.results?.length || 0} validations: ${passedCount} passed, ${failedCount} failed`,
-          failedCount > 0 ? 'warning' : 'success'
-        );
+        showNotification('Unexpected response format from server', 'error');
       }
-
-      // Invalidate the validations query to trigger a refetch
-      queryClient.invalidateQueries(['table-validations', selectedTable]);
     } catch (error) {
       console.error('Error running validations:', error);
       showNotification('Failed to run validations. Error: ' + (error.message || 'Unknown error'), 'error');
@@ -440,11 +497,21 @@ const ValidationPage = () => {
 
               {/* Validation list */}
               <ValidationRuleList
-                validations={filteredValidations}
+                validations={currentValidations}
                 isLoading={validationsQuery.isLoading}
                 onEdit={handleEditValidation}
                 onDebug={handleDebugValidation}
                 onRefreshList={() => validationsQuery.refetch()}
+                onUpdate={updatedValidations => {
+                  // Update local state immediately
+                  setCurrentValidations(updatedValidations);
+
+                  // Also update the filtered validations if they exist
+                  if (updatedValidations.length > 0) {
+                    // Apply filters to the updated validations
+                    applyFilters(updatedValidations);
+                  }
+                }}
                 tableName={selectedTable}
                 connectionId={activeConnection?.id}
               />
