@@ -34,27 +34,47 @@ const MetadataExplorer = ({ connectionId, metadataType, metadataStatus }) => {
   const processedMetadata = React.useMemo(() => {
     if (!metadataResponse) return null;
 
+    console.log('Raw metadata response:', metadataResponse);
+
     // Extract the metadata from the nested structure
     let extractedData = null;
 
     // Handle different response formats and extract the relevant data
     if (metadataType === 'tables') {
       if (metadataResponse?.metadata?.metadata?.tables) {
-        // Extract from nested structure (most common format)
         extractedData = metadataResponse.metadata.metadata.tables;
       } else if (metadataResponse?.metadata?.tables) {
         extractedData = metadataResponse.metadata.tables;
       } else if (metadataResponse?.tables) {
         extractedData = metadataResponse.tables;
       } else if (Array.isArray(metadataResponse?.metadata)) {
-        // Sometimes the API returns an array directly
         extractedData = metadataResponse.metadata;
       } else if (Array.isArray(metadataResponse)) {
         extractedData = metadataResponse;
       }
+
+      // Tables might be in a special format
+      if (metadataResponse?.metadata?.metadata?.metadata?.tables) {
+        extractedData = metadataResponse.metadata.metadata.metadata.tables;
+      }
     } else if (metadataType === 'columns') {
-      // Similar extraction for columns
-      if (metadataResponse?.metadata?.metadata?.columns) {
+      // New format with columns organized by table
+      if (metadataResponse?.metadata?.metadata?.columns_by_table) {
+        const columnsByTable = metadataResponse.metadata.metadata.columns_by_table;
+        // Flatten the columns from all tables
+        const flattenedColumns = [];
+
+        Object.entries(columnsByTable).forEach(([tableName, columns]) => {
+          columns.forEach(column => {
+            flattenedColumns.push({
+              ...column,
+              table_name: tableName
+            });
+          });
+        });
+
+        extractedData = flattenedColumns;
+      } else if (metadataResponse?.metadata?.metadata?.columns) {
         extractedData = metadataResponse.metadata.metadata.columns;
       } else if (metadataResponse?.metadata?.columns) {
         extractedData = metadataResponse.metadata.columns;
@@ -88,6 +108,7 @@ const MetadataExplorer = ({ connectionId, metadataType, metadataStatus }) => {
       }));
     }
 
+    console.log('Processed metadata:', extractedData);
     return extractedData || [];
   }, [metadataResponse, metadataType]);
 
@@ -115,9 +136,21 @@ const MetadataExplorer = ({ connectionId, metadataType, metadataStatus }) => {
 
     // Apply search filter
     if (searchQuery) {
-      items = items.filter(item =>
-        item.name?.toLowerCase().includes(searchQuery.toLowerCase())
-      );
+      items = items.filter(item => {
+        // For tables, search by name
+        if (metadataType === 'tables') {
+          return (item.name?.toLowerCase() || '').includes(searchQuery.toLowerCase());
+        }
+        // For columns, search by name and table name
+        else if (metadataType === 'columns') {
+          return (
+            (item.name?.toLowerCase() || '').includes(searchQuery.toLowerCase()) ||
+            (item.table_name?.toLowerCase() || '').includes(searchQuery.toLowerCase())
+          );
+        }
+        // Default case
+        return (item.name?.toLowerCase() || '').includes(searchQuery.toLowerCase());
+      });
     }
 
     // Apply sorting
@@ -137,7 +170,7 @@ const MetadataExplorer = ({ connectionId, metadataType, metadataStatus }) => {
     });
 
     return items;
-  }, [processedMetadata, searchQuery, sortField, sortDirection]);
+  }, [processedMetadata, searchQuery, sortField, sortDirection, metadataType]);
 
   // Render table based on metadata type
   const renderMetadataTable = () => {
@@ -268,9 +301,9 @@ const MetadataExplorer = ({ connectionId, metadataType, metadataStatus }) => {
                 </button>
               </th>
               <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-secondary-500 uppercase tracking-wider">
-                <button className="group inline-flex items-center" onClick={() => handleSort('data_type')}>
+                <button className="group inline-flex items-center" onClick={() => handleSort('type')}>
                   Data Type
-                  <span className={`ml-2 flex-none rounded ${sortField === 'data_type' ? 'bg-secondary-200 text-secondary-900' : 'text-secondary-400 group-hover:bg-secondary-200'}`}>
+                  <span className={`ml-2 flex-none rounded ${sortField === 'type' ? 'bg-secondary-200 text-secondary-900' : 'text-secondary-400 group-hover:bg-secondary-200'}`}>
                     <ArrowsUpDownIcon className="h-5 w-5" aria-hidden="true" />
                   </span>
                 </button>
@@ -292,7 +325,7 @@ const MetadataExplorer = ({ connectionId, metadataType, metadataStatus }) => {
                 <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-secondary-900">{column.name}</td>
                 <td className="px-6 py-4 whitespace-nowrap text-sm text-secondary-500">
                   <span className="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-secondary-100 text-secondary-800">
-                    {column.data_type || '-'}
+                    {column.type || column.data_type || '-'}
                   </span>
                 </td>
                 <td className="px-6 py-4 whitespace-nowrap text-sm text-secondary-500">
