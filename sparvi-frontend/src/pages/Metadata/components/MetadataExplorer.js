@@ -13,20 +13,14 @@ const MetadataExplorer = ({ connectionId, metadataType, metadataStatus }) => {
 
   // Fetch metadata using react-query
   const {
-    data: metadata,
+    data: metadataResponse,
     isLoading,
     error,
     refetch
   } = useQuery({
     queryKey: ['metadata', connectionId, metadataType],
     queryFn: () => metadataAPI.getMetadata(connectionId, metadataType),
-    enabled: !!connectionId,
-    select: (data) => {
-      // Extract the metadata from the response - handle different response formats
-      if (data?.data?.metadata) return data.data.metadata;
-      if (data?.metadata) return data.metadata;
-      return data;
-    }
+    enabled: !!connectionId
   });
 
   // Refetch when metadata type changes
@@ -35,6 +29,67 @@ const MetadataExplorer = ({ connectionId, metadataType, metadataStatus }) => {
       refetch();
     }
   }, [metadataType, connectionId, refetch]);
+
+  // Extract and process metadata based on the type
+  const processedMetadata = React.useMemo(() => {
+    if (!metadataResponse) return null;
+
+    // Extract the metadata from the nested structure
+    let extractedData = null;
+
+    // Handle different response formats and extract the relevant data
+    if (metadataType === 'tables') {
+      if (metadataResponse?.metadata?.metadata?.tables) {
+        // Extract from nested structure (most common format)
+        extractedData = metadataResponse.metadata.metadata.tables;
+      } else if (metadataResponse?.metadata?.tables) {
+        extractedData = metadataResponse.metadata.tables;
+      } else if (metadataResponse?.tables) {
+        extractedData = metadataResponse.tables;
+      } else if (Array.isArray(metadataResponse?.metadata)) {
+        // Sometimes the API returns an array directly
+        extractedData = metadataResponse.metadata;
+      } else if (Array.isArray(metadataResponse)) {
+        extractedData = metadataResponse;
+      }
+    } else if (metadataType === 'columns') {
+      // Similar extraction for columns
+      if (metadataResponse?.metadata?.metadata?.columns) {
+        extractedData = metadataResponse.metadata.metadata.columns;
+      } else if (metadataResponse?.metadata?.columns) {
+        extractedData = metadataResponse.metadata.columns;
+      } else if (metadataResponse?.columns) {
+        extractedData = metadataResponse.columns;
+      } else if (Array.isArray(metadataResponse?.metadata)) {
+        extractedData = metadataResponse.metadata;
+      } else if (Array.isArray(metadataResponse)) {
+        extractedData = metadataResponse;
+      }
+    } else if (metadataType === 'statistics') {
+      // Similar extraction for statistics
+      if (metadataResponse?.metadata?.metadata?.statistics) {
+        extractedData = metadataResponse.metadata.metadata.statistics;
+      } else if (metadataResponse?.metadata?.statistics) {
+        extractedData = metadataResponse.metadata.statistics;
+      } else if (metadataResponse?.statistics) {
+        extractedData = metadataResponse.statistics;
+      } else if (Array.isArray(metadataResponse?.metadata)) {
+        extractedData = metadataResponse.metadata;
+      } else if (Array.isArray(metadataResponse)) {
+        extractedData = metadataResponse;
+      }
+    }
+
+    // If we've got an object with table/column/stats inside, transform to array
+    if (extractedData && !Array.isArray(extractedData)) {
+      extractedData = Object.keys(extractedData).map(key => ({
+        name: key,
+        ...extractedData[key]
+      }));
+    }
+
+    return extractedData || [];
+  }, [metadataResponse, metadataType]);
 
   // Handle search
   const handleSearch = (query) => {
@@ -54,13 +109,9 @@ const MetadataExplorer = ({ connectionId, metadataType, metadataStatus }) => {
 
   // Filter and sort metadata
   const filteredAndSortedMetadata = React.useMemo(() => {
-    if (!metadata) return [];
+    if (!processedMetadata) return [];
 
-    let items = Array.isArray(metadata) ? metadata :
-                Object.keys(metadata).map(key => ({
-                  name: key,
-                  ...metadata[key]
-                }));
+    let items = [...processedMetadata];
 
     // Apply search filter
     if (searchQuery) {
@@ -71,18 +122,22 @@ const MetadataExplorer = ({ connectionId, metadataType, metadataStatus }) => {
 
     // Apply sorting
     items.sort((a, b) => {
-      const aValue = a[sortField] || '';
-      const bValue = b[sortField] || '';
+      const aValue = a[sortField] ?? '';
+      const bValue = b[sortField] ?? '';
 
-      const comparison = typeof aValue === 'string'
-        ? aValue.localeString?.compare(bValue) || aValue.localeCompare(bValue)
-        : aValue - bValue;
-
-      return sortDirection === 'asc' ? comparison : -comparison;
+      // Handle different data types for sorting
+      if (typeof aValue === 'string' && typeof bValue === 'string') {
+        const comparison = aValue.localeCompare(bValue);
+        return sortDirection === 'asc' ? comparison : -comparison;
+      } else {
+        // Numeric comparison
+        const comparison = (aValue || 0) - (bValue || 0);
+        return sortDirection === 'asc' ? comparison : -comparison;
+      }
     });
 
     return items;
-  }, [metadata, searchQuery, sortField, sortDirection]);
+  }, [processedMetadata, searchQuery, sortField, sortDirection]);
 
   // Render table based on metadata type
   const renderMetadataTable = () => {
@@ -165,9 +220,9 @@ const MetadataExplorer = ({ connectionId, metadataType, metadataStatus }) => {
                 </button>
               </th>
               <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-secondary-500 uppercase tracking-wider">
-                <button className="group inline-flex items-center" onClick={() => handleSort('updated_at')}>
-                  Last Updated
-                  <span className={`ml-2 flex-none rounded ${sortField === 'updated_at' ? 'bg-secondary-200 text-secondary-900' : 'text-secondary-400 group-hover:bg-secondary-200'}`}>
+                <button className="group inline-flex items-center" onClick={() => handleSort('column_count')}>
+                  Column Count
+                  <span className={`ml-2 flex-none rounded ${sortField === 'column_count' ? 'bg-secondary-200 text-secondary-900' : 'text-secondary-400 group-hover:bg-secondary-200'}`}>
                     <ArrowsUpDownIcon className="h-5 w-5" aria-hidden="true" />
                   </span>
                 </button>
@@ -176,13 +231,11 @@ const MetadataExplorer = ({ connectionId, metadataType, metadataStatus }) => {
           </thead>
           <tbody className="bg-white divide-y divide-secondary-200">
             {filteredAndSortedMetadata.map((table, index) => (
-              <tr key={table.name || index} className={index % 2 === 0 ? 'bg-white' : 'bg-secondary-50'}>
+              <tr key={table.id || table.name || index} className={index % 2 === 0 ? 'bg-white' : 'bg-secondary-50'}>
                 <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-secondary-900">{table.name}</td>
                 <td className="px-6 py-4 whitespace-nowrap text-sm text-secondary-500">{table.schema || 'default'}</td>
                 <td className="px-6 py-4 whitespace-nowrap text-sm text-secondary-500">{table.row_count?.toLocaleString() || '-'}</td>
-                <td className="px-6 py-4 whitespace-nowrap text-sm text-secondary-500">
-                  {table.updated_at ? new Date(table.updated_at).toLocaleString() : '-'}
-                </td>
+                <td className="px-6 py-4 whitespace-nowrap text-sm text-secondary-500">{table.column_count?.toLocaleString() || '-'}</td>
               </tr>
             ))}
           </tbody>
@@ -230,14 +283,6 @@ const MetadataExplorer = ({ connectionId, metadataType, metadataStatus }) => {
                   </span>
                 </button>
               </th>
-              <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-secondary-500 uppercase tracking-wider">
-                <button className="group inline-flex items-center" onClick={() => handleSort('updated_at')}>
-                  Last Updated
-                  <span className={`ml-2 flex-none rounded ${sortField === 'updated_at' ? 'bg-secondary-200 text-secondary-900' : 'text-secondary-400 group-hover:bg-secondary-200'}`}>
-                    <ArrowsUpDownIcon className="h-5 w-5" aria-hidden="true" />
-                  </span>
-                </button>
-              </th>
             </tr>
           </thead>
           <tbody className="bg-white divide-y divide-secondary-200">
@@ -251,10 +296,8 @@ const MetadataExplorer = ({ connectionId, metadataType, metadataStatus }) => {
                   </span>
                 </td>
                 <td className="px-6 py-4 whitespace-nowrap text-sm text-secondary-500">
-                  {column.nullable ? 'Yes' : 'No'}
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap text-sm text-secondary-500">
-                  {column.updated_at ? new Date(column.updated_at).toLocaleString() : '-'}
+                  {column.nullable === true ? 'Yes' :
+                   column.nullable === false ? 'No' : '-'}
                 </td>
               </tr>
             ))}
@@ -303,14 +346,6 @@ const MetadataExplorer = ({ connectionId, metadataType, metadataStatus }) => {
                   </span>
                 </button>
               </th>
-              <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-secondary-500 uppercase tracking-wider">
-                <button className="group inline-flex items-center" onClick={() => handleSort('updated_at')}>
-                  Last Updated
-                  <span className={`ml-2 flex-none rounded ${sortField === 'updated_at' ? 'bg-secondary-200 text-secondary-900' : 'text-secondary-400 group-hover:bg-secondary-200'}`}>
-                    <ArrowsUpDownIcon className="h-5 w-5" aria-hidden="true" />
-                  </span>
-                </button>
-              </th>
             </tr>
           </thead>
           <tbody className="bg-white divide-y divide-secondary-200">
@@ -319,13 +354,11 @@ const MetadataExplorer = ({ connectionId, metadataType, metadataStatus }) => {
                 <td className="px-6 py-4 whitespace-nowrap text-sm text-secondary-500">{stat.table_name}</td>
                 <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-secondary-900">{stat.column_name}</td>
                 <td className="px-6 py-4 whitespace-nowrap text-sm text-secondary-500">
-                  {stat.null_count !== undefined ? `${((stat.null_count / stat.row_count) * 100).toFixed(1)}%` : '-'}
+                  {stat.null_count !== undefined && stat.row_count ?
+                    `${((stat.null_count / stat.row_count) * 100).toFixed(1)}%` : '-'}
                 </td>
                 <td className="px-6 py-4 whitespace-nowrap text-sm text-secondary-500">
                   {stat.distinct_count?.toLocaleString() || '-'}
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap text-sm text-secondary-500">
-                  {stat.updated_at ? new Date(stat.updated_at).toLocaleString() : '-'}
                 </td>
               </tr>
             ))}
@@ -335,6 +368,7 @@ const MetadataExplorer = ({ connectionId, metadataType, metadataStatus }) => {
     );
   };
 
+  // Render metadata explorer with search and table
   return (
     <div>
       <div className="mb-4 flex justify-between items-center">
