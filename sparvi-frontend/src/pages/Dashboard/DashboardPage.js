@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   ServerIcon,
@@ -23,6 +23,7 @@ import { queryClient } from '../../api/queryClient';
 const DashboardPage = () => {
   const { connections, activeConnection, loading: connectionsLoading } = useConnection();
   const { updateBreadcrumbs, showNotification } = useUI();
+  const [initialLoadComplete, setInitialLoadComplete] = useState(false);
 
   // Get connectionId safely
   const connectionId = activeConnection?.id;
@@ -33,6 +34,13 @@ const DashboardPage = () => {
       { name: 'Dashboard', href: '/dashboard' }
     ]);
   }, [updateBreadcrumbs]);
+
+  // Track initial load completion
+  useEffect(() => {
+    if (!connectionsLoading && !initialLoadComplete) {
+      setInitialLoadComplete(true);
+    }
+  }, [connectionsLoading, initialLoadComplete]);
 
   // Use React Query with existing hooks
   const tablesQuery = useTablesData(connectionId, {
@@ -75,8 +83,8 @@ const DashboardPage = () => {
     showNotification('Dashboard data refreshed', 'success');
   };
 
-  // Show loading indicator while connections are being fetched
-  if (connectionsLoading) {
+  // Show loading state ONLY during initial load
+  if (connectionsLoading && !initialLoadComplete) {
     return (
       <div className="flex justify-center items-center py-12">
         <div className="text-center">
@@ -87,8 +95,8 @@ const DashboardPage = () => {
     );
   }
 
-  // Only show the "No connections" message after loading is complete
-  if (!connections || connections.length === 0) {
+  // Show empty state only if we've finished loading and there are no connections
+  if ((!connectionsLoading || initialLoadComplete) && (!connections || connections.length === 0)) {
     return (
       <div className="text-center py-12">
         <ServerIcon className="mx-auto h-12 w-12 text-secondary-400" />
