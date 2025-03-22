@@ -28,14 +28,17 @@ const ConnectionsPage = () => {
   // Load connections
   useEffect(() => {
     const loadConnections = async () => {
-      try {
-        setLoading('connections', true);
-        await refreshConnections();
-      } catch (error) {
-        console.error('Error loading connections:', error);
-        showNotification('Failed to load connections', 'error');
-      } finally {
-        setLoading('connections', false);
+      // Only show loading state if no connections data exists yet
+      if (connections.length === 0) {
+        try {
+          setLoading('connections', true);
+          await refreshConnections();
+        } catch (error) {
+          console.error('Error loading connections:', error);
+          showNotification('Failed to load connections', 'error');
+        } finally {
+          setLoading('connections', false);
+        }
       }
     };
 

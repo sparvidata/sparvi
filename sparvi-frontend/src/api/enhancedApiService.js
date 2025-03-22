@@ -288,6 +288,14 @@ const enhancedRequest = async (options) => {
 export const connectionsAPI = {
   getAll: (options = {}) => {
     const { forceFresh = false, requestId = 'connections.getAll' } = options;
+
+    // Check if we already have cached data and we're not forcing a fresh fetch
+    const cachedData = getCacheItem('connections.list');
+    if (cachedData && !forceFresh) {
+      // Return the cached data immediately
+      return Promise.resolve(cachedData);
+    }
+
     return enhancedRequest({
       url: '/connections',
       cacheKey: 'connections.list',

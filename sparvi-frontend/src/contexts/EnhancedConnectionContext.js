@@ -20,15 +20,24 @@ export const ConnectionProvider = ({ children }) => {
   const [error, setError] = useState(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
 
-  // Use refs to store the last fetch time
+  // Use refs to store the last fetch time and data
   const lastFetchTimeRef = useRef(0);
   const lastConnectionsRef = useRef([]);
+  const isInitialLoadRef = useRef(true);
   const MIN_FETCH_INTERVAL = 10000; // Minimum 10 seconds between full refreshes
 
   // Load connections when authenticated
   useEffect(() => {
     const fetchConnections = async (forceFresh = false) => {
       if (!isAuthenticated) {
+        // Don't clear existing data during initial render
+        if (isInitialLoadRef.current) {
+          isInitialLoadRef.current = false;
+          setLoading(false);
+          return;
+        }
+
+        // Only clear data if we're sure we should be logged out
         setConnections([]);
         setDefaultConnection(null);
         setActiveConnection(null);
@@ -41,15 +50,18 @@ export const ConnectionProvider = ({ children }) => {
       if (!forceFresh && now - lastFetchTimeRef.current < MIN_FETCH_INTERVAL) {
         // Return previous connections if we just fetched them
         if (lastConnectionsRef.current.length > 0) {
-          setConnections(lastConnectionsRef.current);
+          // Don't update state if it's already the same data to prevent re-renders
+          if (connections.length !== lastConnectionsRef.current.length) {
+            setConnections(lastConnectionsRef.current);
 
-          // Find default connection
-          const defaultConn = lastConnectionsRef.current.find(conn => conn.is_default);
-          setDefaultConnection(defaultConn || null);
+            // Find default connection
+            const defaultConn = lastConnectionsRef.current.find(conn => conn.is_default);
+            setDefaultConnection(defaultConn || null);
 
-          // Set active connection to default if not already set
-          if (!activeConnection && defaultConn) {
-            setActiveConnection(defaultConn);
+            // Set active connection to default if not already set
+            if (!activeConnection && defaultConn) {
+              setActiveConnection(defaultConn);
+            }
           }
 
           setLoading(false);
@@ -57,8 +69,15 @@ export const ConnectionProvider = ({ children }) => {
         }
       }
 
-      try {
+      // If we already have data and are just refreshing, don't set loading to true
+      // This prevents UI flicker during navigation
+      if (lastConnectionsRef.current.length > 0 && !forceFresh) {
+        setIsRefreshing(true);
+      } else {
         setLoading(true);
+      }
+
+      try {
         setError(null);
 
         // Update last fetch time
@@ -74,25 +93,30 @@ export const ConnectionProvider = ({ children }) => {
 
         const connectionList = response?.data?.connections || [];
 
-        // Update the connection reference
-        lastConnectionsRef.current = connectionList;
-        setConnections(connectionList);
+        // Only update if we got different data to prevent unnecessary re-renders
+        const shouldUpdate = JSON.stringify(connectionList) !== JSON.stringify(lastConnectionsRef.current);
 
-        // Find default connection
-        const defaultConn = connectionList.find(conn => conn.is_default);
-        setDefaultConnection(defaultConn || null);
+        if (shouldUpdate) {
+          // Update the connection reference
+          lastConnectionsRef.current = connectionList;
+          setConnections(connectionList);
 
-        // Set active connection to default if not already set
-        if (!activeConnection && defaultConn) {
-          setActiveConnection(defaultConn);
-        } else if (activeConnection) {
-          // If activeConnection is set, make sure it's updated with fresh data
-          const updatedActiveConn = connectionList.find(conn => conn.id === activeConnection.id);
-          if (updatedActiveConn) {
-            setActiveConnection(updatedActiveConn);
-          } else if (defaultConn) {
-            // If active connection no longer exists, fall back to default
+          // Find default connection
+          const defaultConn = connectionList.find(conn => conn.is_default);
+          setDefaultConnection(defaultConn || null);
+
+          // Set active connection to default if not already set
+          if (!activeConnection && defaultConn) {
             setActiveConnection(defaultConn);
+          } else if (activeConnection) {
+            // If activeConnection is set, make sure it's updated with fresh data
+            const updatedActiveConn = connectionList.find(conn => conn.id === activeConnection.id);
+            if (updatedActiveConn) {
+              setActiveConnection(updatedActiveConn);
+            } else if (defaultConn) {
+              // If active connection no longer exists, fall back to default
+              setActiveConnection(defaultConn);
+            }
           }
         }
       } catch (err) {
@@ -104,6 +128,7 @@ export const ConnectionProvider = ({ children }) => {
       } finally {
         setLoading(false);
         setIsRefreshing(false);
+        isInitialLoadRef.current = false;
       }
     };
 
