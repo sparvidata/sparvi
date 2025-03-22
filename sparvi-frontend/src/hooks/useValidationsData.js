@@ -29,9 +29,15 @@ export const useValidationsSummary = (connectionId, options = {}) => {
       const summary = data?.data || data;
       return {
         total_count: summary?.total_count || 0,
-        passed_count: summary?.passed_count || 0,
-        failed_count: summary?.failed_count || 0,
-        not_run_count: summary?.not_run_count || 0
+        passing_count: summary?.passing_count || 0,
+        failing_count: summary?.failing_count || 0,
+        unknown_count: summary?.unknown_count || 0,
+        tables_with_validations: summary?.tables_with_validations || 0,
+        tables_with_failures: summary?.tables_with_failures || 0,
+        overall_health_score: summary?.overall_health_score || 0,
+        freshness_status: summary?.freshness_status || 'unknown',
+        connection_name: summary?.connection_name || 'Unknown',
+        validations_by_table: summary?.validations_by_table || {}
       };
     },
     // Don't refetch on window focus for validation data

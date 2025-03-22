@@ -168,7 +168,7 @@ const DashboardPage = () => {
           isRefetching={metadataQuery.isRefetching && !metadataQuery.isLoading}
         />
 
-        {/* Issues */}
+        {/* Issues/Validation Failures */}
         <StatisticCard
           title="Issues"
           value={failedValidations}
@@ -178,6 +178,8 @@ const DashboardPage = () => {
           loading={validationsQuery.isLoading}
           error={validationsQuery.isError}
           isRefetching={validationsQuery.isRefetching && !validationsQuery.isLoading}
+          healthScore={validationsQuery.data?.overall_health_score}
+          freshness={validationsQuery.data?.freshness_status}
         />
       </div>
 

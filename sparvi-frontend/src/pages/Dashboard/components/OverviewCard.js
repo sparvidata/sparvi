@@ -1,5 +1,3 @@
-// src/pages/Dashboard/components/OverviewCard.js
-
 import React from 'react';
 import { Link } from 'react-router-dom';
 import { ArrowRightIcon } from '@heroicons/react/20/solid';
@@ -37,23 +35,33 @@ const OverviewCard = ({ title, type = 'tables', connectionId }) => {
     console.log(`[${type}] Validations summary in OverviewCard:`, summary);
 
     if (summary.validations_by_table) {
-      // First format: has validations_by_table property
-      data = Object.entries(summary.validations_by_table).map(([tableName, count]) => ({
+      // Transform validations_by_table into an array of table validation info
+      data = Object.entries(summary.validations_by_table).map(([tableName, tableData]) => ({
         tableName,
-        count,
-        passingCount: summary.passing_count || 0,
-        failingCount: summary.failing_count || 0,
-        unknownCount: summary.unknown_count || 0
-      }));
+        count: tableData.total || 0,
+        passingCount: tableData.passing || 0,
+        failingCount: tableData.failing || 0,
+        unknownCount: tableData.unknown || 0,
+        healthScore: tableData.health_score || 0,
+        lastRun: tableData.last_run
+      })).sort((a, b) => {
+        // Sort by failures first, then by health score
+        if (a.failingCount !== b.failingCount) return b.failingCount - a.failingCount;
+        return (b.healthScore || 0) - (a.healthScore || 0);
+      }).slice(0, 5); // Show top 5 tables
     } else if (summary.total_count > 0) {
       // Second format: has total_count but no validations_by_table
       // We'll create a single entry for all validations
       data = [{
         tableName: 'All Tables',
         count: summary.total_count,
-        passingCount: summary.passed_count || 0,
-        failingCount: summary.failed_count || 0,
-        unknownCount: summary.not_run_count || 0
+        passingCount: summary.passing_count || 0,
+        failingCount: summary.failing_count || 0,
+        unknownCount: summary.unknown_count || 0,
+        healthScore: summary.overall_health_score || 0,
+        tablesWithValidations: summary.tables_with_validations || 0,
+        tablesWithFailures: summary.tables_with_failures || 0,
+        freshness: summary.freshness_status || 'unknown'
       }];
     }
   }
@@ -79,9 +87,32 @@ const OverviewCard = ({ title, type = 'tables', connectionId }) => {
 
   // Determine status text for validation items
   const getStatusText = (item) => {
-    if (item.failingCount > 0) return 'Has failures';
+    if (item.failingCount > 0) return `${item.failingCount} failing`;
     if (item.passingCount > 0) return 'All passing';
     return 'Not run';
+  };
+
+  // Format the health score as a percentage
+  const formatHealthScore = (score) => {
+    if (score === undefined || score === null) return '';
+    return `${Math.round(score)}%`;
+  };
+
+  // Format the date for lastRun
+  const formatLastRun = (lastRun) => {
+    if (!lastRun) return '';
+
+    try {
+      const date = new Date(lastRun);
+      return date.toLocaleString(undefined, {
+        month: 'short',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit'
+      });
+    } catch (e) {
+      return '';
+    }
   };
 
   return (
@@ -131,7 +162,7 @@ const OverviewCard = ({ title, type = 'tables', connectionId }) => {
           </div>
         ) : (
           <ul className="divide-y divide-secondary-200">
-            {data.slice(0, 5).map((item, index) => (
+            {data.map((item, index) => (
               <li key={type === 'tables' ? item : `${item.tableName}-${index}`} className="py-3">
                 {type === 'tables' ? (
                   <Link
@@ -150,7 +181,35 @@ const OverviewCard = ({ title, type = 'tables', connectionId }) => {
                       <span className="text-sm font-medium text-secondary-900">{item.tableName}</span>
                       <p className="text-xs text-secondary-500 truncate">
                         {item.count} validation rule{item.count !== 1 ? 's' : ''}
+                        {item.healthScore !== undefined && (
+                          <span className="ml-2">
+                            Health: <span
+                              className={`font-medium ${
+                                item.healthScore >= 90 ? 'text-accent-600' : 
+                                item.healthScore >= 70 ? 'text-warning-600' : 
+                                'text-danger-600'
+                              }`}
+                            >
+                              {formatHealthScore(item.healthScore)}
+                            </span>
+                          </span>
+                        )}
+                        {item.lastRun && (
+                          <span className="ml-2 text-xs text-secondary-400">
+                            {formatLastRun(item.lastRun)}
+                          </span>
+                        )}
                       </p>
+                      {item.tablesWithValidations > 0 && (
+                        <p className="text-xs text-secondary-500">
+                          {item.tablesWithValidations} table{item.tablesWithValidations !== 1 ? 's' : ''} with validations
+                          {item.tablesWithFailures > 0 && (
+                            <span className="ml-1 text-danger-600">
+                              ({item.tablesWithFailures} with failures)
+                            </span>
+                          )}
+                        </p>
+                      )}
                     </div>
                     <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getStatusClass(item)}`}>
                       {getStatusText(item)}
