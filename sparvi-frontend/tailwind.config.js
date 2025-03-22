@@ -36,6 +36,12 @@ module.exports = {
           "success": "#36d399",
           "warning": "#f59e0b",
           "error": "#ef4444",
+          "base-content": "#1e293b",  // Default text color
+          "input": "#ffffff",  // White background for inputs
+          "input-focus": "#ffffff",  // Keep white background for focused inputs
+          "input-content": "#1e293b",  // Dark text for inputs
+          "input-focus-ring": "#6366f1",  // Primary color for the focus ring
+          "input-focus-border": "#6366f1",  // Primary color for the focused border
         },
       },
       "light",
