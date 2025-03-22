@@ -1,4 +1,3 @@
-// src/pages/Dashboard/DashboardPage.js
 import React, { useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import {
@@ -58,7 +57,9 @@ const DashboardPage = () => {
   const tablesCount = Array.isArray(tablesQuery.data) ? tablesQuery.data.length : 0;
   const changesCount = metadataQuery.data?.changes_detected || 0;
   const validationsCount = validationsQuery.data?.total_count || 0;
-  const failedValidations = validationsQuery.data?.failed_count || 0;
+
+  // Use failing_count for the total failed validations count
+  const failedValidations = validationsQuery.data?.failing_count || 0;
 
   // Handle refresh all data
   const handleRefreshData = async () => {
@@ -168,7 +169,7 @@ const DashboardPage = () => {
           isRefetching={metadataQuery.isRefetching && !metadataQuery.isLoading}
         />
 
-        {/* Issues/Validation Failures */}
+        {/* Issues (Failed Validations) */}
         <StatisticCard
           title="Issues"
           value={failedValidations}
