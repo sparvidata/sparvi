@@ -86,17 +86,119 @@ const MetadataExplorer = ({ connectionId, metadataType, metadataStatus }) => {
         extractedData = metadataResponse;
       }
     } else if (metadataType === 'statistics') {
-      // Similar extraction for statistics
-      if (metadataResponse?.metadata?.metadata?.statistics) {
-        extractedData = metadataResponse.metadata.metadata.statistics;
-      } else if (metadataResponse?.metadata?.statistics) {
-        extractedData = metadataResponse.metadata.statistics;
-      } else if (metadataResponse?.statistics) {
-        extractedData = metadataResponse.statistics;
-      } else if (Array.isArray(metadataResponse?.metadata)) {
-        extractedData = metadataResponse.metadata;
-      } else if (Array.isArray(metadataResponse)) {
-        extractedData = metadataResponse;
+      // Handle the new statistics_by_table structure
+      if (metadataResponse?.metadata?.metadata?.statistics_by_table) {
+        // New structure: statistics organized by table
+        const statsByTable = metadataResponse.metadata.metadata.statistics_by_table;
+        const flattenedStats = [];
+
+        // Flatten the structure for display in the table
+        Object.entries(statsByTable).forEach(([tableName, tableData]) => {
+          // If tableData has column_statistics, process each column
+          if (tableData.column_statistics) {
+            Object.entries(tableData.column_statistics).forEach(([columnName, columnStats]) => {
+              // Extract the basic stats info from the column
+              const basicStats = columnStats.basic || {};
+              const numericStats = columnStats.numeric || {};
+              const stringStats = columnStats.string || {};
+
+              // Create a flattened record with the most relevant information
+              flattenedStats.push({
+                table_name: tableName,
+                column_name: columnName,
+                data_type: columnStats.type || 'unknown',
+                null_count: basicStats.null_count,
+                null_percentage: basicStats.null_percentage,
+                distinct_count: basicStats.distinct_count,
+                distinct_percentage: basicStats.distinct_percentage,
+                is_unique: basicStats.is_unique,
+                row_count: tableData.general?.row_count || 0,
+
+                // Include additional stats based on type
+                min: numericStats.min || stringStats.min_length,
+                max: numericStats.max || stringStats.max_length,
+                avg: numericStats.avg || stringStats.avg_length
+              });
+            });
+          }
+        });
+
+        extractedData = flattenedStats;
+      } else if (metadataResponse?.metadata?.statistics_by_table) {
+        // Same logic but with different nesting level
+        const statsByTable = metadataResponse.metadata.statistics_by_table;
+        const flattenedStats = [];
+
+        Object.entries(statsByTable).forEach(([tableName, tableData]) => {
+          if (tableData.column_statistics) {
+            Object.entries(tableData.column_statistics).forEach(([columnName, columnStats]) => {
+              const basicStats = columnStats.basic || {};
+              const numericStats = columnStats.numeric || {};
+              const stringStats = columnStats.string || {};
+
+              flattenedStats.push({
+                table_name: tableName,
+                column_name: columnName,
+                data_type: columnStats.type || 'unknown',
+                null_count: basicStats.null_count,
+                null_percentage: basicStats.null_percentage,
+                distinct_count: basicStats.distinct_count,
+                distinct_percentage: basicStats.distinct_percentage,
+                is_unique: basicStats.is_unique,
+                row_count: tableData.general?.row_count || 0,
+                min: numericStats.min || stringStats.min_length,
+                max: numericStats.max || stringStats.max_length,
+                avg: numericStats.avg || stringStats.avg_length
+              });
+            });
+          }
+        });
+
+        extractedData = flattenedStats;
+      } else if (metadataResponse?.statistics_by_table) {
+        // Same logic but with different nesting level
+        const statsByTable = metadataResponse.statistics_by_table;
+        const flattenedStats = [];
+
+        Object.entries(statsByTable).forEach(([tableName, tableData]) => {
+          if (tableData.column_statistics) {
+            Object.entries(tableData.column_statistics).forEach(([columnName, columnStats]) => {
+              const basicStats = columnStats.basic || {};
+              const numericStats = columnStats.numeric || {};
+              const stringStats = columnStats.string || {};
+
+              flattenedStats.push({
+                table_name: tableName,
+                column_name: columnName,
+                data_type: columnStats.type || 'unknown',
+                null_count: basicStats.null_count,
+                null_percentage: basicStats.null_percentage,
+                distinct_count: basicStats.distinct_count,
+                distinct_percentage: basicStats.distinct_percentage,
+                is_unique: basicStats.is_unique,
+                row_count: tableData.general?.row_count || 0,
+                min: numericStats.min || stringStats.min_length,
+                max: numericStats.max || stringStats.max_length,
+                avg: numericStats.avg || stringStats.avg_length
+              });
+            });
+          }
+        });
+
+        extractedData = flattenedStats;
+      } else {
+        // Fall back to previous paths just in case
+        if (metadataResponse?.metadata?.metadata?.statistics) {
+          extractedData = metadataResponse.metadata.metadata.statistics;
+        } else if (metadataResponse?.metadata?.statistics) {
+          extractedData = metadataResponse.metadata.statistics;
+        } else if (metadataResponse?.statistics) {
+          extractedData = metadataResponse.statistics;
+        } else if (Array.isArray(metadataResponse?.metadata)) {
+          extractedData = metadataResponse.metadata;
+        } else if (Array.isArray(metadataResponse)) {
+          extractedData = metadataResponse;
+        }
       }
     }
 
@@ -146,6 +248,14 @@ const MetadataExplorer = ({ connectionId, metadataType, metadataStatus }) => {
           return (
             (item.name?.toLowerCase() || '').includes(searchQuery.toLowerCase()) ||
             (item.table_name?.toLowerCase() || '').includes(searchQuery.toLowerCase())
+          );
+        }
+        // For statistics, search by table name and column name
+        else if (metadataType === 'statistics') {
+          return (
+            (item.table_name?.toLowerCase() || '').includes(searchQuery.toLowerCase()) ||
+            (item.column_name?.toLowerCase() || '').includes(searchQuery.toLowerCase()) ||
+            (item.data_type?.toLowerCase() || '').includes(searchQuery.toLowerCase())
           );
         }
         // Default case
@@ -364,17 +474,33 @@ const MetadataExplorer = ({ connectionId, metadataType, metadataStatus }) => {
                 </button>
               </th>
               <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-secondary-500 uppercase tracking-wider">
-                <button className="group inline-flex items-center" onClick={() => handleSort('null_count')}>
-                  Null %
-                  <span className={`ml-2 flex-none rounded ${sortField === 'null_count' ? 'bg-secondary-200 text-secondary-900' : 'text-secondary-400 group-hover:bg-secondary-200'}`}>
+                <button className="group inline-flex items-center" onClick={() => handleSort('data_type')}>
+                  Data Type
+                  <span className={`ml-2 flex-none rounded ${sortField === 'data_type' ? 'bg-secondary-200 text-secondary-900' : 'text-secondary-400 group-hover:bg-secondary-200'}`}>
                     <ArrowsUpDownIcon className="h-5 w-5" aria-hidden="true" />
                   </span>
                 </button>
               </th>
               <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-secondary-500 uppercase tracking-wider">
-                <button className="group inline-flex items-center" onClick={() => handleSort('distinct_count')}>
-                  Distinct Values
-                  <span className={`ml-2 flex-none rounded ${sortField === 'distinct_count' ? 'bg-secondary-200 text-secondary-900' : 'text-secondary-400 group-hover:bg-secondary-200'}`}>
+                <button className="group inline-flex items-center" onClick={() => handleSort('null_percentage')}>
+                  Null %
+                  <span className={`ml-2 flex-none rounded ${sortField === 'null_percentage' ? 'bg-secondary-200 text-secondary-900' : 'text-secondary-400 group-hover:bg-secondary-200'}`}>
+                    <ArrowsUpDownIcon className="h-5 w-5" aria-hidden="true" />
+                  </span>
+                </button>
+              </th>
+              <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-secondary-500 uppercase tracking-wider">
+                <button className="group inline-flex items-center" onClick={() => handleSort('distinct_percentage')}>
+                  Distinct %
+                  <span className={`ml-2 flex-none rounded ${sortField === 'distinct_percentage' ? 'bg-secondary-200 text-secondary-900' : 'text-secondary-400 group-hover:bg-secondary-200'}`}>
+                    <ArrowsUpDownIcon className="h-5 w-5" aria-hidden="true" />
+                  </span>
+                </button>
+              </th>
+              <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-secondary-500 uppercase tracking-wider">
+                <button className="group inline-flex items-center" onClick={() => handleSort('is_unique')}>
+                  Unique
+                  <span className={`ml-2 flex-none rounded ${sortField === 'is_unique' ? 'bg-secondary-200 text-secondary-900' : 'text-secondary-400 group-hover:bg-secondary-200'}`}>
                     <ArrowsUpDownIcon className="h-5 w-5" aria-hidden="true" />
                   </span>
                 </button>
@@ -387,11 +513,22 @@ const MetadataExplorer = ({ connectionId, metadataType, metadataStatus }) => {
                 <td className="px-6 py-4 whitespace-nowrap text-sm text-secondary-500">{stat.table_name}</td>
                 <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-secondary-900">{stat.column_name}</td>
                 <td className="px-6 py-4 whitespace-nowrap text-sm text-secondary-500">
-                  {stat.null_count !== undefined && stat.row_count ?
-                    `${((stat.null_count / stat.row_count) * 100).toFixed(1)}%` : '-'}
+                  <span className="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-secondary-100 text-secondary-800">
+                    {stat.data_type || '-'}
+                  </span>
                 </td>
                 <td className="px-6 py-4 whitespace-nowrap text-sm text-secondary-500">
-                  {stat.distinct_count?.toLocaleString() || '-'}
+                  {typeof stat.null_percentage === 'number'
+                    ? `${stat.null_percentage.toFixed(2)}%`
+                    : '-'}
+                </td>
+                <td className="px-6 py-4 whitespace-nowrap text-sm text-secondary-500">
+                  {typeof stat.distinct_percentage === 'number'
+                    ? `${stat.distinct_percentage.toFixed(2)}%`
+                    : '-'}
+                </td>
+                <td className="px-6 py-4 whitespace-nowrap text-sm text-secondary-500">
+                  {stat.is_unique === true ? 'Yes' : stat.is_unique === false ? 'No' : '-'}
                 </td>
               </tr>
             ))}
