@@ -17,7 +17,8 @@ import {
   PresentationChartLineIcon,
   ChevronDownIcon,
   XMarkIcon,
-  MagnifyingGlassIcon
+  MagnifyingGlassIcon,
+  FunnelIcon
 } from '@heroicons/react/24/outline';
 import {
   ClockIcon,
@@ -25,9 +26,8 @@ import {
   ShieldCheckIcon
 } from '@heroicons/react/24/solid';
 
-// Import the new HistoricalMetricsDashboard component
+// Import components
 import HistoricalMetricsDashboard from '../../components/analytics/HistoricalMetricsDashboard';
-
 import MetricCard from '../../components/analytics/MetricCard';
 import TrendChart from '../../components/analytics/TrendChart';
 import AnomalyCard from '../../components/analytics/AnomalyCard';
@@ -44,7 +44,10 @@ const AnalyticsPage = () => {
   const [tableSearchTerm, setTableSearchTerm] = useState('');
   const [isLoadingTables, setIsLoadingTables] = useState(false);
 
-  // These functions are no longer needed as we're using the HistoricalMetricsDashboard component
+  // Table filter state
+  const [selectedTables, setSelectedTables] = useState([]);
+  const [filterMode, setFilterMode] = useState('all'); // 'all', 'single', 'multi'
+  const [showFilterDropdown, setShowFilterDropdown] = useState(false);
 
   // Update breadcrumbs when connection changes
   useEffect(() => {
@@ -55,7 +58,7 @@ const AnalyticsPage = () => {
 
   // Fetch tables for the dropdown when it's opened
   useEffect(() => {
-    if (showTableSelector && activeConnection?.id && tableList.length === 0) {
+    if ((showTableSelector || showFilterDropdown) && activeConnection?.id && tableList.length === 0) {
       const fetchTables = async () => {
         setIsLoadingTables(true);
         try {
@@ -74,7 +77,7 @@ const AnalyticsPage = () => {
 
       fetchTables();
     }
-  }, [showTableSelector, activeConnection, tableList.length, showNotification]);
+  }, [showTableSelector, showFilterDropdown, activeConnection, tableList.length, showNotification]);
 
   // Fetch analytics dashboard data
   const { data: dashboardData, isLoading: isDashboardLoading } = useAnalyticsDashboard(
@@ -104,15 +107,80 @@ const AnalyticsPage = () => {
   };
 
   // Filter tables based on search term
-  const filteredTables = tableSearchTerm
+  const filteredTableList = tableSearchTerm
     ? tableList.filter(table =>
         (table.name || table.table_name || '').toLowerCase().includes(tableSearchTerm.toLowerCase())
       )
     : tableList;
 
+  // Extract unique table names from dashboard data
+  const availableTables = React.useMemo(() => {
+    if (!dashboardData || !dashboardData.row_count_trends) return [];
+
+    // Get unique table names
+    const tableSet = new Set();
+    dashboardData.row_count_trends.forEach(item => {
+      if (item.table_name) {
+        tableSet.add(item.table_name);
+      }
+    });
+
+    return Array.from(tableSet).sort();
+  }, [dashboardData]);
+
+  // Final filtered tables list (combine from both sources)
+  const filteredTables = tableSearchTerm
+    ? availableTables.filter(tableName =>
+        tableName.toLowerCase().includes(tableSearchTerm.toLowerCase())
+      )
+    : availableTables;
+
   // Table name accessor function to handle different table object formats
   const getTableName = (table) => {
     return table.name || table.table_name || table.table_id || '';
+  };
+
+  // Handle table selection for filtering
+  const handleTableSelection = (tableName) => {
+    if (filterMode === 'single') {
+      // Single select mode - just replace the selection
+      setSelectedTables([tableName]);
+    } else if (filterMode === 'multi') {
+      // Multi select mode - toggle the selection
+      if (selectedTables.includes(tableName)) {
+        setSelectedTables(selectedTables.filter(t => t !== tableName));
+      } else {
+        setSelectedTables([...selectedTables, tableName]);
+      }
+    }
+
+    // Don't close dropdown for multi-select
+    if (filterMode !== 'multi') {
+      setShowFilterDropdown(false);
+    }
+  };
+
+  // Toggle filter mode
+  const toggleFilterMode = (mode) => {
+    // If switching to 'all', clear selections and close dropdown
+    if (mode === 'all') {
+      setSelectedTables([]);
+      setShowFilterDropdown(false);
+    } else {
+      // For single or multi modes, we need to see the table list
+      if (!showFilterDropdown) {
+        setShowFilterDropdown(true);
+      }
+    }
+
+    setFilterMode(mode);
+  };
+
+  // Handle "Show All Tables" button click
+  const handleShowAllTables = () => {
+    setFilterMode('all');
+    setSelectedTables([]);
+    setShowFilterDropdown(false);
   };
 
   if (!activeConnection) {
@@ -202,12 +270,12 @@ const AnalyticsPage = () => {
                       <div className="flex justify-center py-4">
                         <LoadingSpinner size="sm" />
                       </div>
-                    ) : filteredTables.length === 0 ? (
+                    ) : filteredTableList.length === 0 ? (
                       <div className="px-4 py-2 text-sm text-secondary-500 text-center">
                         {tableSearchTerm ? 'No matching tables found' : 'No tables available'}
                       </div>
                     ) : (
-                      filteredTables.map((table, index) => (
+                      filteredTableList.map((table, index) => (
                         <Link
                           key={index}
                           to={`/analytics/table/${activeConnection.id}/${getTableName(table)}`}
@@ -246,9 +314,103 @@ const AnalyticsPage = () => {
         </div>
       </div>
 
-      {/* Time range selector */}
-      <div className="flex justify-end">
-        <div className="flex items-center space-x-2 bg-white rounded-md shadow-sm p-1">
+      {/* Dashboard Controls - Time & Table Filters */}
+      <div className="flex justify-between items-center bg-white rounded-lg shadow p-3">
+        {/* Table Filter Dropdown */}
+        <div className="relative">
+          <div className="flex space-x-2 items-center">
+            {/* Filter Mode Toggle Buttons */}
+            <div className="flex items-center space-x-1 bg-secondary-100 rounded-md p-1">
+              <button
+                className={`px-3 py-1.5 text-sm font-medium rounded-md ${
+                  filterMode === 'all'
+                    ? 'bg-white text-secondary-800 shadow-sm'
+                    : 'text-secondary-600 hover:text-secondary-800'
+                }`}
+                onClick={() => handleShowAllTables()}
+              >
+                All Tables
+              </button>
+              <button
+                className={`px-3 py-1.5 text-sm font-medium rounded-md ${
+                  filterMode === 'single'
+                    ? 'bg-white text-secondary-800 shadow-sm'
+                    : 'text-secondary-600 hover:text-secondary-800'
+                }`}
+                onClick={() => toggleFilterMode('single')}
+              >
+                Single
+              </button>
+              <button
+                className={`px-3 py-1.5 text-sm font-medium rounded-md ${
+                  filterMode === 'multi'
+                    ? 'bg-white text-secondary-800 shadow-sm'
+                    : 'text-secondary-600 hover:text-secondary-800'
+                }`}
+                onClick={() => toggleFilterMode('multi')}
+              >
+                Multiple
+              </button>
+            </div>
+
+            {/* Selected tables indicator / filter button */}
+            {filterMode !== 'all' && (
+              <button
+                className="flex items-center px-3 py-2 border border-secondary-300 rounded-md bg-white text-sm text-secondary-700 hover:bg-secondary-50"
+                onClick={() => setShowFilterDropdown(!showFilterDropdown)}
+              >
+                <FunnelIcon className="h-4 w-4 mr-2" />
+                {filterMode === 'single' && selectedTables.length
+                  ? selectedTables[0]
+                  : filterMode === 'multi' && selectedTables.length
+                  ? `${selectedTables.length} Tables`
+                  : 'Select Tables'}
+              </button>
+            )}
+          </div>
+
+          {/* Table Selection Dropdown */}
+          {showFilterDropdown && (
+            <div className="absolute left-0 mt-2 w-64 bg-white border border-secondary-200 rounded-md shadow-lg z-10">
+              <div className="p-2 border-b border-secondary-200">
+                <div className="relative">
+                  <input
+                    type="text"
+                    className="w-full px-3 py-2 text-sm border border-secondary-300 rounded-md"
+                    placeholder="Search tables..."
+                    value={tableSearchTerm}
+                    onChange={(e) => setTableSearchTerm(e.target.value)}
+                  />
+                </div>
+              </div>
+              <div className="max-h-60 overflow-y-auto py-1">
+                {filteredTables.length === 0 ? (
+                  <div className="px-3 py-2 text-sm text-secondary-500">No tables available</div>
+                ) : (
+                  filteredTables.map((tableName, index) => (
+                    <button
+                      key={index}
+                      className={`w-full text-left px-3 py-2 text-sm ${
+                        selectedTables.includes(tableName) 
+                          ? 'bg-primary-50 text-primary-700' 
+                          : 'text-secondary-700 hover:bg-secondary-50'
+                      }`}
+                      onClick={() => handleTableSelection(tableName)}
+                    >
+                      {tableName}
+                      {selectedTables.includes(tableName) && (
+                        <span className="ml-2">✓</span>
+                      )}
+                    </button>
+                  ))
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Time range selector */}
+        <div className="flex items-center space-x-2 bg-white rounded-md p-1">
           <button
             onClick={() => handleTimeframeChange(7)}
             className={`px-3 py-1.5 text-sm font-medium rounded-md ${
@@ -287,6 +449,8 @@ const AnalyticsPage = () => {
         data={dashboardData}
         isLoading={isDashboardLoading}
         timeframe={timeframe}
+        selectedTables={selectedTables}
+        filterMode={filterMode}
       />
 
       {/* High Impact Objects */}

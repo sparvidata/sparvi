@@ -6,6 +6,7 @@ import {
   YAxis,
   CartesianGrid,
   Tooltip,
+  Legend,
   ResponsiveContainer,
   AreaChart,
   Area
@@ -13,7 +14,7 @@ import {
 import { formatDate, formatNumber, formatPercentage } from '../../utils/formatting';
 
 /**
- * A reusable chart component for displaying trend data
+ * A reusable chart component for displaying trend data with enhanced capabilities
  */
 const TrendChart = ({
   data = [],
@@ -29,6 +30,7 @@ const TrendChart = ({
   showYAxis = true,
   showGrid = true,
   showTooltip = true,
+  showLegend = false,
   dateFormat = true, // Format x-axis as date
   valueFormat = 'number', // 'number', 'percentage', 'currency'
   loading = false,
@@ -66,9 +68,16 @@ const TrendChart = ({
           <p className="font-medium text-secondary-900">
             {dateFormat ? formatDate(label, true) : label}
           </p>
-          <p className="text-primary-600">
-            {formatValue(payload[0].value)}
-          </p>
+          {payload.map((entry, index) => (
+            <p
+              key={`item-${index}`}
+              style={{ color: entry.color }}
+              className="text-sm"
+            >
+              {entry.name ? `${entry.name}: ` : ''}
+              {formatValue(entry.value)}
+            </p>
+          ))}
         </div>
       );
     }
@@ -100,7 +109,7 @@ const TrendChart = ({
   }
 
   return (
-    <div className={`bg-white rounded-lg shadow p-4 ${className}`}>
+    <div className={`bg-white rounded-lg shadow p-4 ${!title ? className : ''}`}>
       {title && <h3 className="text-md font-medium text-secondary-900 mb-2">{title}</h3>}
       <div style={{ height: height, width: width }}>
         <ResponsiveContainer width="100%" height="100%">
@@ -125,6 +134,7 @@ const TrendChart = ({
                 />
               )}
               {showTooltip && <Tooltip content={<CustomTooltip />} />}
+              {showLegend && <Legend />}
               <Area
                 type="monotone"
                 dataKey={yKey}
@@ -132,6 +142,7 @@ const TrendChart = ({
                 fill={color}
                 fillOpacity={fillOpacity}
                 strokeWidth={2}
+                name={title || 'Value'}
               />
             </AreaChart>
           ) : (
@@ -155,6 +166,7 @@ const TrendChart = ({
                 />
               )}
               {showTooltip && <Tooltip content={<CustomTooltip />} />}
+              {showLegend && <Legend />}
               <Line
                 type="monotone"
                 dataKey={yKey}
@@ -162,6 +174,7 @@ const TrendChart = ({
                 strokeWidth={2}
                 dot={{ fill: color, strokeWidth: 2 }}
                 activeDot={{ r: 6, fill: color, stroke: '#ffffff', strokeWidth: 2 }}
+                name={title || 'Value'}
               />
             </LineChart>
           )}

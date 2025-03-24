@@ -8,15 +8,19 @@ import {
 import TrendChart from './TrendChart';
 import MetricCard from './MetricCard';
 import LoadingSpinner from '../common/LoadingSpinner';
+import { formatDate } from '../../utils/formatting';
 
 /**
  * A component that displays historical metrics data
  * Transforms API response data into a format suitable for visualization
+ * Now uses table filter state from parent component
  */
 const HistoricalMetricsDashboard = ({
   data,
   isLoading,
   timeframe = 30,
+  selectedTables = [], // Now passed from parent
+  filterMode = 'all', // Now passed from parent
   className = ''
 }) => {
   // Process data for visualization when it changes
@@ -40,8 +44,8 @@ const HistoricalMetricsDashboard = ({
       return metrics[0].metric_value || metrics[0].metric_text || 0;
     };
 
-    // Process row count trends
-    const rowCountTrends = processRowCountTrends(data.row_count_trends || []);
+    // Process row count trends - Daily aggregation
+    const rowCountTrends = processRowCountTrends(data.row_count_trends || [], selectedTables, filterMode);
 
     // Process schema changes
     const schemaChanges = processSchemaChanges(data.schema_change_trends || []);
@@ -65,7 +69,7 @@ const HistoricalMetricsDashboard = ({
         validationSuccess: getLatestMetricValue('validation_success') || 95.2, // Default if not available
       }
     };
-  }, [data]);
+  }, [data, selectedTables, filterMode]);
 
   // If loading, show spinner
   if (isLoading) {
@@ -127,20 +131,31 @@ const HistoricalMetricsDashboard = ({
         />
       </div>
 
-      {/* Charts */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Row Count Trend */}
+      {/* Row Count Trend Chart */}
+      <div className="bg-white rounded-lg shadow p-4">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-lg font-medium text-secondary-900">Row Count Trends</h2>
+          <div className="text-sm text-secondary-500">
+            {filterMode === 'all' ? 'All Tables' :
+             filterMode === 'single' && selectedTables.length ? `Table: ${selectedTables[0]}` :
+             filterMode === 'multi' && selectedTables.length ? `${selectedTables.length} Tables Selected` : 'Filtered View'}
+          </div>
+        </div>
+
+        {/* Row Count Chart */}
         <TrendChart
-          title="Row Count Trends"
           data={processedData.rowCountTrends}
-          xKey="timestamp"
+          xKey="date"
           yKey="value"
           type="line"
           color="#6366f1"
           height={250}
-          emptyMessage="No row count data available for the selected period."
+          emptyMessage="No row count data available for the selected period or tables."
         />
+      </div>
 
+      {/* Charts Grid */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Validation Success Rate */}
         <TrendChart
           title="Validation Success Rate"
@@ -153,12 +168,25 @@ const HistoricalMetricsDashboard = ({
           height={250}
           emptyMessage="No validation data available for the selected period."
         />
+
+        {/* Quality Score */}
+        <TrendChart
+          title="Quality Score Trend"
+          data={processedData.qualityScoreTrends}
+          xKey="timestamp"
+          yKey="value"
+          type="area"
+          color="#f59e0b"
+          valueFormat="percentage"
+          height={250}
+          emptyMessage="No quality score data available for the selected period."
+        />
       </div>
 
       {/* Table Metrics */}
       <div>
         <h2 className="text-lg font-medium text-secondary-900 mb-4">Top Tables by Size</h2>
-        {renderTopTables(processedData.rowCountTrends)}
+        {renderTopTables(processedData.rowCountTrends, filterMode, selectedTables)}
       </div>
     </div>
   );
@@ -167,22 +195,44 @@ const HistoricalMetricsDashboard = ({
 // Helper functions for data processing
 
 /**
- * Process row count trends data
+ * Process row count trends data with daily aggregation and filtering
  */
-function processRowCountTrends(rowCountData) {
+function processRowCountTrends(rowCountData, selectedTables = [], filterMode = 'all') {
   if (!rowCountData || rowCountData.length === 0) return [];
 
-  // Sort by timestamp
-  const sortedData = [...rowCountData].sort((a, b) =>
-    new Date(a.timestamp) - new Date(b.timestamp)
-  );
+  // Filter data based on selected tables if applicable
+  let filteredData = rowCountData;
+  if (filterMode !== 'all' && selectedTables.length > 0) {
+    filteredData = rowCountData.filter(item => selectedTables.includes(item.table_name));
+  }
 
-  // Convert to chart format
-  return sortedData.map(item => ({
-    timestamp: item.timestamp,
-    value: item.metric_value || 0,
-    table_name: item.table_name || 'Unknown'
-  }));
+  // Group data by date
+  const dataByDate = {};
+
+  filteredData.forEach(item => {
+    // Extract date portion only (no time)
+    const date = item.timestamp.split('T')[0];
+
+    if (!dataByDate[date]) {
+      dataByDate[date] = {
+        date,
+        value: 0,
+        tables: {}
+      };
+    }
+
+    // Store values by table
+    const tableName = item.table_name || 'Unknown';
+    dataByDate[date].tables[tableName] = (item.metric_value || 0);
+
+    // Add to the daily total
+    dataByDate[date].value += (item.metric_value || 0);
+  });
+
+  // Convert to array and sort by date
+  return Object.values(dataByDate).sort((a, b) =>
+    new Date(a.date) - new Date(b.date)
+  );
 }
 
 /**
@@ -247,20 +297,9 @@ function processQualityScoreTrends(qualityData) {
 function getTotalRowCount(rowCountTrends) {
   if (!rowCountTrends || rowCountTrends.length === 0) return 0;
 
-  // Group latest row counts by table
-  const latestByTable = {};
-
-  // First identify the latest entry for each table
-  rowCountTrends.forEach(item => {
-    const tableName = item.table_name;
-    if (!latestByTable[tableName] ||
-        new Date(item.timestamp) > new Date(latestByTable[tableName].timestamp)) {
-      latestByTable[tableName] = item;
-    }
-  });
-
-  // Sum up the latest values
-  return Object.values(latestByTable).reduce((sum, item) => sum + (item.value || 0), 0);
+  // Get the most recent date's value
+  const latestEntry = rowCountTrends[rowCountTrends.length - 1];
+  return latestEntry.value;
 }
 
 /**
@@ -284,7 +323,7 @@ function calculateSchemaStability(schemaChanges) {
 /**
  * Render top tables by row count
  */
-function renderTopTables(rowCountTrends) {
+function renderTopTables(rowCountTrends, filterMode, selectedTables) {
   if (!rowCountTrends || rowCountTrends.length === 0) {
     return (
       <div className="bg-white rounded-lg shadow p-6 text-center">
@@ -297,22 +336,51 @@ function renderTopTables(rowCountTrends) {
     );
   }
 
-  // Group latest row counts by table
-  const latestByTable = {};
-
-  // First identify the latest entry for each table
-  rowCountTrends.forEach(item => {
-    const tableName = item.table_name;
-    if (!latestByTable[tableName] ||
-        new Date(item.timestamp) > new Date(latestByTable[tableName].timestamp)) {
-      latestByTable[tableName] = item;
-    }
-  });
+  // Extract table-specific data from the last entry
+  const latestEntry = rowCountTrends[rowCountTrends.length - 1];
+  if (!latestEntry.tables || Object.keys(latestEntry.tables).length === 0) {
+    return (
+      <div className="bg-white rounded-lg shadow p-6 text-center">
+        <TableCellsIcon className="h-12 w-12 text-secondary-400 mx-auto mb-4" />
+        <h3 className="text-lg font-medium text-secondary-900">No Table Details</h3>
+        <p className="mt-2 text-secondary-500">
+          Table breakdown information is not available.
+        </p>
+      </div>
+    );
+  }
 
   // Convert to array and sort by row count (descending)
-  const sortedTables = Object.values(latestByTable)
-    .sort((a, b) => (b.value || 0) - (a.value || 0))
-    .slice(0, 5); // Take top 5
+  let tablesToShow = Object.entries(latestEntry.tables)
+    .map(([tableName, rowCount]) => ({ table_name: tableName, value: rowCount }))
+    .sort((a, b) => b.value - a.value);
+
+  // Apply filters if specified
+  if (filterMode === 'single' && selectedTables.length > 0) {
+    tablesToShow = tablesToShow.filter(table =>
+      table.table_name === selectedTables[0]
+    );
+  } else if (filterMode === 'multi' && selectedTables.length > 0) {
+    tablesToShow = tablesToShow.filter(table =>
+      selectedTables.includes(table.table_name)
+    );
+  } else {
+    // In "all" mode or if no filters, take top 5
+    tablesToShow = tablesToShow.slice(0, 5);
+  }
+
+  // If no tables to show after filtering
+  if (tablesToShow.length === 0) {
+    return (
+      <div className="bg-white rounded-lg shadow p-6 text-center">
+        <TableCellsIcon className="h-12 w-12 text-secondary-400 mx-auto mb-4" />
+        <h3 className="text-lg font-medium text-secondary-900">No Matching Tables</h3>
+        <p className="mt-2 text-secondary-500">
+          No tables match the current filter criteria.
+        </p>
+      </div>
+    );
+  }
 
   return (
     <div className="bg-white rounded-lg shadow overflow-hidden">
@@ -322,7 +390,7 @@ function renderTopTables(rowCountTrends) {
       </div>
 
       <div className="divide-y divide-secondary-200">
-        {sortedTables.map((table, index) => (
+        {tablesToShow.map((table, index) => (
           <div key={index} className="flex items-center p-4 hover:bg-secondary-50">
             <div className="w-1/2 font-medium text-primary-600">
               {table.table_name}
@@ -333,7 +401,7 @@ function renderTopTables(rowCountTrends) {
                   <div
                     className="h-2 bg-primary-600 rounded-full"
                     style={{
-                      width: `${Math.min(100, (table.value / sortedTables[0].value) * 100)}%`
+                      width: `${Math.min(100, (table.value / tablesToShow[0].value) * 100)}%`
                     }}
                   ></div>
                 </div>
