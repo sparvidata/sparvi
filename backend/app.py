@@ -831,6 +831,78 @@ class ImprovedTaskManager:
         statistics_by_table = {table_name: table_stats}
         self.storage_service.store_statistics_metadata(connection_id, statistics_by_table)
 
+        try:
+            from core.analytics.historical_metrics import HistoricalMetricsTracker
+            tracker = HistoricalMetricsTracker(self.supabase_mgr)
+
+            # Get organization ID from connection
+            organization_id = None
+            connection = self.supabase_mgr.get_connection(connection_id)
+            if connection and "organization_id" in connection:
+                organization_id = connection["organization_id"]
+
+            if organization_id:
+                # Track table-level metrics
+                metrics = []
+
+                # Row count
+                if "general" in table_stats and "row_count" in table_stats["general"]:
+                    metrics.append({
+                        "name": "row_count",
+                        "value": table_stats["general"]["row_count"],
+                        "type": "table_statistic",
+                        "table_name": table_name,
+                        "source": "metadata_collection"
+                    })
+
+                # Size in bytes
+                if "general" in table_stats and "size_bytes" in table_stats["general"] and table_stats["general"][
+                    "size_bytes"]:
+                    metrics.append({
+                        "name": "size_bytes",
+                        "value": table_stats["general"]["size_bytes"],
+                        "type": "table_statistic",
+                        "table_name": table_name,
+                        "source": "metadata_collection"
+                    })
+
+                # Column statistics
+                if "column_statistics" in table_stats:
+                    for col_name, col_stats in table_stats["column_statistics"].items():
+                        # Track null percentage
+                        if "basic" in col_stats and "null_percentage" in col_stats["basic"]:
+                            metrics.append({
+                                "name": "null_percentage",
+                                "value": col_stats["basic"]["null_percentage"],
+                                "type": "column_statistic",
+                                "table_name": table_name,
+                                "column_name": col_name,
+                                "source": "metadata_collection"
+                            })
+
+                        # Track distinct percentage
+                        if "basic" in col_stats and "distinct_percentage" in col_stats["basic"]:
+                            metrics.append({
+                                "name": "distinct_percentage",
+                                "value": col_stats["basic"]["distinct_percentage"],
+                                "type": "column_statistic",
+                                "table_name": table_name,
+                                "column_name": col_name,
+                                "source": "metadata_collection"
+                            })
+
+                # Batch track all metrics
+                if metrics:
+                    tracker.track_metrics_batch(
+                        organization_id=organization_id,
+                        connection_id=connection_id,
+                        metrics=metrics
+                    )
+                    logger.info(f"Tracked {len(metrics)} historical metrics for table {table_name}")
+
+        except Exception as tracking_error:
+            logger.error(f"Error tracking historical metrics: {str(tracking_error)}")
+
         # Return the statistics along with the status
         return {
             "status": "success",
@@ -5770,6 +5842,251 @@ def get_change_analytics_dashboard(current_user, organization_id, connection_id)
 
     except Exception as e:
         logger.error(f"Error getting analytics dashboard: {str(e)}")
+        logger.error(traceback.format_exc())
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/connections/<connection_id>/analytics/historical-metrics", methods=["GET"])
+@token_required
+def get_historical_metrics(current_user, organization_id, connection_id):
+    """Get historical metrics for analytics"""
+    try:
+        # Check access to connection
+        connection = connection_access_check(connection_id, organization_id)
+        if not connection:
+            return jsonify({"error": "Connection not found or access denied"}), 404
+
+        # Get query parameters
+        metric_name = request.args.get("metric_name")
+        table_name = request.args.get("table_name")
+        column_name = request.args.get("column_name")
+        days = request.args.get("days", 30, type=int)
+        limit = request.args.get("limit", 100, type=int)
+
+        # Import the historical metrics tracker
+        from core.analytics.historical_metrics import HistoricalMetricsTracker
+        tracker = HistoricalMetricsTracker(SupabaseManager())
+
+        # Get the metrics
+        if metric_name:
+            # Get specific metric history
+            metrics = tracker.get_metric_history(
+                organization_id=organization_id,
+                connection_id=connection_id,
+                metric_name=metric_name,
+                table_name=table_name,
+                column_name=column_name,
+                days=days,
+                limit=limit
+            )
+        else:
+            # Get recent metrics
+            metrics = tracker.get_recent_metrics(
+                organization_id=organization_id,
+                connection_id=connection_id,
+                limit=limit
+            )
+
+        # Format the response
+        result = {
+            "metrics": metrics,
+            "count": len(metrics)
+        }
+
+        # Group by date if requested
+        if request.args.get("group_by_date", "false").lower() == "true":
+            from itertools import groupby
+            from operator import itemgetter
+
+            # Extract date from timestamp
+            for metric in metrics:
+                if "timestamp" in metric:
+                    metric["date"] = metric["timestamp"].split("T")[0]
+
+            # Group by date
+            metrics_by_date = {}
+            for date, group in groupby(sorted(metrics, key=itemgetter("date")), key=itemgetter("date")):
+                metrics_by_date[date] = list(group)
+
+            result["metrics_by_date"] = metrics_by_date
+
+        return jsonify(result)
+
+    except Exception as e:
+        logger.error(f"Error getting historical metrics: {str(e)}")
+        logger.error(traceback.format_exc())
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/api/connections/<connection_id>/analytics/track-metrics", methods=["POST"])
+@token_required
+def track_custom_metrics(current_user, organization_id, connection_id):
+    """Track custom metrics for a connection"""
+    try:
+        # Check access to connection
+        connection = connection_access_check(connection_id, organization_id)
+        if not connection:
+            return jsonify({"error": "Connection not found or access denied"}), 404
+
+        # Get metrics data from request
+        data = request.get_json()
+        if not data or "metrics" not in data:
+            return jsonify({"error": "Metrics data is required"}), 400
+
+        metrics = data["metrics"]
+        if not isinstance(metrics, list):
+            return jsonify({"error": "Metrics must be a list"}), 400
+
+        # Import the historical metrics tracker
+        from core.analytics.historical_metrics import HistoricalMetricsTracker
+        tracker = HistoricalMetricsTracker(SupabaseManager())
+
+        # Track the metrics
+        success = tracker.track_metrics_batch(
+            organization_id=organization_id,
+            connection_id=connection_id,
+            metrics=metrics
+        )
+
+        if success:
+            return jsonify({
+                "success": True,
+                "message": f"Successfully tracked {len(metrics)} metrics",
+                "count": len(metrics)
+            })
+        else:
+            return jsonify({
+                "error": "Failed to track metrics"
+            }), 500
+
+    except Exception as e:
+        logger.error(f"Error tracking metrics: {str(e)}")
+        logger.error(traceback.format_exc())
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/api/connections/<connection_id>/analytics/dashboard/metrics", methods=["GET"])
+@token_required
+def get_analytics_dashboard_metrics(current_user, organization_id, connection_id):
+    """Get comprehensive analytics dashboard metrics over time"""
+    try:
+        # Check access to connection
+        connection = connection_access_check(connection_id, organization_id)
+        if not connection:
+            return jsonify({"error": "Connection not found or access denied"}), 404
+
+        # Get query parameters
+        days = request.args.get("days", 30, type=int)
+        limit = request.args.get("limit", 100, type=int)
+
+        # Create direct Supabase client
+        import os
+        from supabase import create_client
+
+        # Get credentials from environment
+        supabase_url = os.getenv("SUPABASE_URL")
+        supabase_key = os.getenv("SUPABASE_SERVICE_KEY")
+
+        # Create client
+        direct_client = create_client(supabase_url, supabase_key)
+
+        # Calculate the start date
+        from datetime import datetime, timedelta
+        start_date = (datetime.now() - timedelta(days=days)).isoformat()
+
+        # Get key metrics for the dashboard
+        # 1. Row count trends
+        row_count_query = f"""
+        SELECT 
+            table_name, 
+            metric_value as row_count, 
+            timestamp
+        FROM historical_metrics
+        WHERE connection_id = '{connection_id}'
+        AND organization_id = '{organization_id}'
+        AND metric_name = 'row_count'
+        AND timestamp >= '{start_date}'
+        ORDER BY table_name, timestamp
+        """
+        row_count_response = direct_client.rpc("exec_sql", {"sql_query": row_count_query}).execute()
+        row_count_trends = row_count_response.data if hasattr(row_count_response, 'data') else []
+
+        # 2. Validation success rate trends
+        validation_query = f"""
+        SELECT 
+            date_trunc('day', timestamp) as date,
+            AVG(CASE WHEN metric_name = 'validation_success' 
+                THEN metric_value ELSE NULL END) as success_rate,
+            COUNT(DISTINCT case when table_name is not null then table_name end) as tables_validated
+        FROM historical_metrics
+        WHERE connection_id = '{connection_id}'
+        AND organization_id = '{organization_id}'
+        AND metric_type = 'validation'
+        AND timestamp >= '{start_date}'
+        GROUP BY date_trunc('day', timestamp)
+        ORDER BY date
+        """
+        validation_response = direct_client.rpc("exec_sql", {"sql_query": validation_query}).execute()
+        validation_trends = validation_response.data if hasattr(validation_response, 'data') else []
+
+        # 3. Schema change frequency
+        schema_query = f"""
+        SELECT 
+            date_trunc('day', timestamp) as date,
+            COUNT(*) as change_count
+        FROM historical_metrics
+        WHERE connection_id = '{connection_id}'
+        AND organization_id = '{organization_id}'
+        AND metric_type = 'schema_change'
+        AND timestamp >= '{start_date}'
+        GROUP BY date_trunc('day', timestamp)
+        ORDER BY date
+        """
+        schema_response = direct_client.rpc("exec_sql", {"sql_query": schema_query}).execute()
+        schema_trends = schema_response.data if hasattr(schema_response, 'data') else []
+
+        # 4. Data quality score trends
+        quality_query = f"""
+        SELECT 
+            date_trunc('day', timestamp) as date,
+            AVG(metric_value) as avg_quality_score
+        FROM historical_metrics
+        WHERE connection_id = '{connection_id}'
+        AND organization_id = '{organization_id}'
+        AND metric_name = 'quality_score'
+        AND timestamp >= '{start_date}'
+        GROUP BY date_trunc('day', timestamp)
+        ORDER BY date
+        """
+        quality_response = direct_client.rpc("exec_sql", {"sql_query": quality_query}).execute()
+        quality_trends = quality_response.data if hasattr(quality_response, 'data') else []
+
+        # 5. Most recent metrics
+        recent_query = f"""
+        SELECT 
+            table_name,
+            metric_name,
+            metric_value,
+            metric_text,
+            timestamp
+        FROM historical_metrics
+        WHERE connection_id = '{connection_id}'
+        AND organization_id = '{organization_id}'
+        ORDER BY timestamp DESC
+        LIMIT 20
+        """
+        recent_response = direct_client.rpc("exec_sql", {"sql_query": recent_query}).execute()
+        recent_metrics = recent_response.data if hasattr(recent_response, 'data') else []
+
+        # Return comprehensive dashboard data
+        return jsonify({
+            "row_count_trends": row_count_trends,
+            "validation_trends": validation_trends,
+            "schema_change_trends": schema_trends,
+            "quality_score_trends": quality_trends,
+            "recent_metrics": recent_metrics
+        })
+
+    except Exception as e:
+        logger.error(f"Error getting analytics dashboard metrics: {str(e)}")
         logger.error(traceback.format_exc())
         return jsonify({"error": str(e)}), 500
 

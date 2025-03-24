@@ -1,4 +1,3 @@
-# backend/core/metadata/schema_change_detector.py
 import logging
 from typing import Dict, List, Any, Optional, Set, Tuple
 import json
@@ -264,6 +263,68 @@ class SchemaChangeDetector:
                                       "column_type_changed"]]) > 0
 
             logger.info(f"Detected {len(changes)} schema changes, important: {important_changes}")
+
+            # Track schema changes as metrics
+            if changes and important_changes:
+                try:
+                    from core.analytics.historical_metrics import HistoricalMetricsTracker
+                    tracker = HistoricalMetricsTracker(supabase_manager)
+
+                    # Get organization ID from connection details
+                    organization_id = connection.get("organization_id")
+
+                    # Track changes by type
+                    if organization_id:
+                        metrics = []
+
+                        # Count changes by type
+                        change_counts = {}
+                        for change in changes:
+                            change_type = change.get("type", "unknown")
+                            if change_type not in change_counts:
+                                change_counts[change_type] = 0
+                            change_counts[change_type] += 1
+
+                            # Track each table affected
+                            table_name = change.get("table")
+                            if table_name:
+                                metrics.append({
+                                    "name": change_type,
+                                    "value": 1.0,
+                                    "type": "schema_change",
+                                    "table_name": table_name,
+                                    "source": "schema_detector"
+                                })
+
+                        # Track overall change count
+                        metrics.append({
+                            "name": "schema_changes",
+                            "value": len(changes),
+                            "type": "schema_change",
+                            "source": "schema_detector"
+                        })
+
+                        # Track specific change types
+                        for change_type, count in change_counts.items():
+                            metrics.append({
+                                "name": f"schema_change_{change_type}",
+                                "value": count,
+                                "type": "schema_change",
+                                "source": "schema_detector"
+                            })
+
+                        # Batch track all metrics
+                        if metrics:
+                            tracker.track_metrics_batch(
+                                organization_id=organization_id,
+                                connection_id=connection_id,
+                                metrics=metrics
+                            )
+                            logger.info(f"Tracked {len(metrics)} schema change metrics")
+
+                except Exception as tracking_error:
+                    logger.error(f"Error tracking schema change metrics: {str(tracking_error)}")
+                    # Continue with return, don't let tracking error affect main operation
 
             return changes, important_changes
 

@@ -1,6 +1,7 @@
 import datetime
 import os
 import secrets
+import traceback
 from typing import Dict, List, Any, Optional, Union
 import json
 from dotenv import load_dotenv
@@ -282,31 +283,88 @@ class SupabaseManager:
             return False
 
     def store_validation_result(self, organization_id: str, rule_id: str, is_valid: bool, actual_value: Any,
-                                profile_history_id: str = None) -> str:
+                                connection_id: str = None, profile_history_id: str = None) -> str:
         """Store a validation result"""
         try:
             # Ensure actual_value is stored as a JSON string
             actual_value_str = json.dumps(actual_value) if actual_value is not None else None
 
-            data = {
-                "organization_id": organization_id,
-                "rule_id": rule_id,
-                "is_valid": is_valid,
-                "actual_value": actual_value_str
-            }
+            # Log what parameters we're using
+            logger.info(
+                f"Storing validation result with connection_id: {connection_id} and profile_history_id: {profile_history_id}")
 
-            # Add profile_history_id if provided
-            if profile_history_id:
-                data["profile_history_id"] = profile_history_id
+            # Pass both parameters to the supabase manager's store_validation_result method
+            result_id = self.supabase.store_validation_result(
+                organization_id=organization_id,
+                rule_id=rule_id,
+                is_valid=is_valid,
+                actual_value=actual_value,
+                connection_id=connection_id,  # Pass connection_id
+                profile_history_id=profile_history_id
+            )
 
-            response = self.supabase.table("validation_results").insert(data).execute()
+            # Track validation metrics for historical tracking
+            try:
+                # Only track if we have all required information
+                if organization_id and rule_id and connection_id:
+                    from core.analytics.historical_metrics import HistoricalMetricsTracker
+                    tracker = HistoricalMetricsTracker(self.supabase)
 
-            if response.data and len(response.data) > 0:
-                return response.data[0]["id"]  # Return the ID of the new result
-            return None
+                    # Get rule details to know which table/column it belongs to
+                    rule_details = None
+                    rule_response = self.supabase.supabase.table("validation_rules") \
+                        .select("*") \
+                        .eq("id", rule_id) \
+                        .execute()
+
+                    if rule_response.data and len(rule_response.data) > 0:
+                        rule_details = rule_response.data[0]
+
+                        # Track validation success/failure
+                        tracker.track_metric(
+                            organization_id=organization_id,
+                            connection_id=connection_id,
+                            metric_name="validation_success",
+                            metric_value=1.0 if is_valid else 0.0,
+                            metric_type="validation",
+                            table_name=rule_details.get("table_name"),
+                            source="validation_engine"
+                        )
+
+                        # If we have all needed data and an actual value, track that too
+                        if actual_value is not None and rule_details.get("table_name"):
+                            # If actual_value is numeric, track as metric
+                            if isinstance(actual_value, (int, float)) or (
+                                    isinstance(actual_value, str) and actual_value.replace('.', '', 1).isdigit()
+                            ):
+                                # Try to convert to float
+                                try:
+                                    actual_value_float = float(actual_value)
+
+                                    # Track the actual metric value
+                                    metric_name = rule_details.get("rule_name", "").replace("check_", "").replace("_",
+                                                                                                                  ".")
+                                    if metric_name:
+                                        tracker.track_metric(
+                                            organization_id=organization_id,
+                                            connection_id=connection_id,
+                                            metric_name=metric_name,
+                                            metric_value=actual_value_float,
+                                            metric_type="validation_metric",
+                                            table_name=rule_details.get("table_name"),
+                                            source="validation_engine"
+                                        )
+                                except (ValueError, TypeError):
+                                    pass  # Not numeric, skip tracking
+            except Exception as tracking_error:
+                logger.error(f"Error tracking validation metrics: {str(tracking_error)}")
+                # Continue with return, don't let tracking error affect main operation
+
+            return result_id
 
         except Exception as e:
             logger.error(f"Error storing validation result: {str(e)}")
+            logger.error(traceback.format_exc())
             return None
 
     def get_validation_history(self, organization_id: str, table_name: str, limit: int = 10) -> List[Dict]:
@@ -330,7 +388,7 @@ class SupabaseManager:
                 .select("*") \
                 .eq("organization_id", organization_id) \
                 .in_("rule_id", rule_ids) \
-                .order("run_at", {"ascending": False}) \
+                .order("run_at", desc=True) \
                 .limit(limit) \
                 .execute()
 
