@@ -1037,6 +1037,49 @@ export const analyticsAPI = {
       requestId,
       forceFresh
     });
+  },
+
+  // New methods for enhanced analytics
+
+  getHistoricalMetrics: (connectionId, options = {}) => {
+    const {
+      metric_name, table_name, column_name, days = 30,
+      limit = 100, group_by_date = false, forceFresh = false
+    } = options;
+
+    return enhancedRequest({
+      url: `/connections/${connectionId}/analytics/historical-metrics`,
+      params: {
+        metric_name, table_name, column_name,
+        days, limit, group_by_date
+      },
+      cacheKey: `analytics.historicalMetrics.${connectionId}.${metric_name || 'all'}.${table_name || 'all'}.${days}`,
+      cacheTTL: 1 * 60 * 60 * 1000, // 1 hour
+      requestId: `analytics.historicalMetrics.${connectionId}`,
+      forceFresh
+    });
+  },
+
+  trackMetrics: (connectionId, metrics) => {
+    return enhancedRequest({
+      method: 'POST',
+      url: `/connections/${connectionId}/analytics/track-metrics`,
+      data: { metrics },
+      requestId: `analytics.trackMetrics.${connectionId}`
+    });
+  },
+
+  getDashboardMetrics: (connectionId, options = {}) => {
+    const { days = 30, limit = 100, forceFresh = false } = options;
+
+    return enhancedRequest({
+      url: `/connections/${connectionId}/analytics/dashboard/metrics`,
+      params: { days, limit },
+      cacheKey: `analytics.dashboardMetrics.${connectionId}.${days}`,
+      cacheTTL: 1 * 60 * 60 * 1000, // 1 hour
+      requestId: `analytics.dashboardMetrics.${connectionId}`,
+      forceFresh
+    });
   }
 };
 

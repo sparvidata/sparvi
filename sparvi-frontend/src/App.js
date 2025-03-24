@@ -27,6 +27,10 @@ import DataExplorerPage from './pages/DataExplorer/DataExplorerPage';
 import TableDetailPage from './pages/DataExplorer/TableDetailPage';
 import ValidationPage from './pages/Validations/ValidationPage';
 import MetadataPage from './pages/Metadata/MetadataPage';
+import AnalyticsPage from './pages/Analytics/AnalyticsPage';
+import TableAnalyticsPage from './pages/Analytics/TableAnalyticsPage';
+import SchemaChangesPage from './pages/Analytics/SchemaChangesPage';
+import BusinessImpactPage from './pages/Analytics/BusinessImpactPage';
 import AdminUsersPage from './pages/Admin/AdminUsersPage';
 import AdminSettingsPage from './pages/Admin/AdminSettingsPage';
 import UserSettingsPage from './pages/Settings/UserSettingsPage';
@@ -69,6 +73,12 @@ function App() {
 
                   {/* Metadata */}
                   <Route path="/metadata" element={<MetadataPage />} />
+
+                  {/* Analytics */}
+                  <Route path="/analytics" element={<AnalyticsPage />} />
+                  <Route path="/analytics/table/:connectionId/:tableName" element={<TableAnalyticsPage />} />
+                  <Route path="/analytics/schema-changes/:connectionId" element={<SchemaChangesPage />} />
+                  <Route path="/analytics/business-impact/:connectionId" element={<BusinessImpactPage />} />
 
                   {/* Admin */}
                   <Route path="/admin/users" element={<AdminUsersPage />} />
