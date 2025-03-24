@@ -46,7 +46,7 @@ const AnalyticsPage = () => {
 
   // Table filter state
   const [selectedTables, setSelectedTables] = useState([]);
-  const [filterMode, setFilterMode] = useState('all'); // 'all', 'single', 'multi'
+  const [isFiltering, setIsFiltering] = useState(false); // True when filter is active
   const [showFilterDropdown, setShowFilterDropdown] = useState(false);
 
   // Update breadcrumbs when connection changes
@@ -142,44 +142,32 @@ const AnalyticsPage = () => {
 
   // Handle table selection for filtering
   const handleTableSelection = (tableName) => {
-    if (filterMode === 'single') {
-      // Single select mode - just replace the selection
-      setSelectedTables([tableName]);
-    } else if (filterMode === 'multi') {
-      // Multi select mode - toggle the selection
-      if (selectedTables.includes(tableName)) {
-        setSelectedTables(selectedTables.filter(t => t !== tableName));
-      } else {
-        setSelectedTables([...selectedTables, tableName]);
+    setSelectedTables(prev => {
+      // If already selected, remove it
+      if (prev.includes(tableName)) {
+        return prev.filter(t => t !== tableName);
       }
-    }
-
-    // Don't close dropdown for multi-select
-    if (filterMode !== 'multi') {
-      setShowFilterDropdown(false);
-    }
+      // Otherwise add it
+      return [...prev, tableName];
+    });
   };
 
-  // Toggle filter mode
-  const toggleFilterMode = (mode) => {
-    // If switching to 'all', clear selections and close dropdown
-    if (mode === 'all') {
+  // Toggle filtering mode
+  const toggleFiltering = () => {
+    if (isFiltering) {
+      // Turn off filtering
+      setIsFiltering(false);
       setSelectedTables([]);
       setShowFilterDropdown(false);
     } else {
-      // For single or multi modes, we need to see the table list
-      if (!showFilterDropdown) {
-        setShowFilterDropdown(true);
-      }
+      // Turn on filtering
+      setIsFiltering(true);
+      setShowFilterDropdown(true);
     }
-
-    setFilterMode(mode);
   };
 
-  // Handle "Show All Tables" button click
-  const handleShowAllTables = () => {
-    setFilterMode('all');
-    setSelectedTables([]);
+  // Handle closing the dropdown
+  const handleCloseDropdown = () => {
     setShowFilterDropdown(false);
   };
 
@@ -316,55 +304,31 @@ const AnalyticsPage = () => {
 
       {/* Dashboard Controls - Time & Table Filters */}
       <div className="flex justify-between items-center bg-white rounded-lg shadow p-3">
-        {/* Table Filter Dropdown */}
+        {/* Table Filter */}
         <div className="relative">
-          <div className="flex space-x-2 items-center">
-            {/* Filter Mode Toggle Buttons */}
-            <div className="flex items-center space-x-1 bg-secondary-100 rounded-md p-1">
-              <button
-                className={`px-3 py-1.5 text-sm font-medium rounded-md ${
-                  filterMode === 'all'
-                    ? 'bg-white text-secondary-800 shadow-sm'
-                    : 'text-secondary-600 hover:text-secondary-800'
-                }`}
-                onClick={() => handleShowAllTables()}
-              >
-                All Tables
-              </button>
-              <button
-                className={`px-3 py-1.5 text-sm font-medium rounded-md ${
-                  filterMode === 'single'
-                    ? 'bg-white text-secondary-800 shadow-sm'
-                    : 'text-secondary-600 hover:text-secondary-800'
-                }`}
-                onClick={() => toggleFilterMode('single')}
-              >
-                Single
-              </button>
-              <button
-                className={`px-3 py-1.5 text-sm font-medium rounded-md ${
-                  filterMode === 'multi'
-                    ? 'bg-white text-secondary-800 shadow-sm'
-                    : 'text-secondary-600 hover:text-secondary-800'
-                }`}
-                onClick={() => toggleFilterMode('multi')}
-              >
-                Multiple
-              </button>
-            </div>
+          <div className="flex items-center space-x-2">
+            {/* Table filter toggle button */}
+            <button
+              className={`flex items-center px-3 py-2 border rounded-md text-sm ${
+                isFiltering
+                  ? 'bg-primary-50 border-primary-300 text-primary-700'
+                  : 'border-secondary-300 bg-white text-secondary-700 hover:bg-secondary-50'
+              }`}
+              onClick={toggleFiltering}
+            >
+              <FunnelIcon className="h-4 w-4 mr-2" />
+              {isFiltering
+                ? `Filtering: ${selectedTables.length} Tables`
+                : 'Filter Tables'}
+            </button>
 
-            {/* Selected tables indicator / filter button */}
-            {filterMode !== 'all' && (
+            {/* Clear selection button (only shown when filtering) */}
+            {isFiltering && selectedTables.length > 0 && (
               <button
-                className="flex items-center px-3 py-2 border border-secondary-300 rounded-md bg-white text-sm text-secondary-700 hover:bg-secondary-50"
-                onClick={() => setShowFilterDropdown(!showFilterDropdown)}
+                className="px-2 py-1 text-xs text-secondary-600 hover:text-secondary-800 hover:underline"
+                onClick={() => setSelectedTables([])}
               >
-                <FunnelIcon className="h-4 w-4 mr-2" />
-                {filterMode === 'single' && selectedTables.length
-                  ? selectedTables[0]
-                  : filterMode === 'multi' && selectedTables.length
-                  ? `${selectedTables.length} Tables`
-                  : 'Select Tables'}
+                Clear selection
               </button>
             )}
           </div>
@@ -372,6 +336,15 @@ const AnalyticsPage = () => {
           {/* Table Selection Dropdown */}
           {showFilterDropdown && (
             <div className="absolute left-0 mt-2 w-64 bg-white border border-secondary-200 rounded-md shadow-lg z-10">
+              <div className="p-3 border-b border-secondary-200 flex justify-between items-center">
+                <h3 className="text-sm font-medium text-secondary-900">Select Tables</h3>
+                <button
+                  onClick={handleCloseDropdown}
+                  className="text-secondary-400 hover:text-secondary-500"
+                >
+                  <XMarkIcon className="h-5 w-5" />
+                </button>
+              </div>
               <div className="p-2 border-b border-secondary-200">
                 <div className="relative">
                   <input
@@ -404,6 +377,14 @@ const AnalyticsPage = () => {
                     </button>
                   ))
                 )}
+              </div>
+              <div className="p-2 border-t border-secondary-200 flex justify-end">
+                <button
+                  className="px-3 py-1.5 text-sm font-medium rounded-md bg-primary-600 text-white hover:bg-primary-700"
+                  onClick={handleCloseDropdown}
+                >
+                  Apply Filters
+                </button>
               </div>
             </div>
           )}
@@ -450,7 +431,7 @@ const AnalyticsPage = () => {
         isLoading={isDashboardLoading}
         timeframe={timeframe}
         selectedTables={selectedTables}
-        filterMode={filterMode}
+        isFiltering={isFiltering}
       />
 
       {/* High Impact Objects */}

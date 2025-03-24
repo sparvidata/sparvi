@@ -13,14 +13,14 @@ import { formatDate } from '../../utils/formatting';
 /**
  * A component that displays historical metrics data
  * Transforms API response data into a format suitable for visualization
- * Now uses table filter state from parent component
+ * Uses simplified table filtering approach
  */
 const HistoricalMetricsDashboard = ({
   data,
   isLoading,
   timeframe = 30,
-  selectedTables = [], // Now passed from parent
-  filterMode = 'all', // Now passed from parent
+  selectedTables = [], // Tables selected for filtering
+  isFiltering = false, // Whether filtering is active
   className = ''
 }) => {
   // Process data for visualization when it changes
@@ -45,7 +45,7 @@ const HistoricalMetricsDashboard = ({
     };
 
     // Process row count trends - Daily aggregation
-    const rowCountTrends = processRowCountTrends(data.row_count_trends || [], selectedTables, filterMode);
+    const rowCountTrends = processRowCountTrends(data.row_count_trends || [], selectedTables, isFiltering);
 
     // Process schema changes
     const schemaChanges = processSchemaChanges(data.schema_change_trends || []);
@@ -69,7 +69,7 @@ const HistoricalMetricsDashboard = ({
         validationSuccess: getLatestMetricValue('validation_success') || 95.2, // Default if not available
       }
     };
-  }, [data, selectedTables, filterMode]);
+  }, [data, selectedTables, isFiltering]);
 
   // If loading, show spinner
   if (isLoading) {
@@ -136,9 +136,11 @@ const HistoricalMetricsDashboard = ({
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-lg font-medium text-secondary-900">Row Count Trends</h2>
           <div className="text-sm text-secondary-500">
-            {filterMode === 'all' ? 'All Tables' :
-             filterMode === 'single' && selectedTables.length ? `Table: ${selectedTables[0]}` :
-             filterMode === 'multi' && selectedTables.length ? `${selectedTables.length} Tables Selected` : 'Filtered View'}
+            {isFiltering
+              ? selectedTables.length > 0
+                ? `Filtered: ${selectedTables.length} Tables`
+                : 'No Tables Selected'
+              : 'All Tables'}
           </div>
         </div>
 
@@ -186,7 +188,7 @@ const HistoricalMetricsDashboard = ({
       {/* Table Metrics */}
       <div>
         <h2 className="text-lg font-medium text-secondary-900 mb-4">Top Tables by Size</h2>
-        {renderTopTables(processedData.rowCountTrends, filterMode, selectedTables)}
+        {renderTopTables(processedData.rowCountTrends, isFiltering, selectedTables)}
       </div>
     </div>
   );
@@ -197,12 +199,12 @@ const HistoricalMetricsDashboard = ({
 /**
  * Process row count trends data with daily aggregation and filtering
  */
-function processRowCountTrends(rowCountData, selectedTables = [], filterMode = 'all') {
+function processRowCountTrends(rowCountData, selectedTables = [], isFiltering = false) {
   if (!rowCountData || rowCountData.length === 0) return [];
 
-  // Filter data based on selected tables if applicable
+  // Filter data based on selected tables if filtering is enabled
   let filteredData = rowCountData;
-  if (filterMode !== 'all' && selectedTables.length > 0) {
+  if (isFiltering && selectedTables.length > 0) {
     filteredData = rowCountData.filter(item => selectedTables.includes(item.table_name));
   }
 
@@ -323,7 +325,7 @@ function calculateSchemaStability(schemaChanges) {
 /**
  * Render top tables by row count
  */
-function renderTopTables(rowCountTrends, filterMode, selectedTables) {
+function renderTopTables(rowCountTrends, isFiltering, selectedTables) {
   if (!rowCountTrends || rowCountTrends.length === 0) {
     return (
       <div className="bg-white rounded-lg shadow p-6 text-center">
@@ -355,12 +357,8 @@ function renderTopTables(rowCountTrends, filterMode, selectedTables) {
     .map(([tableName, rowCount]) => ({ table_name: tableName, value: rowCount }))
     .sort((a, b) => b.value - a.value);
 
-  // Apply filters if specified
-  if (filterMode === 'single' && selectedTables.length > 0) {
-    tablesToShow = tablesToShow.filter(table =>
-      table.table_name === selectedTables[0]
-    );
-  } else if (filterMode === 'multi' && selectedTables.length > 0) {
+  // Apply filters if filtering is enabled
+  if (isFiltering && selectedTables.length > 0) {
     tablesToShow = tablesToShow.filter(table =>
       selectedTables.includes(table.table_name)
     );
