@@ -5307,70 +5307,46 @@ def get_worker_stats(current_user, organization_id):
         if metadata_task_manager is None:
             init_metadata_task_manager()
 
-        # Get worker stats
+        # Get worker stats from the task manager
         stats = metadata_task_manager.get_worker_stats()
+
+        # Add additional stats from database if available
+        try:
+            # Get recent tasks
+            task_response = supabase_mgr.supabase.table("metadata_tasks") \
+                .select("task_status,created_at") \
+                .order("created_at", desc=True) \
+                .limit(100) \
+                .execute()
+
+            if task_response.data:
+                # Count tasks by status
+                status_counts = {}
+                for task in task_response.data:
+                    status = task.get("task_status", "unknown")
+                    if status not in status_counts:
+                        status_counts[status] = 0
+                    status_counts[status] += 1
+
+                # Add to stats
+                stats["historical_tasks"] = {
+                    "recent_count": len(task_response.data),
+                    "status_counts": status_counts
+                }
+
+                # Determine most recent completion
+                completed_tasks = [task for task in task_response.data if task.get("task_status") == "completed"]
+                if completed_tasks:
+                    most_recent = max(task.get("created_at", "") for task in completed_tasks)
+                    stats["last_completion"] = most_recent
+        except Exception as e:
+            logger.warning(f"Error getting additional worker stats: {str(e)}")
+            # Continue with the basic stats
 
         return jsonify(stats)
 
     except Exception as e:
         logger.error(f"Error getting worker stats: {str(e)}")
-        logger.error(traceback.format_exc())
-        return jsonify({"error": str(e)}), 500
-        supabase_mgr = SupabaseManager()
-        connection_check = supabase_mgr.supabase.table("database_connections") \
-            .select("*") \
-            .eq("id", connection_id) \
-            .eq("organization_id", organization_id) \
-            .execute()
-
-        if not connection_check.data or len(connection_check.data) == 0:
-            logger.error(f"Connection not found or access denied: {connection_id}")
-            return jsonify({"error": "Connection not found or access denied"}), 404
-
-        # Submit appropriate task based on type
-        task_id = None
-
-        if task_type == "full_collection":
-            # Full collection task
-            params = {
-                "depth": data.get("depth", "medium"),
-                "table_limit": data.get("table_limit", 50)
-            }
-
-            task_id = metadata_task_manager.submit_collection_task(connection_id, params, priority)
-
-        elif task_type == "table_metadata":
-            # Table metadata task
-            if not table_name:
-                return jsonify({"error": "table_name is required for table_metadata task"}), 400
-
-            task_id = metadata_task_manager.submit_table_metadata_task(connection_id, table_name, priority)
-
-        elif task_type == "refresh_statistics":
-            # Statistics refresh task
-            if not table_name:
-                return jsonify({"error": "table_name is required for refresh_statistics task"}), 400
-
-            task_id = metadata_task_manager.submit_statistics_refresh_task(connection_id, table_name, priority)
-
-        elif task_type == "update_usage":
-            # Usage update task
-            if not table_name:
-                return jsonify({"error": "table_name is required for update_usage task"}), 400
-
-            task_id = metadata_task_manager.submit_usage_update_task(connection_id, table_name, priority)
-
-        else:
-            return jsonify({"error": f"Unknown task type: {task_type}"}), 400
-
-        return jsonify({
-            "task_id": task_id,
-            "status": "scheduled",
-            "message": f"Scheduled {task_type} task for connection {connection_id}"
-        })
-
-    except Exception as e:
-        logger.error(f"Error scheduling metadata task: {str(e)}")
         logger.error(traceback.format_exc())
         return jsonify({"error": str(e)}), 500
 
@@ -5691,40 +5667,84 @@ def get_refresh_suggestion(current_user, organization_id, connection_id):
 
 @app.route("/api/connections/<connection_id>/analytics/high-impact", methods=["GET"])
 @token_required
-def get_high_impact_objects(current_user, organization_id, connection_id):
-    """Get objects with high change frequency"""
+def get_high_impact_objects(
+        self,
+        connection_id: str,
+        limit: int = 10
+) -> List[Dict[str, Any]]:
+    """
+    Get a list of objects with highest change frequency
+
+    Args:
+        connection_id: Database connection ID
+        limit: Maximum number of objects to return
+
+    Returns:
+        List of high-impact objects with their change metrics
+    """
     try:
-        # Check access to connection
-        supabase_mgr = SupabaseManager()
-        connection_check = supabase_mgr.supabase.table("database_connections") \
-            .select("*") \
-            .eq("id", connection_id) \
-            .eq("organization_id", organization_id) \
+        if not self.supabase_manager:
+            logger.error("Supabase manager is required to get high-impact objects")
+            return []
+
+        # Get analytics data for this connection
+        response = self.supabase_manager.supabase.table("metadata_change_analytics") \
+            .select("object_type,object_name,change_detected") \
+            .eq("connection_id", connection_id) \
+            .gte("check_timestamp", (datetime.now() - datetime.timedelta(days=30)).isoformat()) \
             .execute()
 
-        if not connection_check.data or len(connection_check.data) == 0:
-            logger.error(f"Connection not found or access denied: {connection_id}")
-            return jsonify({"error": "Connection not found or access denied"}), 404
+        if not response.data:
+            return []
 
-        # Get query parameters
-        limit = request.args.get("limit", 10, type=int)
+        # Process the data manually since we can't use SQL aggregation
+        objects = {}
 
-        # Create analytics service
-        from core.metadata.change_analytics import MetadataChangeAnalytics
-        analytics = MetadataChangeAnalytics(supabase_mgr)
+        # Group by object and calculate metrics
+        for record in response.data:
+            object_type = record.get("object_type")
+            object_name = record.get("object_name")
+            change_detected = record.get("change_detected", False)
 
-        # Get high-impact objects
-        objects = analytics.get_high_impact_objects(
-            connection_id=connection_id,
-            limit=limit
-        )
+            # Create a composite key for the object
+            key = f"{object_type}:{object_name}"
 
-        return jsonify({"objects": objects, "count": len(objects)})
+            if key not in objects:
+                objects[key] = {
+                    "object_type": object_type,
+                    "object_name": object_name,
+                    "total_checks": 0,
+                    "changes_detected": 0
+                }
+
+            objects[key]["total_checks"] += 1
+            if change_detected:
+                objects[key]["changes_detected"] += 1
+
+        # Calculate change ratio and add frequency category
+        results = []
+        for obj in objects.values():
+            # Only include objects with at least 5 checks
+            if obj["total_checks"] >= 5:
+                obj["change_ratio"] = obj["changes_detected"] / obj["total_checks"] if obj["total_checks"] > 0 else 0
+
+                # Determine frequency category
+                if obj["change_ratio"] >= 0.5:
+                    obj["frequency"] = "high"
+                elif obj["change_ratio"] >= 0.1:
+                    obj["frequency"] = "medium"
+                else:
+                    obj["frequency"] = "low"
+
+                results.append(obj)
+
+        # Sort by change_ratio (descending) and limit results
+        results.sort(key=lambda x: x["change_ratio"], reverse=True)
+        return results[:limit]
 
     except Exception as e:
         logger.error(f"Error getting high-impact objects: {str(e)}")
-        logger.error(traceback.format_exc())
-        return jsonify({"error": str(e)}), 500
+        return []
 
 
 @app.route("/api/connections/<connection_id>/analytics/dashboard", methods=["GET"])
@@ -5744,91 +5764,116 @@ def get_change_analytics_dashboard(current_user, organization_id, connection_id)
             logger.error(f"Connection not found or access denied: {connection_id}")
             return jsonify({"error": "Connection not found or access denied"}), 404
 
-        # Create analytics service
-        from core.metadata.change_analytics import MetadataChangeAnalytics
-        analytics = MetadataChangeAnalytics(supabase_mgr)
-
-        # Get high-impact objects
-        high_impact_objects = analytics.get_high_impact_objects(
-            connection_id=connection_id,
-            limit=5
-        )
-
-        # Get total checks and changes
-        sql = f"""
-        SELECT 
-            COUNT(*) as total_checks,
-            SUM(CASE WHEN change_detected = true THEN 1 ELSE 0 END) as total_changes,
-            COUNT(DISTINCT object_name) as unique_objects,
-            MAX(check_timestamp) as last_check
-        FROM metadata_change_analytics
-        WHERE connection_id = '{connection_id}'
-        AND check_timestamp > CURRENT_TIMESTAMP - INTERVAL '30 days';
-        """
-
-        stats_response = supabase_mgr.supabase.rpc("exec_sql", {"sql_query": sql}).execute()
-        overall_stats = stats_response.data[0] if stats_response.data else {
+        # Initialize result structures
+        high_impact_objects = []
+        overall_stats = {
             "total_checks": 0,
             "total_changes": 0,
             "unique_objects": 0,
             "last_check": None
         }
+        frequency_distribution = []
+        change_trend = []
 
-        # Get change frequency distribution
-        sql = f"""
-        WITH object_changes AS (
-            SELECT 
-                object_name,
-                object_type,
-                COUNT(*) as checks,
-                SUM(CASE WHEN change_detected = true THEN 1 ELSE 0 END) as changes,
-                (SUM(CASE WHEN change_detected = true THEN 1 ELSE 0 END)::float / 
-                 NULLIF(COUNT(*), 0)::float) as change_ratio
-            FROM metadata_change_analytics
-            WHERE connection_id = '{connection_id}'
-            AND check_timestamp > CURRENT_TIMESTAMP - INTERVAL '30 days'
-            GROUP BY object_name, object_type
-            HAVING COUNT(*) >= 5
-        )
-        SELECT 
-            CASE 
-                WHEN change_ratio >= 0.5 THEN 'high'
-                WHEN change_ratio >= 0.1 THEN 'medium'
-                ELSE 'low'
-            END as frequency,
-            COUNT(*) as object_count
-        FROM object_changes
-        GROUP BY frequency
-        ORDER BY frequency;
-        """
+        # 1. Get high-impact objects - reuse the modified method
+        from core.metadata.change_analytics import MetadataChangeAnalytics
+        analytics = MetadataChangeAnalytics(supabase_mgr)
+        high_impact_objects = analytics.get_high_impact_objects(connection_id, limit=5)
 
-        freq_response = supabase_mgr.supabase.rpc("exec_sql", {"sql_query": sql}).execute()
-        frequency_distribution = freq_response.data if freq_response.data else []
+        # 2. Get total checks and changes
+        # Get analytics data for the last 30 days
+        thirty_days_ago = (datetime.datetime.now() - datetime.timedelta(days=30)).isoformat()
+        stats_response = supabase_mgr.supabase.table("metadata_change_analytics") \
+            .select("object_name,change_detected,check_timestamp") \
+            .eq("connection_id", connection_id) \
+            .gte("check_timestamp", thirty_days_ago) \
+            .execute()
 
-        # Get historical trend of changes
-        sql = f"""
-        WITH daily_changes AS (
-            SELECT 
-                DATE_TRUNC('day', check_timestamp) as day,
-                COUNT(*) as checks,
-                SUM(CASE WHEN change_detected = true THEN 1 ELSE 0 END) as changes
-            FROM metadata_change_analytics
-            WHERE connection_id = '{connection_id}'
-            AND check_timestamp > CURRENT_TIMESTAMP - INTERVAL '30 days'
-            GROUP BY day
-            ORDER BY day
-        )
-        SELECT 
-            TO_CHAR(day, 'YYYY-MM-DD') as date,
-            checks,
-            changes,
-            (changes::float / NULLIF(checks, 0)::float * 100) as change_percentage
-        FROM daily_changes
-        ORDER BY day;
-        """
+        if stats_response.data:
+            # Calculate overall stats
+            overall_stats["total_checks"] = len(stats_response.data)
+            overall_stats["total_changes"] = sum(
+                1 for record in stats_response.data if record.get("change_detected", False))
+            overall_stats["unique_objects"] = len(
+                set(record.get("object_name") for record in stats_response.data if record.get("object_name")))
 
-        trend_response = supabase_mgr.supabase.rpc("exec_sql", {"sql_query": sql}).execute()
-        change_trend = trend_response.data if trend_response.data else []
+            # Find the most recent check timestamp
+            timestamps = [record.get("check_timestamp") for record in stats_response.data if
+                          record.get("check_timestamp")]
+            if timestamps:
+                overall_stats["last_check"] = max(timestamps)
+
+        # 3. Calculate frequency distribution
+        if stats_response.data:
+            # Group by object and calculate change ratios
+            objects = {}
+            for record in stats_response.data:
+                object_name = record.get("object_name")
+                if not object_name:
+                    continue
+
+                if object_name not in objects:
+                    objects[object_name] = {"checks": 0, "changes": 0}
+
+                objects[object_name]["checks"] += 1
+                if record.get("change_detected", False):
+                    objects[object_name]["changes"] += 1
+
+            # Filter objects with at least 5 checks and calculate ratios
+            filtered_objects = {}
+            for name, data in objects.items():
+                if data["checks"] >= 5:
+                    data["change_ratio"] = data["changes"] / data["checks"]
+                    filtered_objects[name] = data
+
+            # Group by frequency category
+            frequencies = {"high": 0, "medium": 0, "low": 0}
+            for data in filtered_objects.values():
+                if data["change_ratio"] >= 0.5:
+                    frequencies["high"] += 1
+                elif data["change_ratio"] >= 0.1:
+                    frequencies["medium"] += 1
+                else:
+                    frequencies["low"] += 1
+
+            # Format for output
+            for category, count in frequencies.items():
+                if count > 0:
+                    frequency_distribution.append({
+                        "frequency": category,
+                        "object_count": count
+                    })
+
+        # 4. Calculate change trend by day
+        if stats_response.data:
+            # Group by day and count checks and changes
+            days = {}
+            for record in stats_response.data:
+                timestamp = record.get("check_timestamp")
+                if not timestamp:
+                    continue
+
+                # Extract date part only
+                date = timestamp.split("T")[0]
+
+                if date not in days:
+                    days[date] = {"checks": 0, "changes": 0}
+
+                days[date]["checks"] += 1
+                if record.get("change_detected", False):
+                    days[date]["changes"] += 1
+
+            # Format for output
+            for date, data in days.items():
+                change_trend.append({
+                    "date": date,
+                    "checks": data["checks"],
+                    "changes": data["changes"],
+                    "change_percentage": (data["changes"] / data["checks"] * 100) if data["checks"] > 0 else 0
+                })
+
+            # Sort by date
+            change_trend.sort(key=lambda x: x["date"])
 
         # Build dashboard data
         dashboard = {
@@ -5963,6 +6008,7 @@ def track_custom_metrics(current_user, organization_id, connection_id):
         logger.error(traceback.format_exc())
         return jsonify({"error": str(e)}), 500
 
+
 @app.route("/api/connections/<connection_id>/analytics/dashboard/metrics", methods=["GET"])
 @token_required
 def get_analytics_dashboard_metrics(current_user, organization_id, connection_id):
@@ -5977,111 +6023,177 @@ def get_analytics_dashboard_metrics(current_user, organization_id, connection_id
         days = request.args.get("days", 30, type=int)
         limit = request.args.get("limit", 100, type=int)
 
-        # Create direct Supabase client
-        import os
-        from supabase import create_client
-
-        # Get credentials from environment
-        supabase_url = os.getenv("SUPABASE_URL")
-        supabase_key = os.getenv("SUPABASE_SERVICE_KEY")
-
-        # Create client
-        direct_client = create_client(supabase_url, supabase_key)
-
         # Calculate the start date
         from datetime import datetime, timedelta
         start_date = (datetime.now() - timedelta(days=days)).isoformat()
 
-        # Get key metrics for the dashboard
-        # 1. Row count trends
-        row_count_query = f"""
-        SELECT 
-            table_name, 
-            metric_value as row_count, 
-            timestamp
-        FROM historical_metrics
-        WHERE connection_id = '{connection_id}'
-        AND organization_id = '{organization_id}'
-        AND metric_name = 'row_count'
-        AND timestamp >= '{start_date}'
-        ORDER BY table_name, timestamp
-        """
-        row_count_response = direct_client.rpc("exec_sql", {"sql_query": row_count_query}).execute()
-        row_count_trends = row_count_response.data if hasattr(row_count_response, 'data') else []
+        # Get Supabase client
+        supabase_mgr = SupabaseManager()
 
-        # 2. Validation success rate trends
-        validation_query = f"""
-        SELECT 
-            date_trunc('day', timestamp) as date,
-            AVG(CASE WHEN metric_name = 'validation_success' 
-                THEN metric_value ELSE NULL END) as success_rate,
-            COUNT(DISTINCT case when table_name is not null then table_name end) as tables_validated
-        FROM historical_metrics
-        WHERE connection_id = '{connection_id}'
-        AND organization_id = '{organization_id}'
-        AND metric_type = 'validation'
-        AND timestamp >= '{start_date}'
-        GROUP BY date_trunc('day', timestamp)
-        ORDER BY date
-        """
-        validation_response = direct_client.rpc("exec_sql", {"sql_query": validation_query}).execute()
-        validation_trends = validation_response.data if hasattr(validation_response, 'data') else []
+        # Prepare result data structures
+        row_count_trends = []
+        validation_trends = []
+        schema_trends = []
+        quality_score_trends = []
+        recent_metrics = []
 
-        # 3. Schema change frequency
-        schema_query = f"""
-        SELECT 
-            date_trunc('day', timestamp) as date,
-            COUNT(*) as change_count
-        FROM historical_metrics
-        WHERE connection_id = '{connection_id}'
-        AND organization_id = '{organization_id}'
-        AND metric_type = 'schema_change'
-        AND timestamp >= '{start_date}'
-        GROUP BY date_trunc('day', timestamp)
-        ORDER BY date
-        """
-        schema_response = direct_client.rpc("exec_sql", {"sql_query": schema_query}).execute()
-        schema_trends = schema_response.data if hasattr(schema_response, 'data') else []
+        # 1. Get row count trends (using standard Supabase queries instead of raw SQL)
+        row_count_response = supabase_mgr.supabase.table("historical_metrics") \
+            .select("table_name,metric_value,timestamp") \
+            .eq("connection_id", connection_id) \
+            .eq("organization_id", organization_id) \
+            .eq("metric_name", "row_count") \
+            .gte("timestamp", start_date) \
+            .order("table_name") \
+            .order("timestamp") \
+            .execute()
 
-        # 4. Data quality score trends
-        quality_query = f"""
-        SELECT 
-            date_trunc('day', timestamp) as date,
-            AVG(metric_value) as avg_quality_score
-        FROM historical_metrics
-        WHERE connection_id = '{connection_id}'
-        AND organization_id = '{organization_id}'
-        AND metric_name = 'quality_score'
-        AND timestamp >= '{start_date}'
-        GROUP BY date_trunc('day', timestamp)
-        ORDER BY date
-        """
-        quality_response = direct_client.rpc("exec_sql", {"sql_query": quality_query}).execute()
-        quality_trends = quality_response.data if hasattr(quality_response, 'data') else []
+        if row_count_response.data:
+            row_count_trends = row_count_response.data
 
-        # 5. Most recent metrics
-        recent_query = f"""
-        SELECT 
-            table_name,
-            metric_name,
-            metric_value,
-            metric_text,
-            timestamp
-        FROM historical_metrics
-        WHERE connection_id = '{connection_id}'
-        AND organization_id = '{organization_id}'
-        ORDER BY timestamp DESC
-        LIMIT 20
-        """
-        recent_response = direct_client.rpc("exec_sql", {"sql_query": recent_query}).execute()
-        recent_metrics = recent_response.data if hasattr(recent_response, 'data') else []
+        # 2. Get recent metrics
+        # Fix: Changed the order parameter syntax
+        recent_response = supabase_mgr.supabase.table("historical_metrics") \
+            .select("table_name,metric_name,metric_value,metric_text,timestamp") \
+            .eq("connection_id", connection_id) \
+            .eq("organization_id", organization_id) \
+            .order("timestamp", desc=True) \
+            .limit(20) \
+            .execute()
+
+        if recent_response.data:
+            recent_metrics = recent_response.data
+
+        # 3. Get validation metrics - we need to do this programmatically since we can't use SQL
+        validation_response = supabase_mgr.supabase.table("historical_metrics") \
+            .select("metric_value,timestamp,table_name") \
+            .eq("connection_id", connection_id) \
+            .eq("organization_id", organization_id) \
+            .eq("metric_name", "validation_success") \
+            .eq("metric_type", "validation") \
+            .gte("timestamp", start_date) \
+            .execute()
+
+        if validation_response.data:
+            # Process the data to compute daily averages
+            from itertools import groupby
+            from statistics import mean
+
+            # Extract date from timestamp
+            processed_data = []
+            for item in validation_response.data:
+                if "timestamp" in item:
+                    item["date"] = item["timestamp"].split("T")[0]
+                    processed_data.append(item)
+
+            # Group by date
+            validation_trends = []
+            grouped_by_date = {}
+            for item in processed_data:
+                date = item.get("date")
+                if date not in grouped_by_date:
+                    grouped_by_date[date] = []
+                grouped_by_date[date].append(item)
+
+            # Calculate averages by date
+            for date, group in grouped_by_date.items():
+                success_rates = [item.get("metric_value", 0) for item in group]
+                tables_validated = len(set(item.get("table_name") for item in group if item.get("table_name")))
+
+                validation_trends.append({
+                    "date": date,
+                    "success_rate": mean(success_rates) if success_rates else 0,
+                    "tables_validated": tables_validated
+                })
+
+            # Sort by date
+            validation_trends.sort(key=lambda x: x.get("date", ""))
+
+        # 4. Get schema change metrics
+        schema_response = supabase_mgr.supabase.table("historical_metrics") \
+            .select("timestamp") \
+            .eq("connection_id", connection_id) \
+            .eq("organization_id", organization_id) \
+            .eq("metric_type", "schema_change") \
+            .gte("timestamp", start_date) \
+            .execute()
+
+        if schema_response.data:
+            # Process to count by day
+            from itertools import groupby
+
+            # Extract date from timestamp
+            processed_data = []
+            for item in schema_response.data:
+                if "timestamp" in item:
+                    item["date"] = item["timestamp"].split("T")[0]
+                    processed_data.append(item)
+
+            # Count by date
+            schema_trends = []
+            grouped_by_date = {}
+            for item in processed_data:
+                date = item.get("date")
+                if date not in grouped_by_date:
+                    grouped_by_date[date] = 0
+                grouped_by_date[date] += 1
+
+            # Format the results
+            for date, count in grouped_by_date.items():
+                schema_trends.append({
+                    "date": date,
+                    "change_count": count
+                })
+
+            # Sort by date
+            schema_trends.sort(key=lambda x: x.get("date", ""))
+
+        # 5. Get quality score trends
+        quality_response = supabase_mgr.supabase.table("historical_metrics") \
+            .select("metric_value,timestamp") \
+            .eq("connection_id", connection_id) \
+            .eq("organization_id", organization_id) \
+            .eq("metric_name", "quality_score") \
+            .gte("timestamp", start_date) \
+            .execute()
+
+        if quality_response.data:
+            # Process to average by day
+            from itertools import groupby
+            from statistics import mean
+
+            # Extract date from timestamp
+            processed_data = []
+            for item in quality_response.data:
+                if "timestamp" in item:
+                    item["date"] = item["timestamp"].split("T")[0]
+                    processed_data.append(item)
+
+            # Group by date and calculate averages
+            quality_score_trends = []
+            grouped_by_date = {}
+            for item in processed_data:
+                date = item.get("date")
+                if date not in grouped_by_date:
+                    grouped_by_date[date] = []
+                grouped_by_date[date].append(item.get("metric_value", 0))
+
+            # Calculate the averages
+            for date, values in grouped_by_date.items():
+                quality_score_trends.append({
+                    "date": date,
+                    "avg_quality_score": mean(values) if values else 0
+                })
+
+            # Sort by date
+            quality_score_trends.sort(key=lambda x: x.get("date", ""))
 
         # Return comprehensive dashboard data
         return jsonify({
             "row_count_trends": row_count_trends,
             "validation_trends": validation_trends,
             "schema_change_trends": schema_trends,
-            "quality_score_trends": quality_trends,
+            "quality_score_trends": quality_score_trends,
             "recent_metrics": recent_metrics
         })
 

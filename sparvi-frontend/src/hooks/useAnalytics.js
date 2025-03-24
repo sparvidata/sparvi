@@ -17,21 +17,17 @@ export const useAnalyticsDashboard = (connectionId, options = {}) => {
 
   return useQuery({
     queryKey: ['analytics-dashboard', connectionId, days],
-    queryFn: () => analyticsAPI.getDashboard(connectionId, { forceFresh: false }),
+    // Use the dashboard/metrics endpoint instead
+    queryFn: () => analyticsAPI.getDashboardMetrics(connectionId, { days, forceFresh: false }),
     enabled: enabled,
     refetchInterval: refetchInterval,
     ...queryOptions,
-    // Transform the data to ensure consistent structure
     select: (data) => {
       console.log("Analytics dashboard data:", data);
-      // Handle both direct and nested data structures
       return data?.data || data;
     },
-    // Don't refetch on window focus
     refetchOnWindowFocus: false,
-    // Keep the data for 30 minutes
     cacheTime: 30 * 60 * 1000,
-    // Consider it stale after 10 minutes
     staleTime: 10 * 60 * 1000,
   });
 };

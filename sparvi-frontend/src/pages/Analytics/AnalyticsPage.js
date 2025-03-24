@@ -95,11 +95,45 @@ const AnalyticsPage = () => {
   const getMetricValue = (metricName) => {
     if (isDashboardLoading || !dashboardData) return null;
 
-    // Find the most recent value for the metric
-    const metricTrends = dashboardData[`${metricName}_trends`] || [];
-    if (metricTrends.length === 0) return null;
+    // Handle the case where the expected trends array is empty
+    const trendsKey = `${metricName}_trends`;
+    if (!dashboardData[trendsKey] || dashboardData[trendsKey].length === 0) {
+      // Try to get from recent_metrics as a fallback
+      const recentMetric = dashboardData.recent_metrics?.find(
+        m => m.metric_name === metricName
+      );
+      return recentMetric?.metric_value || null;
+    }
 
-    return metricTrends[metricTrends.length - 1]?.value;
+    // If we have trends data, return the most recent value
+    const metricTrends = dashboardData[trendsKey];
+    return metricTrends[metricTrends.length - 1]?.metric_value || null;
+  };
+
+  const transformTrendsData = (trendsArray, valueKey = 'metric_value') => {
+    if (!trendsArray || trendsArray.length === 0) return [];
+
+    // Group by timestamp to create data points for the chart
+    const dataByTimestamp = {};
+
+    trendsArray.forEach(item => {
+      const timestamp = new Date(item.timestamp).toISOString().split('T')[0]; // Get just the date part
+
+      if (!dataByTimestamp[timestamp]) {
+        dataByTimestamp[timestamp] = {
+          timestamp,
+          value: 0
+        };
+      }
+
+      // Sum values for the same timestamp (aggregating across tables)
+      dataByTimestamp[timestamp].value += item[valueKey] || 0;
+    });
+
+    // Convert to array and sort by timestamp
+    return Object.values(dataByTimestamp).sort((a, b) =>
+      new Date(a.timestamp) - new Date(b.timestamp)
+    );
   };
 
   const getMetricChange = (metricName) => {
