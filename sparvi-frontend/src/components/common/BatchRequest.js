@@ -1,3 +1,4 @@
+// src/components/common/BatchRequest.js
 import React, { useState, useEffect } from 'react';
 import { batchRequests } from '../../utils/requestUtils';
 import LoadingSpinner from './LoadingSpinner';
@@ -31,8 +32,10 @@ const BatchRequest = ({
     const fetchData = async () => {
       if (!requests || requests.length === 0) {
         if (isMounted) {
-          setResults({});
+          const emptyResults = {};
+          setResults(emptyResults);
           setLoading(false);
+          if (onComplete) onComplete(emptyResults);
         }
         return;
       }
@@ -46,6 +49,7 @@ const BatchRequest = ({
         // If component is no longer mounted, don't proceed
         if (!isMounted) return;
 
+        console.log(`Making batch request with ${requests.length} requests`);
         const batchResults = await batchRequests(requests, {
           retries: 2,
           timeout: 60000,
@@ -54,16 +58,23 @@ const BatchRequest = ({
         });
 
         if (isMounted) {
-          setResults(batchResults);
-          if (onComplete) onComplete(batchResults);
+          // Ensure we always have an object, even if the API returns null or undefined
+          const safeResults = batchResults || {};
+          setResults(safeResults);
+          if (onComplete) onComplete(safeResults);
         }
       } catch (err) {
         if (!isMounted) return;
 
+        console.error('Batch request failed:', err);
+
         if (!err.cancelled) {
-          console.error('Batch request failed:', err);
           if (onError) onError(err);
           setError(err);
+
+          // Provide an empty object to onComplete so components can handle error states gracefully
+          // This prevents "Cannot read properties of undefined" errors
+          if (onComplete) onComplete({});
         }
       } finally {
         if (isMounted) {

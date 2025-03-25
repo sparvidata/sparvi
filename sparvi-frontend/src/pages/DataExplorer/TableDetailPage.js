@@ -110,11 +110,24 @@ const TableDetailPage = () => {
   const handleBatchComplete = (results) => {
     console.log("Batch results:", results);
 
+    // Check if results is undefined or null
+    if (!results) {
+      console.error("Batch request returned no results");
+      // Set default empty states
+      setTableData(null);
+      setProfileData(null);
+      setValidations([]);
+      setIsLoadingTable(false);
+      setIsLoadingProfile(false);
+      return;
+    }
+
     // Handle columns data
     if (results.columns && !results.columns.error) {
       setTableData(results.columns);
     } else if (results.columns && results.columns.error) {
       console.error("Columns data error:", results.columns.error);
+      setTableData(null);
     }
 
     // Handle profile data - now with error handling
@@ -126,6 +139,8 @@ const TableDetailPage = () => {
       } else {
         setProfileData(results.profile);
       }
+    } else {
+      setProfileData(null);
     }
 
     // Handle validations
@@ -143,6 +158,8 @@ const TableDetailPage = () => {
       }
     } else if (results.validations && results.validations.error) {
       console.error("Validations data error:", results.validations.error);
+      setValidations([]);
+    } else {
       setValidations([]);
     }
 
