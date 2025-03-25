@@ -1,4 +1,3 @@
-// src/components/common/BatchRequest.js
 import React, { useState, useEffect } from 'react';
 import { batchRequests } from '../../utils/requestUtils';
 import LoadingSpinner from './LoadingSpinner';
@@ -30,12 +29,19 @@ const BatchRequest = ({
     const controller = new AbortController();
 
     const fetchData = async () => {
+      // Check for empty requests
       if (!requests || requests.length === 0) {
         if (isMounted) {
           const emptyResults = {};
           setResults(emptyResults);
           setLoading(false);
-          if (onComplete) onComplete(emptyResults);
+          if (onComplete) {
+            try {
+              onComplete(emptyResults);
+            } catch (err) {
+              console.error('Error in onComplete callback with empty results:', err);
+            }
+          }
         }
         return;
       }
@@ -50,31 +56,59 @@ const BatchRequest = ({
         if (!isMounted) return;
 
         console.log(`Making batch request with ${requests.length} requests`);
-        const batchResults = await batchRequests(requests, {
-          retries: 2,
-          timeout: 60000,
-          waitForAuthentication: !skipAuthWait,
-          signal: controller.signal
-        });
+
+        // Execute batch request
+        let batchResults;
+        try {
+          batchResults = await batchRequests(requests, {
+            retries: 2,
+            timeout: 60000,
+            waitForAuthentication: !skipAuthWait,
+            signal: controller.signal
+          });
+        } catch (requestErr) {
+          console.error('Error during batch request:', requestErr);
+          batchResults = {}; // Ensure we have an object even if request fails
+        }
+
+        // Ensure we have an object, even if the result is null or undefined
+        const safeResults = batchResults || {};
 
         if (isMounted) {
-          // Ensure we always have an object, even if the API returns null or undefined
-          const safeResults = batchResults || {};
           setResults(safeResults);
-          if (onComplete) onComplete(safeResults);
+          if (onComplete) {
+            try {
+              // Wrap in try/catch to prevent unhandled exceptions
+              onComplete(safeResults);
+            } catch (callbackErr) {
+              console.error('Error in onComplete callback:', callbackErr);
+              if (onError) onError(callbackErr);
+            }
+          }
         }
       } catch (err) {
         if (!isMounted) return;
 
-        console.error('Batch request failed:', err);
-
         if (!err.cancelled) {
-          if (onError) onError(err);
+          console.error('Batch request failed:', err);
           setError(err);
 
-          // Provide an empty object to onComplete so components can handle error states gracefully
-          // This prevents "Cannot read properties of undefined" errors
-          if (onComplete) onComplete({});
+          if (onError) {
+            try {
+              onError(err);
+            } catch (errorCallbackErr) {
+              console.error('Error in onError callback:', errorCallbackErr);
+            }
+          }
+
+          // Always provide an empty object to ensure onComplete has valid data
+          if (onComplete && isMounted) {
+            try {
+              onComplete({});
+            } catch (completeCallbackErr) {
+              console.error('Error in onComplete fallback callback:', completeCallbackErr);
+            }
+          }
         }
       } finally {
         if (isMounted) {
@@ -98,12 +132,14 @@ const BatchRequest = ({
   if (error && !error.cancelled) {
     return (
       <div className="text-center text-danger-600 py-4">
-        <p>Error loading data: {error.message}</p>
+        <p>Error loading data: {error.message || 'Unknown error'}</p>
       </div>
     );
   }
 
-  return typeof children === 'function' ? children(results || {}) : children;
+  // Always ensure we pass a valid object to children function
+  const safeResults = results || {};
+  return typeof children === 'function' ? children(safeResults) : children;
 };
 
 export default BatchRequest;

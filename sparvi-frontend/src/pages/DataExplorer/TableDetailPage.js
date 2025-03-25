@@ -110,10 +110,9 @@ const TableDetailPage = () => {
   const handleBatchComplete = (results) => {
     console.log("Batch results:", results);
 
-    // Check if results is undefined or null
+    // Add defensive handling for undefined or null results
     if (!results) {
-      console.error("Batch request returned no results");
-      // Set default empty states
+      console.warn("Received null or undefined results from batch request");
       setTableData(null);
       setProfileData(null);
       setValidations([]);
@@ -122,49 +121,63 @@ const TableDetailPage = () => {
       return;
     }
 
-    // Handle columns data
-    if (results.columns && !results.columns.error) {
-      setTableData(results.columns);
-    } else if (results.columns && results.columns.error) {
-      console.error("Columns data error:", results.columns.error);
-      setTableData(null);
-    }
-
-    // Handle profile data - now with error handling
-    if (results.profile) {
-      if (results.profile.error) {
-        // Store the error message to display in the profile tab
-        setProfileData({ error: results.profile.error || "Unknown server error" });
-        console.error("Profile data error:", results.profile.error);
+    try {
+      // Handle columns data with null checks
+      if (results.columns) {
+        if (!results.columns.error) {
+          setTableData(results.columns);
+        } else {
+          console.error("Columns data error:", results.columns.error);
+          setTableData(null);
+        }
       } else {
-        setProfileData(results.profile);
+        setTableData(null);
       }
-    } else {
-      setProfileData(null);
-    }
 
-    // Handle validations
-    if (results.validations && !results.validations.error) {
-      // Ensure we get an array
-      if (Array.isArray(results.validations)) {
-        setValidations(results.validations);
-      } else if (results.validations.rules) {
-        setValidations(results.validations.rules || []);
-      } else if (results.validations.data && results.validations.data.rules) {
-        setValidations(results.validations.data.rules || []);
+      // Handle profile data with null checks
+      if (results.profile) {
+        if (results.profile.error) {
+          setProfileData({ error: results.profile.error || "Unknown server error" });
+          console.error("Profile data error:", results.profile.error);
+        } else {
+          setProfileData(results.profile);
+        }
       } else {
-        console.warn("Unexpected validations format:", results.validations);
+        setProfileData(null);
+      }
+
+      // Handle validations with null checks
+      if (results.validations) {
+        if (!results.validations.error) {
+          // Ensure we get an array
+          if (Array.isArray(results.validations)) {
+            setValidations(results.validations);
+          } else if (results.validations.rules) {
+            setValidations(results.validations.rules || []);
+          } else if (results.validations.data && results.validations.data.rules) {
+            setValidations(results.validations.data.rules || []);
+          } else {
+            console.warn("Unexpected validations format:", results.validations);
+            setValidations([]);
+          }
+        } else {
+          console.error("Validations data error:", results.validations.error);
+          setValidations([]);
+        }
+      } else {
         setValidations([]);
       }
-    } else if (results.validations && results.validations.error) {
-      console.error("Validations data error:", results.validations.error);
+    } catch (error) {
+      // Catch any errors in the processing
+      console.error("Error processing batch results:", error);
+      setTableData(null);
+      setProfileData(null);
       setValidations([]);
-    } else {
-      setValidations([]);
+    } finally {
+      // Always set loading to false
+      setIsLoadingTable(false);
+      setIsLoadingProfile(false);
     }
-
-    setIsLoadingTable(false);
-    setIsLoadingProfile(false);
   };
 
   // Handle batch request error
