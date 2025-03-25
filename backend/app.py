@@ -1208,21 +1208,24 @@ def setup_cors(app):
     Configure CORS with detailed logging and error handling
     """
     try:
+        # Define allowed origins
+        allowed_origins = ["https://cloud.sparvi.io", "http://localhost:3000"]
+
         CORS(app,
              resources={r"/api/*": {
-                 "origins": ["https://cloud.sparvi.io", "http://localhost:3000"],
-                 "supports_credentials": True
+                 "origins": allowed_origins,
+                 "supports_credentials": True,
+                 "allow_headers": ["Content-Type", "Authorization", "X-Requested-With"],
+                 "expose_headers": ["Content-Type", "Authorization"],
+                 "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"]
              }},
-             supports_credentials=True,
-             allow_headers=["Content-Type", "Authorization", "X-Requested-With"],
-             expose_headers=["Content-Type", "Authorization"],
-             methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"])
+             supports_credentials=True)
 
         # Add logging for CORS configuration
-        logging.info("CORS configured successfully")
+        logging.info(f"CORS configured successfully with allowed origins: {allowed_origins}")
     except Exception as e:
         logging.error(f"CORS configuration failed: {str(e)}")
-        # Optionally, you could add a fallback CORS configuration
+        # Fallback CORS if primary config fails
         CORS(app)  # Minimal CORS if primary config fails
 
 
@@ -2643,27 +2646,95 @@ def get_profile(current_user, organization_id):
     try:
         logger.info(f"========== PROFILING STARTED ==========")
         logger.info(f"Profiling table {table_name}...")
-        logger.info(f"User ID: {current_user}, Organization ID: {organization_id}")
+        logger.info(f"User ID: {current_user}, Organization ID: {organization_id}, Connection ID: {connection_id}")
 
         # Log memory usage at start
         log_memory_usage("Before profiling")
         force_gc()
 
         # If connection_id provided but no connection string, get connection string from ID
-        if connection_id and not connection_string:
+        if connection_id:
             connection = connection_access_check(connection_id, organization_id)
             if not connection:
                 return jsonify({"error": "Connection not found or access denied"}), 404
+
+            # Log connection details (without sensitive info)
+            connection_type = connection.get("connection_type", "unknown")
+            connection_name = connection.get("name", "unknown")
+            logger.info(f"Using connection: {connection_name} (Type: {connection_type})")
+
+            # Get connection details for debugging
+            conn_details = connection.get("connection_details", {})
+            if conn_details:
+                # Log non-sensitive connection details for debugging
+                schema = conn_details.get("schema", "PUBLIC")
+                database = conn_details.get("database", "unknown")
+                warehouse = conn_details.get("warehouse", "unknown") if connection_type == "snowflake" else None
+
+                logger.info(f"Connection database: {database}, schema: {schema}, " +
+                            (f"warehouse: {warehouse}" if warehouse else ""))
 
             # Use cached connection string builder
             connection_string = get_connection_string(connection)
             if not connection_string:
                 return jsonify({"error": "Failed to build connection string"}), 400
 
+        if not connection_string:
+            return jsonify({"error": "No connection string provided"}), 400
+
         # Check if connection string is properly formatted
         if "://" not in connection_string:
             logger.error(f"Invalid connection string format: {connection_string[:20]}...")
             return jsonify({"error": "Invalid connection string format"}), 400
+
+        # Try to verify table existence before profiling
+        try:
+            # Create a temporary connection to verify table
+            from sqlalchemy import create_engine, inspect, text
+            engine = create_engine(connection_string)
+            inspector = inspect(engine)
+
+            # Get all tables in the schema
+            all_tables = inspector.get_table_names()
+            logger.info(f"Found {len(all_tables)} tables in schema")
+
+            # Print the available tables for debugging
+            logger.info(f"Available tables: {', '.join(all_tables[:20]) if len(all_tables) > 0 else 'None found'}")
+
+            # Check if our table exists (case-insensitive comparison)
+            table_exists = False
+            exact_table_name = None
+
+            for t in all_tables:
+                if t.lower() == table_name.lower():
+                    table_exists = True
+                    exact_table_name = t  # Use the exact case from the database
+                    break
+
+            if not table_exists:
+                logger.error(
+                    f"Table '{table_name}' not found in schema. Found tables: {', '.join(all_tables[:10])} {'...' if len(all_tables) > 10 else ''}")
+                return jsonify({"error": f"Table '{table_name}' not found in schema"}), 404
+
+            # If we found the table but with different case, use the correct case
+            if exact_table_name and exact_table_name != table_name:
+                logger.info(f"Using exact table name '{exact_table_name}' instead of '{table_name}'")
+                table_name = exact_table_name
+
+            # Test a simple query to verify access permissions
+            with engine.connect() as conn:
+                try:
+                    result = conn.execute(text(f"SELECT COUNT(*) FROM {table_name}"))
+                    row_count = result.scalar()
+                    logger.info(f"Successfully verified table '{table_name}' exists with {row_count} rows")
+                except Exception as query_error:
+                    logger.error(f"Error accessing table: {str(query_error)}")
+                    return jsonify({"error": f"Error accessing table: {str(query_error)}"}), 403
+
+        except Exception as verify_error:
+            logger.warning(f"Could not pre-verify table existence: {str(verify_error)}")
+            logger.error(traceback.format_exc())
+            # Continue with profiling - don't return error here as the profiler will handle it
 
         # Resolve any environment variable references in connection string
         from core.utils.connection_utils import resolve_connection_string, detect_connection_type
@@ -2710,7 +2781,7 @@ def get_profile(current_user, organization_id):
             logger.info(f"Added timeout parameters to Snowflake connection")
 
         # Run the profiler using the sparvi-core package - with no samples
-        logger.info(f"Starting profile_table call")
+        logger.info(f"Starting profile_table call for table: {table_name}")
         result = profile_table(resolved_connection, table_name, previous_profile, include_samples=include_samples)
         result["timestamp"] = datetime.datetime.now().isoformat()
         logger.info(f"Profile completed with {len(result)} keys")
@@ -2788,12 +2859,16 @@ def get_profile(current_user, organization_id):
             # Continue execution even if save fails
 
         # Get trend data from history
-        trends = profile_history.get_trends(organization_id, table_name)
-        if not isinstance(trends, dict) or "error" not in trends:
-            result["trends"] = trends
-            logger.info(f"Added trends data with {len(trends.get('timestamps', []))} points")
-        else:
-            logger.warning(f"Could not get trends: {trends.get('error', 'Unknown error')}")
+        try:
+            trends = profile_history.get_trends(organization_id, table_name)
+            if isinstance(trends, dict) and "error" not in trends:
+                result["trends"] = trends
+                logger.info(f"Added trends data with {len(trends.get('timestamps', []))} points")
+            else:
+                logger.warning(f"Could not get trends: {trends.get('error', 'Unknown error')}")
+        except Exception as trends_error:
+            logger.error(f"Error getting trend data: {str(trends_error)}")
+            logger.error(traceback.format_exc())
 
         # Final memory usage check
         log_memory_usage("End of profile endpoint")
@@ -2802,9 +2877,8 @@ def get_profile(current_user, organization_id):
         return jsonify(result)
     except Exception as e:
         logger.error(f"Error profiling table: {str(e)}")
-        traceback.print_exc()  # Print the full traceback to your console
-        logger.info(f"About to return response for profile of table {table_name}")
-        return jsonify(result)
+        logger.error(traceback.format_exc())
+        return jsonify({"error": f"Error profiling table: {str(e)}"}), 500
 
 
 @app.route("/api/validations/<rule_id>", methods=["PUT"])
@@ -6320,10 +6394,14 @@ def batch_requests():
 def after_request(response):
     origin = request.headers.get('Origin', '')
 
-    # Allow both your production and development environments
-    if origin in ['https://cloud.sparvi.io', 'http://localhost:3000']:
+    # Define allowed origins
+    allowed_origins = ["https://cloud.sparvi.io", "http://localhost:3000"]
+
+    # Check if the origin is in our list of allowed origins
+    if origin in allowed_origins:
         response.headers.set('Access-Control-Allow-Origin', origin)
     else:
+        # Default to your production domain if origin not allowed
         response.headers.set('Access-Control-Allow-Origin', 'https://cloud.sparvi.io')
 
     response.headers.set('Access-Control-Allow-Headers', 'Content-Type,Authorization,X-Requested-With')

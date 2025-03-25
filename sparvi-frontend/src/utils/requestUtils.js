@@ -120,7 +120,7 @@ export const batchRequests = async (requests, options = {}) => {
     retries = 2,
     retryDelay = 1000,
     waitForAuthentication = true,
-    timeout = 60000 // Increase from 30000 to 60000 (60 seconds)
+    timeout = 120000 // Increase from 30000 to 60000 (60 seconds)
   } = options;
 
   // Create an abort controller for this entire batch operation
