@@ -127,7 +127,7 @@ const TableAnalyticsPage = () => {
     if (connectionId && tableName) {
       fetchTableInfo();
     }
-  }, [connectionId, tableName, activeConnection, getConnection, showNotification]);
+  }, [connectionId, tableName, activeConnection, getConnection]);
 
   // Helper functions to extract the latest metrics from historical data
   const getLatestRowCount = () => {

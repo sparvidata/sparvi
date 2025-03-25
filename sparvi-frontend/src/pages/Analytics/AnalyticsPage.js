@@ -77,7 +77,7 @@ const AnalyticsPage = () => {
 
       fetchTables();
     }
-  }, [showTableSelector, showFilterDropdown, activeConnection, tableList.length, showNotification]);
+  }, [showTableSelector, showFilterDropdown, activeConnection, tableList.length]);
 
   // Fetch analytics dashboard data
   const { data: dashboardData, isLoading: isDashboardLoading } = useAnalyticsDashboard(

@@ -1278,7 +1278,7 @@ def token_required(f):
             logger.debug("Test token detected, bypassing authentication")
             return f("test-user-id", "test-org-id", *args, **kwargs)
 
-        # Normal token check (your existing code)
+        # Normal token check
         token = None
         auth_header = request.headers.get("Authorization", None)
         if auth_header:
@@ -2665,7 +2665,6 @@ def get_profile(current_user, organization_id):
             logger.error(f"Invalid connection string format: {connection_string[:20]}...")
             return jsonify({"error": "Invalid connection string format"}), 400
 
-        # Rest of the function stays the same
         # Resolve any environment variable references in connection string
         from core.utils.connection_utils import resolve_connection_string, detect_connection_type
         resolved_connection = resolve_connection_string(connection_string)
