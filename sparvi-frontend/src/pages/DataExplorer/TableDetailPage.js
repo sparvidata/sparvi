@@ -1,3 +1,4 @@
+// src/pages/DataExplorer/TableDetailPage.js
 import React, { useState, useEffect } from 'react';
 import { Link, useParams, useNavigate } from 'react-router-dom';
 import {
@@ -50,7 +51,7 @@ const TableDetailPage = () => {
         navigate('/explorer');
       }
     }
-  }, [connectionId, connections, activeConnection, setCurrentConnection, navigate]);
+  }, [connectionId, connections, activeConnection, setCurrentConnection, navigate, showNotification]);
 
   // Set breadcrumbs
   useEffect(() => {
@@ -64,7 +65,7 @@ const TableDetailPage = () => {
   const batchRequests = [
     { id: 'columns', path: `/connections/${connectionId}/tables/${tableName}/columns` },
     { id: 'profile', path: '/profile', params: { connection_id: connectionId, table: tableName } },
-    { id: 'validations', path: '/validations', params: { table: tableName } }
+    { id: 'validations', path: '/validations', params: { table: tableName, connection_id: connectionId } }
   ];
 
   // Initial data loading using batch request
@@ -112,13 +113,15 @@ const TableDetailPage = () => {
     // Handle columns data
     if (results.columns && !results.columns.error) {
       setTableData(results.columns);
+    } else if (results.columns && results.columns.error) {
+      console.error("Columns data error:", results.columns.error);
     }
 
     // Handle profile data - now with error handling
     if (results.profile) {
       if (results.profile.error) {
         // Store the error message to display in the profile tab
-        setProfileData({ error: results.profile.error, errorDetails: results.profile.details });
+        setProfileData({ error: results.profile.error || "Unknown server error" });
         console.error("Profile data error:", results.profile.error);
       } else {
         setProfileData(results.profile);
@@ -127,7 +130,20 @@ const TableDetailPage = () => {
 
     // Handle validations
     if (results.validations && !results.validations.error) {
-      setValidations(results.validations.rules || []);
+      // Ensure we get an array
+      if (Array.isArray(results.validations)) {
+        setValidations(results.validations);
+      } else if (results.validations.rules) {
+        setValidations(results.validations.rules || []);
+      } else if (results.validations.data && results.validations.data.rules) {
+        setValidations(results.validations.data.rules || []);
+      } else {
+        console.warn("Unexpected validations format:", results.validations);
+        setValidations([]);
+      }
+    } else if (results.validations && results.validations.error) {
+      console.error("Validations data error:", results.validations.error);
+      setValidations([]);
     }
 
     setIsLoadingTable(false);

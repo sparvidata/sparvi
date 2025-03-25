@@ -7,7 +7,8 @@ import {
   ArrowTrendingDownIcon,
   MinusIcon,
   ChartBarIcon,
-  DocumentMagnifyingGlassIcon
+  DocumentMagnifyingGlassIcon,
+  ExclamationCircleIcon
 } from '@heroicons/react/24/outline';
 import { profilingAPI, validationsAPI } from '../../../api/enhancedApiService';
 import { useUI } from '../../../contexts/UIContext';
@@ -19,32 +20,48 @@ const TableHistory = ({ tableName, connectionId }) => {
 
   const [history, setHistory] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
   const [selectedProfile, setSelectedProfile] = useState(null);
   const [validationResults, setValidationResults] = useState([]);
   const [loadingValidations, setLoadingValidations] = useState(false);
 
   // Load history data
   useEffect(() => {
-    const loadHistory = async () => {
-      if (!tableName) return;
+    if (!tableName || !connectionId) {
+      setLoading(false);
+      return;
+    }
 
+    const loadHistory = async () => {
       try {
         setLoading(true);
+        setError(null);
 
-        const response = await profilingAPI.getHistory(tableName);
+        // Explicitly pass connectionId for the API
+        const response = await profilingAPI.getHistory(tableName, 10, {
+          connectionId: connectionId
+        });
 
-        // Ensure we get an array, even if empty
-        setHistory(response.data.history || []);
+        // Carefully check response structure
+        if (response && response.data && Array.isArray(response.data.history)) {
+          setHistory(response.data.history);
+        } else if (response && Array.isArray(response.history)) {
+          setHistory(response.history);
+        } else {
+          console.warn('Unexpected history data format:', response);
+          setHistory([]);
+          setError('Received unexpected data format from server');
+        }
       } catch (error) {
         console.error(`Error loading history for ${tableName}:`, error);
-        showNotification(`Failed to load history for ${tableName}`, 'error');
+        setError(`Failed to load history: ${error.message || 'Unknown error'}`);
       } finally {
         setLoading(false);
       }
     };
 
     loadHistory();
-  }, [tableName]);
+  }, [tableName, connectionId]);
 
   // Handle profile selection
   const handleProfileSelect = async (profile) => {
@@ -60,12 +77,23 @@ const TableHistory = ({ tableName, connectionId }) => {
     // Load validation results for this profile
     try {
       setLoadingValidations(true);
+      setValidationResults([]);
 
-      const response = await validationsAPI.getValidationHistory(profile.id);
-      setValidationResults(response.data.results || []);
+      const response = await validationsAPI.getValidationHistory(profile.id, {
+        connectionId: connectionId
+      });
+
+      // Check for response structure
+      if (response && response.data && Array.isArray(response.data.results)) {
+        setValidationResults(response.data.results);
+      } else if (response && Array.isArray(response.results)) {
+        setValidationResults(response.results);
+      } else {
+        console.warn('Unexpected validation results format:', response);
+        setValidationResults([]);
+      }
     } catch (error) {
       console.error(`Error loading validation results for profile ${profile.id}:`, error);
-      showNotification('Failed to load validation results', 'error');
     } finally {
       setLoadingValidations(false);
     }
@@ -96,7 +124,7 @@ const TableHistory = ({ tableName, connectionId }) => {
   };
 
   // If loading with no history, show loading state
-  if (loading && !history.length) {
+  if (loading) {
     return (
       <div className="flex justify-center py-10">
         <LoadingSpinner size="lg" />
@@ -104,8 +132,21 @@ const TableHistory = ({ tableName, connectionId }) => {
     );
   }
 
+  // If error, show error state
+  if (error) {
+    return (
+      <div className="text-center py-10">
+        <ExclamationCircleIcon className="mx-auto h-12 w-12 text-danger-400" />
+        <h3 className="mt-2 text-sm font-medium text-secondary-900">Error Loading History</h3>
+        <p className="mt-1 text-sm text-secondary-500">
+          {error}
+        </p>
+      </div>
+    );
+  }
+
   // If no history, show empty state
-  if (!history.length) {
+  if (!history || history.length === 0) {
     return (
       <div className="text-center py-10">
         <ClockIcon className="mx-auto h-12 w-12 text-secondary-400" />
@@ -128,7 +169,7 @@ const TableHistory = ({ tableName, connectionId }) => {
             const rowCountTrend = getRowCountTrend(profile, index);
 
             return (
-              <li key={profile.id}>
+              <li key={profile.id || index}>
                 <div
                   className={`px-4 py-4 sm:px-6 hover:bg-secondary-50 cursor-pointer ${
                     isSelected ? 'bg-primary-50' : ''
@@ -220,9 +261,9 @@ const TableHistory = ({ tableName, connectionId }) => {
                       </div>
                     ) : (
                       <div className="space-y-3">
-                        {validationResults.map((result) => (
+                        {validationResults.map((result, idx) => (
                           <div
-                            key={result.id}
+                            key={result.id || idx}
                             className="bg-white p-3 rounded-md shadow-sm flex items-center justify-between"
                           >
                             <div className="flex items-center">

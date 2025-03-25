@@ -16,7 +16,8 @@ const TableProfile = ({ profile, isLoading, tableName }) => {
         <ExclamationCircleIcon className="mx-auto h-10 w-10 text-danger-400" />
         <h3 className="mt-2 text-sm font-medium text-secondary-900">Error loading profile data</h3>
         <p className="mt-1 text-sm text-secondary-500">
-          There was an error generating the profile for this table. The server returned: {profile.error}
+          There was an error generating the profile for this table.
+          {profile.error && <span> Server returned: {profile.error}</span>}
         </p>
         <div className="mt-4">
           <button
@@ -272,7 +273,11 @@ const TableProfile = ({ profile, isLoading, tableName }) => {
                       {column}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-secondary-500">
-                      {profile?.column_types?.[column] || 'unknown'}
+                      {profile?.column_types?.[column] ? (
+                        <span className="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-secondary-100 text-secondary-800">
+                          {profile.column_types[column]}
+                        </span>
+                      ) : 'unknown'}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-secondary-500">
                       {formatPercentage(100 - (nullFraction * 100))}
