@@ -48,7 +48,7 @@ const BatchRequest = ({
 
         const batchResults = await batchRequests(requests, {
           retries: 2,
-          timeout: 30000,
+          timeout: 60000,
           waitForAuthentication: !skipAuthWait,
           signal: controller.signal
         });

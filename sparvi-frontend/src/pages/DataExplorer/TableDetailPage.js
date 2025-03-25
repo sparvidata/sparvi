@@ -107,15 +107,26 @@ const TableDetailPage = () => {
 
   // Handle batch request completion
   const handleBatchComplete = (results) => {
-    if (results.columns) {
+    console.log("Batch results:", results);
+
+    // Handle columns data
+    if (results.columns && !results.columns.error) {
       setTableData(results.columns);
     }
 
+    // Handle profile data - now with error handling
     if (results.profile) {
-      setProfileData(results.profile);
+      if (results.profile.error) {
+        // Store the error message to display in the profile tab
+        setProfileData({ error: results.profile.error, errorDetails: results.profile.details });
+        console.error("Profile data error:", results.profile.error);
+      } else {
+        setProfileData(results.profile);
+      }
     }
 
-    if (results.validations) {
+    // Handle validations
+    if (results.validations && !results.validations.error) {
       setValidations(results.validations.rules || []);
     }
 

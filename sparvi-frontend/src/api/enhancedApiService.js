@@ -190,6 +190,11 @@ apiClient.interceptors.response.use(
  * @param {Object} options - Request options
  * @returns {Promise} Promise resolving to the response data
  */
+/**
+ * Enhanced API request function with caching, abort control, and error handling
+ * @param {Object} options - Request options
+ * @returns {Promise} Promise resolving to the response data
+ */
 const enhancedRequest = async (options) => {
   const {
     method = 'GET',
@@ -216,15 +221,22 @@ const enhancedRequest = async (options) => {
 
   // Setup abort controller if needed
   const controller = requestId ? getRequestAbortController(requestId) : new AbortController();
-  const signal = abortSignal || (controller ? controller.signal : undefined);
+  // Ensure controller is valid and has abort method
+  const signal = abortSignal || (controller && typeof controller.abort === 'function' ?
+                               controller.signal : undefined);
 
   // Set a timeout
-  const timeoutId = setTimeout(() => {
-    if (controller && !controller.signal.aborted) {
+  let timeoutId;
+  if (typeof controller?.abort === 'function') {
+    timeoutId = setTimeout(() => {
       console.log(`Request timeout (${timeout}ms) for: ${url}`, { requestId });
-      controller.abort();
-    }
-  }, timeout);
+      try {
+        controller.abort();
+      } catch (e) {
+        console.error('Error aborting request:', e);
+      }
+    }, timeout);
+  }
 
   try {
     // Log when making batch requests
@@ -280,7 +292,9 @@ const enhancedRequest = async (options) => {
 
     throw error;
   } finally {
-    clearTimeout(timeoutId);
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+    }
   }
 };
 
@@ -451,6 +465,28 @@ export const schemaAPI = {
       cacheTTL: 10 * 60 * 1000, // 10 minutes for schema data
       requestId,
       forceFresh
+    }).then(response => {
+      // Normalize response structure
+      console.log("Raw tables response:", response);
+
+      if (response?.data?.tables) {
+        return response;
+      }
+      else if (response?.tables) {
+        return { data: { tables: response.tables } };
+      }
+      else if (Array.isArray(response)) {
+        return { data: { tables: response } };
+      }
+      // If we reach here, try to find any array property
+      for (const key in response) {
+        if (Array.isArray(response[key])) {
+          return { data: { tables: response[key] } };
+        }
+      }
+
+      // Last resort - empty array
+      return { data: { tables: [] } };
     });
   },
 
@@ -467,10 +503,15 @@ export const schemaAPI = {
 
   getPreview: (connectionId, tableName, maxRows = 50, options = {}) => {
     const { requestId = `schema.preview.${connectionId}.${tableName}` } = options;
+
     return enhancedRequest({
-      url: `/connections/${connectionId}/tables/${tableName}/preview`,
-      params: { max_rows: maxRows },
-      requestId,
+      url: '/preview', // Changed URL based on the API documentation
+      params: {
+        connection_id: connectionId,
+        table: tableName,
+        max_rows: maxRows
+      },
+      requestId
       // Don't cache previews - they should always be fresh
     });
   },

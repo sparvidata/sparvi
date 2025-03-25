@@ -27,6 +27,7 @@ const DataExplorerPage = () => {
   const [isLoadingTables, setIsLoadingTables] = useState(false);
   const [metadataStatus, setMetadataStatus] = useState({});
   const [expandedNodes, setExpandedNodes] = useState({});
+  const [hasAttemptedLoad, setHasAttemptedLoad] = useState(false);
 
   // Load connection from URL if provided
   useEffect(() => {
@@ -49,35 +50,50 @@ const DataExplorerPage = () => {
   // Load tables for active connection
   useEffect(() => {
     // Skip if no active connection
-    if (!activeConnection) return;
-
-    const connectionId = activeConnection.id;
-
-    if (!connectionId) return;
+    if (!activeConnection || !activeConnection.id || hasAttemptedLoad) {
+      return;
+    }
 
     // Flag to avoid state updates if component unmounts
     let isMounted = true;
+    setIsLoadingTables(true);
+    setLoading('explorer', true);
+    setHasAttemptedLoad(true);
 
     // Load tables
-    async function fetchTables() {
+    const fetchTables = async () => {
       try {
-        if (isMounted) {
-          setIsLoadingTables(true);
-          setLoading('explorer', true);
+        // Get tables
+        const response = await schemaAPI.getTables(activeConnection.id);
+        
+        // Process tables
+        let extractedTables = [];
+        if (response?.tables) {
+          extractedTables = response.tables;
+        } else if (response?.data?.tables) {
+          extractedTables = response.data.tables;
+        } else if (Array.isArray(response)) {
+          extractedTables = response;
         }
 
-        // Get tables
-        const tablesResponse = await schemaAPI.getTables(connectionId);
+        if (isMounted) {
+          setTables(extractedTables || []);
+        }
 
         // Get metadata status
-        const metadataResponse = await metadataAPI.getMetadataStatus(connectionId);
-
-        // Only update state if component is still mounted
-        if (isMounted) {
-          setTables(tablesResponse.data.tables || []);
-          setMetadataStatus(metadataResponse.data);
+        try {
+          const metaResponse = await metadataAPI.getMetadataStatus(activeConnection.id);
+          if (isMounted) {
+            setMetadataStatus(metaResponse?.data || {});
+          }
+        } catch (metaError) {
+          console.error('Error loading metadata status:', metaError);
         }
       } catch (error) {
+        if (error?.cancelled) {
+          // Silently handle cancelled requests
+          return;
+        }
         console.error('Error loading tables:', error);
         if (isMounted) {
           showNotification('Failed to load tables', 'error');
@@ -88,17 +104,20 @@ const DataExplorerPage = () => {
           setLoading('explorer', false);
         }
       }
-    }
+    };
 
     fetchTables();
 
-    // Cleanup function to prevent state updates after unmount
+    // Cleanup function
     return () => {
       isMounted = false;
     };
+  }, [activeConnection, setLoading, showNotification, hasAttemptedLoad]);
 
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeConnection?.id]); // Only depend on connection ID, not functions
+  // Reset load attempt when connection changes
+  useEffect(() => {
+    setHasAttemptedLoad(false);
+  }, [activeConnection?.id]);
 
   // Handle search
   const handleSearch = (query) => {
@@ -112,7 +131,10 @@ const DataExplorerPage = () => {
 
   // Handle metadata refresh
   const handleRefreshMetadata = async () => {
-    if (!activeConnection) return;
+    if (!activeConnection) {
+      showNotification('Please select a connection first', 'warning');
+      return;
+    }
 
     try {
       setLoading('refreshMetadata', true);
@@ -122,13 +144,10 @@ const DataExplorerPage = () => {
       // Refresh tables after a short delay
       setTimeout(async () => {
         try {
-          const tablesResponse = await schemaAPI.getTables(activeConnection.id);
-          setTables(tablesResponse.data.tables || []);
-
-          const metadataResponse = await metadataAPI.getMetadataStatus(activeConnection.id);
-          setMetadataStatus(metadataResponse.data);
+          setHasAttemptedLoad(false); // Reset to trigger reload
         } catch (error) {
           console.error('Error refreshing tables:', error);
+          showNotification('Error refreshing tables', 'error');
         } finally {
           setLoading('refreshMetadata', false);
         }
@@ -142,7 +161,10 @@ const DataExplorerPage = () => {
 
   // Handle table selection
   const handleTableSelect = (tableName) => {
-    if (!activeConnection) return;
+    if (!activeConnection) {
+      showNotification('Please select a connection first', 'warning');
+      return;
+    }
     navigate(`/explorer/${activeConnection.id}/tables/${tableName}`);
   };
 
@@ -175,94 +197,113 @@ const DataExplorerPage = () => {
     );
   };
 
-
   return (
     <div className="py-4">
       <div className="flex justify-between items-center">
         <h1 className="text-2xl font-semibold text-secondary-900">Data Explorer</h1>
 
-        <div className="flex items-center space-x-2">
-          <button
-            onClick={handleRefreshMetadata}
-            disabled={isLoadingTables}
-            className="inline-flex items-center px-3 py-1.5 border border-secondary-300 shadow-sm text-sm font-medium rounded-md text-secondary-700 bg-white hover:bg-secondary-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 disabled:opacity-50"
-          >
-            {isLoadingTables ? (
-              <>
-                <LoadingSpinner size="sm" className="mr-2" />
-                Refreshing...
-              </>
-            ) : (
-              <>
-                <svg className="mr-2 h-4 w-4 text-secondary-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                </svg>
-                Refresh Metadata
-              </>
-            )}
-          </button>
-        </div>
-      </div>
-
-      <div className="mt-2 flex items-center">
-        <ServerIcon className="h-5 w-5 text-secondary-500 mr-2" />
-        <span className="font-medium text-secondary-700">{activeConnection.name}</span>
-        <span className="mx-2 text-secondary-400">&bull;</span>
-        <span className="text-sm text-secondary-500">
-          Metadata: {getMetadataFreshness()}
-        </span>
-      </div>
-
-      <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-12">
-        {/* Side panel with schema browser */}
-        <div className="lg:col-span-3">
-          <div className="bg-white shadow rounded-lg">
-            <div className="px-4 py-3 border-b border-secondary-200">
-              <h3 className="text-sm font-medium text-secondary-900">Schema Browser</h3>
-            </div>
-            <div className="p-4">
-              <SchemaBrowser
-                tables={tables}
-                activeConnection={activeConnection}
-                expandedNodes={expandedNodes}
-                toggleNodeExpanded={toggleNodeExpanded}
-                onTableSelect={handleTableSelect}
-              />
-            </div>
+        {activeConnection && (
+          <div className="flex items-center space-x-2">
+            <button
+              onClick={handleRefreshMetadata}
+              disabled={isLoadingTables}
+              className="inline-flex items-center px-3 py-1.5 border border-secondary-300 shadow-sm text-sm font-medium rounded-md text-secondary-700 bg-white hover:bg-secondary-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 disabled:opacity-50"
+            >
+              {isLoadingTables ? (
+                <>
+                  <LoadingSpinner size="sm" className="mr-2" />
+                  Refreshing...
+                </>
+              ) : (
+                <>
+                  <svg className="mr-2 h-4 w-4 text-secondary-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                  </svg>
+                  Refresh Metadata
+                </>
+              )}
+            </button>
           </div>
-        </div>
+        )}
+      </div>
 
-        {/* Main content with table list */}
-        <div className="lg:col-span-9">
-          <div className="bg-white shadow rounded-lg">
-            <div className="px-4 py-3 border-b border-secondary-200">
-              <div className="flex items-center justify-between">
-                <h3 className="text-lg font-medium text-secondary-900">Tables</h3>
-                <SearchInput
-                  onSearch={handleSearch}
-                  placeholder="Search tables..."
-                  initialValue={searchQuery}
+      {activeConnection ? (
+        <div className="mt-2 flex items-center">
+          <ServerIcon className="h-5 w-5 text-secondary-500 mr-2" />
+          <span className="font-medium text-secondary-700">{activeConnection.name}</span>
+          <span className="mx-2 text-secondary-400">&bull;</span>
+          <span className="text-sm text-secondary-500">
+            Metadata: {getMetadataFreshness()}
+          </span>
+        </div>
+      ) : (
+        <div className="mt-2 p-4 bg-warning-50 border border-warning-200 rounded-md">
+          <p className="text-warning-700">Please select a connection to view data.</p>
+        </div>
+      )}
+
+      {activeConnection ? (
+        <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-12">
+          {/* Side panel with schema browser */}
+          <div className="lg:col-span-3">
+            <div className="bg-white shadow rounded-lg">
+              <div className="px-4 py-3 border-b border-secondary-200">
+                <h3 className="text-sm font-medium text-secondary-900">Schema Browser</h3>
+              </div>
+              <div className="p-4">
+                <SchemaBrowser
+                  tables={tables}
+                  activeConnection={activeConnection}
+                  expandedNodes={expandedNodes}
+                  toggleNodeExpanded={toggleNodeExpanded}
+                  onTableSelect={handleTableSelect}
                 />
               </div>
             </div>
+          </div>
 
-            <div>
-              {isLoadingTables ? (
-                <div className="flex justify-center items-center h-64">
-                  <LoadingSpinner size="lg" />
+          {/* Main content with table list */}
+          <div className="lg:col-span-9">
+            <div className="bg-white shadow rounded-lg">
+              <div className="px-4 py-3 border-b border-secondary-200">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-lg font-medium text-secondary-900">Tables</h3>
+                  <SearchInput
+                    onSearch={handleSearch}
+                    placeholder="Search tables..."
+                    initialValue={searchQuery}
+                  />
                 </div>
-              ) : (
-                <TableList
-                  tables={filteredTables}
-                  searchQuery={searchQuery}
-                  onTableSelect={handleTableSelect}
-                  connectionId={activeConnection.id}
-                />
-              )}
+              </div>
+
+              <div>
+                {isLoadingTables ? (
+                  <div className="flex justify-center items-center h-64">
+                    <LoadingSpinner size="lg" />
+                  </div>
+                ) : (
+                  <TableList
+                    tables={filteredTables}
+                    searchQuery={searchQuery}
+                    onTableSelect={handleTableSelect}
+                    connectionId={activeConnection.id}
+                  />
+                )}
+              </div>
             </div>
           </div>
         </div>
-      </div>
+      ) : (
+        <div className="mt-6">
+          <EmptyState
+            icon={ServerIcon}
+            title="No Connection Selected"
+            description="Please select a connection to view tables and schema."
+            actionText="View Connections"
+            actionLink="/connections"
+          />
+        </div>
+      )}
     </div>
   );
 };

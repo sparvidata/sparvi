@@ -14,19 +14,25 @@ const activeRequestControllers = new Map();
 /**
  * Create an AbortController and token for a request
  * @param {string} requestId - Unique identifier for the request
- * @returns {Object} Object containing signal for the request
+ * @returns {AbortController} AbortController for the request
  */
 export const getRequestAbortController = (requestId) => {
   // Cancel any existing request with the same ID
   cancelRequest(requestId);
 
   // Create a new AbortController
-  const controller = new AbortController();
-  activeRequestControllers.set(requestId, controller);
-
-  return {
-    signal: controller.signal
-  };
+  try {
+    const controller = new AbortController();
+    activeRequestControllers.set(requestId, controller);
+    return controller;
+  } catch (error) {
+    console.error('Error creating AbortController:', error);
+    // Return a dummy controller if real one fails to initialize
+    return {
+      signal: { aborted: false },
+      abort: () => console.log('Dummy abort called')
+    };
+  }
 };
 
 /**
