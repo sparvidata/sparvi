@@ -260,26 +260,49 @@ class SupabaseValidationManager:
             logger.error(f"Error updating validation rule: {str(e)}")
             return False
 
-    def store_validation_result(self, organization_id: str, rule_id: str, is_valid: bool, actual_value: Any,
-                                connection_id: str = None, profile_history_id: str = None) -> str:
-        """Store a validation result"""
+    def store_validation_result(
+            self,
+            organization_id,
+            rule_id,
+            is_valid,
+            actual_value=None,
+            connection_id=None,
+            profile_history_id=None
+    ):
+        """Store validation result in Supabase"""
         try:
-            # Ensure actual_value is stored as a JSON string
-            actual_value_str = json.dumps(actual_value) if actual_value is not None else None
-
-            # Log what parameters we're using
             logger.info(
                 f"Storing validation result with connection_id: {connection_id} and profile_history_id: {profile_history_id}")
 
-            # Pass both parameters to the supabase manager's store_validation_result method
-            return self.supabase.store_validation_result(
-                organization_id=organization_id,
-                rule_id=rule_id,
-                is_valid=is_valid,
-                actual_value=actual_value,
-                connection_id=connection_id,  # Pass connection_id
-                profile_history_id=profile_history_id
-            )
+            # Import what we need
+            import uuid
+            import json
+            import datetime
+            from ..storage.supabase_manager import SupabaseManager
+
+            # Get a Supabase client instance
+            supabase_mgr = SupabaseManager()
+
+            # Create a record to insert
+            validation_result = {
+                "id": str(uuid.uuid4()),
+                "organization_id": organization_id,
+                "rule_id": rule_id,
+                "is_valid": is_valid,
+                "run_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                "actual_value": json.dumps(actual_value) if actual_value is not None else None,
+                "connection_id": connection_id,
+                "profile_history_id": profile_history_id
+            }
+
+            # Use the Supabase client from the manager, not the manager itself
+            response = supabase_mgr.supabase.table("validation_results").insert(validation_result).execute()
+
+            if not response.data or len(response.data) == 0:
+                logger.error("Failed to store validation result")
+                return None
+
+            return response.data[0].get("id")
 
         except Exception as e:
             logger.error(f"Error storing validation result: {str(e)}")

@@ -2808,8 +2808,11 @@ def get_profile(current_user, organization_id):
         log_memory_usage("After garbage collection, before saving profile")
 
         profile_id = None
+        result["table_name"] = table_name
+
         try:
-            profile_id = profile_history.save_profile(current_user, organization_id, result, sanitized_connection)
+            # Update this line to pass connection_id
+            profile_id = profile_history.save_profile(current_user, organization_id, result, sanitized_connection, connection_id)
             logger.info(f"Profile save result: {profile_id}")
             force_gc()
 
@@ -2860,7 +2863,7 @@ def get_profile(current_user, organization_id):
 
         # Get trend data from history
         try:
-            trends = profile_history.get_trends(organization_id, table_name)
+            trends = profile_history.get_trends(organization_id, table_name, connection_id=connection_id)
             if isinstance(trends, dict) and "error" not in trends:
                 result["trends"] = trends
                 logger.info(f"Added trends data with {len(trends.get('timestamps', []))} points")
@@ -3706,10 +3709,13 @@ def get_connection_credentials(connection_id):
 def get_profile_history(current_user, organization_id):
     """Get history of profile runs for a table"""
     table_name = request.args.get("table")
+    connection_id = request.args.get("connection_id")  # Add this line
     limit = request.args.get("limit", 10, type=int)
 
     if not table_name:
         return jsonify({"error": "Table name is required"}), 400
+
+    # Validation for connection_id is optional
 
     try:
         logger.info(f"Getting profile history for organization: {organization_id}, table: {table_name}, limit: {limit}")
@@ -3717,8 +3723,13 @@ def get_profile_history(current_user, organization_id):
         # Create profile history manager
         profile_history = SupabaseProfileHistoryManager()
 
-        # Get history data
-        history_data = profile_history.get_profile_history(organization_id, table_name, limit)
+        # Call get_profile_history with the table_name parameter
+        history_data = profile_history.get_profile_history(
+            organization_id=organization_id,
+            table_name=table_name,
+            limit=limit,
+            connection_id=connection_id  # Pass this parameter
+        )
 
         logger.info(f"Retrieved {len(history_data)} profile history records")
         return jsonify({"history": history_data})

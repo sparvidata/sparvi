@@ -1,325 +1,286 @@
 import json
 import logging
-import traceback
-from datetime import datetime
+import uuid
+import decimal
 from typing import Dict, Any, Optional, List
-import os
-import sys
+from datetime import datetime, timedelta
 
-# Add the correct path to the core directory
-core_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../../core'))
-if core_path not in sys.path:
-    sys.path.insert(0, core_path)
+logger = logging.getLogger(__name__)
 
-# Now import from storage
-try:
-    from ..storage.supabase_manager import SupabaseManager
 
-    # Log success
-    logging.info("Successfully imported SupabaseManager")
-except ImportError as e:
-    # Log the error and try an alternative approach
-    logging.error(f"Failed to import SupabaseManager: {e}")
+class CustomJSONEncoder(json.JSONEncoder):
+    """Custom JSON encoder that handles Decimal and datetime objects"""
 
-    # Alternative approach using importlib
-    import importlib.util
-
-    manager_path = os.path.join(core_path, 'storage', 'supabase_manager.py')
-    spec = importlib.util.spec_from_file_location("supabase_manager", manager_path)
-    supabase_manager = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(supabase_manager)
-    SupabaseManager = supabase_manager.SupabaseManager
-    logging.info("Successfully imported SupabaseManager using importlib")
-
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    filename='profile_history.log'
-)
-logger = logging.getLogger('supabase_profile_history')
+    def default(self, obj):
+        if isinstance(obj, decimal.Decimal):
+            return float(obj)
+        if isinstance(obj, datetime):
+            return obj.isoformat()
+        return super(CustomJSONEncoder, self).default(obj)
 
 
 class SupabaseProfileHistoryManager:
-    """Manages the storage and retrieval of historical profiling data using Supabase"""
+    """Manager for storing and retrieving profile history from Supabase"""
 
-    def __init__(self):
-        """Initialize the history manager with a Supabase connection"""
-        self.supabase = SupabaseManager()
-        logger.info("Supabase Profile History Manager initialized")
+    def __init__(self, supabase_client=None):
+        """Initialize the manager with a Supabase client"""
+        from ..storage.supabase_manager import SupabaseManager
 
-    # Update the save_profile method to ensure no sample data is stored
-    def save_profile(self, user_id: str, organization_id: str, profile: Dict, connection_string: str) -> int:
+        # If no client is provided, create a new one using SupabaseManager
+        if supabase_client is None:
+            manager = SupabaseManager()
+            self.supabase = manager.supabase
+        else:
+            self.supabase = supabase_client
+
+        # Verify the client is available
+        if self.supabase is None:
+            logger.error("Failed to initialize Supabase client in SupabaseProfileHistoryManager")
+            raise ValueError("Supabase client is required for SupabaseProfileHistoryManager")
+
+    def save_profile(self, user_id: str, organization_id: str, profile_data: Dict[str, Any],
+                     connection_string: Optional[str] = None, connection_id: Optional[str] = None) -> Optional[str]:
         """
-        Save a profile to Supabase and manage history retention - without row-level data
+        Save profile data to Supabase
+
+        Args:
+            user_id: ID of the user who ran the profile
+            organization_id: Organization ID
+            profile_data: The profile data to save
+            connection_string: Optional sanitized connection string
+            connection_id: Optional connection ID
+
+        Returns:
+            The ID of the saved profile or None if an error occurred
         """
         try:
-            logger.info(f"Attempting to save profile for table {profile['table']} to Supabase")
+            # Extract table name from profile data
+            table_name = profile_data.get("table", profile_data.get("table_name"))
+            if not table_name:
+                logger.error("No table name found in profile data")
+                return None
 
-            # Create a sanitized copy of the profile without any row-level data
-            sanitized_profile = profile.copy()
+            logger.info(f"Saving profile for table {table_name}, organization {organization_id}")
 
-            # Explicitly remove any sample data if present
-            if "samples" in sanitized_profile:
-                logger.info("Removing sample data before storage")
-                del sanitized_profile["samples"]
+            # Generate a unique ID for this profile
+            profile_id = str(uuid.uuid4())
 
-            # Also remove any other potential row-level data
-            for key in list(sanitized_profile.keys()):
-                # Look for keys that might contain row data
-                if key in ['sample_data', 'rows', 'data_examples', 'raw_data', 'source_rows']:
-                    logger.info(f"Removing potential row data field: {key}")
-                    del sanitized_profile[key]
+            # Convert profile_data to JSON string first with custom encoder, then parse it back
+            profile_data_json = json.dumps(profile_data, cls=CustomJSONEncoder)
+            profile_data_parsed = json.loads(profile_data_json)
 
-            # Force garbage collection before serialization
-            import gc
-            gc.collect()
-
-            # Convert datetime objects to ISO strings in the profile
-            # Fix: Use a simple lambda function instead of a custom class
-            serialized_profile = json.loads(
-                json.dumps(
-                    sanitized_profile,
-                    default=lambda obj: obj.isoformat() if hasattr(obj, 'isoformat') else str(obj)
-                )
-            )
-
-            # Force garbage collection after serialization
-            gc.collect()
-
-            # Sanitize connection string to remove credentials
-            sanitized_connection = self.supabase._sanitize_connection_string(connection_string)
-
-            # Prepare data for saving
-            data = {
+            # Create simplified record with only the fields we know exist in the table
+            profile_record = {
+                "id": profile_id,
                 "organization_id": organization_id,
                 "profile_id": user_id,
-                "connection_string": sanitized_connection,
-                "table_name": sanitized_profile['table'],
-                "data": serialized_profile  # Use the sanitized version
+                "table_name": table_name,
+                "connection_id": connection_id,
+                "collected_at": datetime.now().isoformat(),
+                "data": profile_data_parsed  # Use 'data' column instead of 'profile_data'
             }
 
-            # Create a direct Supabase client
-            import os
-            from supabase import create_client
+            # Insert into Supabase
+            response = self.supabase.table("profiling_history").insert(profile_record).execute()
 
-            # Get credentials from environment
-            supabase_url = os.getenv("SUPABASE_URL")
-            supabase_key = os.getenv("SUPABASE_SERVICE_KEY")
-
-            # Create the client and insert data
-            direct_client = create_client(supabase_url, supabase_key)
-            response = direct_client.table("profiling_history").insert(data).execute()
-
-            # Force garbage collection after saving
-            gc.collect()
-
-            if response.data and len(response.data) > 0:
-                profile_id = response.data[0].get('id')
-                logger.info(f"Successfully saved profile with ID {profile_id}")
-                return profile_id
-            else:
-                logger.warning("No data returned from Supabase after insert")
+            if not response.data:
+                logger.error("Failed to save profile to profiling_history")
                 return None
+
+            logger.info(f"Successfully saved profile with ID {profile_id}")
+            return profile_id
 
         except Exception as e:
             logger.error(f"Error saving profile: {str(e)}")
-            logger.error(traceback.format_exc())
+            logger.error("Exception details", exc_info=True)
             return None
 
-    def get_latest_profile(self, organization_id: str, table_name: str) -> Optional[Dict]:
-        """Retrieve the latest profile for a given table"""
+    def get_profile_history(self, organization_id: str, table_name: str, limit: int = 10,
+                            connection_id: Optional[str] = None) -> List[Dict[str, Any]]:
+        """
+        Get profile history for a table from Supabase
+
+        Args:
+            organization_id: Organization ID
+            table_name: Table name
+            limit: Maximum number of profiles to return
+            connection_id: Optional connection ID to filter by
+
+        Returns:
+            List of profile history items
+        """
         try:
-            # Create a direct Supabase client
-            import os
-            from supabase import create_client
-
-            # Get credentials from environment
-            supabase_url = os.getenv("SUPABASE_URL")
-            supabase_key = os.getenv("SUPABASE_SERVICE_KEY")
-
-            # Create the client
-            direct_client = create_client(supabase_url, supabase_key)
-
-            # Query the data with correct order parameter
-            response = direct_client.table("profiling_history") \
-                .select("data") \
-                .eq("organization_id", organization_id) \
-                .eq("table_name", table_name) \
-                .order("collected_at", desc=True) \
-                .limit(1) \
-                .execute()
-
-            if response.data and len(response.data) > 0:
-                # Return the data field which contains the profile
-                return response.data[0]['data']
-            return None
-
-        except Exception as e:
-            logger.error(f"Error getting latest profile: {str(e)}")
-            logger.error(traceback.format_exc())
-            return None
-
-    def get_profile_history(self, organization_id: str, table_name: str, limit: int = 10) -> List[Dict[str, Any]]:
-        """Get complete history of profile runs for a table"""
-        try:
-            import os
-            from supabase import create_client
-
-            supabase_url = os.getenv("SUPABASE_URL")
-            supabase_key = os.getenv("SUPABASE_SERVICE_KEY")
-
-            direct_client = create_client(supabase_url, supabase_key)
-
-            # Query the full profile data
-            response = direct_client.table("profiling_history") \
+            # Start building the query
+            query = self.supabase.table("profiling_history") \
                 .select("*") \
                 .eq("organization_id", organization_id) \
-                .eq("table_name", table_name) \
-                .order("collected_at", desc=True) \
-                .limit(limit) \
-                .execute()
+                .eq("table_name", table_name)
+
+            # Add connection_id filter if provided
+            if connection_id:
+                query = query.eq("connection_id", connection_id)
+
+            # Complete the query
+            response = query.order("collected_at", desc=True).limit(limit).execute()
 
             if not response.data:
+                logger.info(f"No profile history found for table {table_name}")
                 return []
 
-            # Format the history data - return the full profile data from each record
+            # Process the results
             history = []
             for item in response.data:
-                # Use the data field which contains the complete profile
-                profile_data = item["data"]
+                # Extract relevant fields for the history view
+                history_item = {
+                    "id": item.get("id"),
+                    "collected_at": item.get("collected_at"),
+                    "profile_id": item.get("profile_id"),
+                    "table_name": item.get("table_name"),
+                    "connection_id": item.get("connection_id")
+                }
 
-                # Ensure timestamp is included
-                if "timestamp" not in profile_data:
-                    profile_data["timestamp"] = item["collected_at"]
+                # Add data from the data JSON field
+                profile_data = item.get("data", {})
+                if profile_data:
+                    history_item["row_count"] = profile_data.get("row_count", 0)
 
-                history.append(profile_data)
+                    # Count columns from completeness data
+                    completeness = profile_data.get("completeness", {})
+                    history_item["column_count"] = len(completeness) if completeness else 0
 
+                    # Add a summary
+                    history_item["summary"] = {
+                        "fields_with_nulls": sum(1 for c in completeness.values() if c.get("nulls", 0) > 0),
+                        "unique_keys": []  # Add any known unique keys here if available
+                    }
+
+                history.append(history_item)
+
+            logger.info(f"Retrieved {len(history)} profile history records")
             return history
 
         except Exception as e:
             logger.error(f"Error getting profile history: {str(e)}")
-            logger.error(traceback.format_exc())
+            logger.error("Exception details", exc_info=True)
             return []
 
-    def get_trends(self, organization_id: str, table_name: str, num_periods: int = 10) -> Dict[str, Any]:
-        """Get time-series trend data for a specific table"""
+    def get_latest_profile(self, organization_id: str, table_name: str,
+                           connection_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        """
+        Get the most recent profile for a table and connection
+
+        Args:
+            organization_id: ID of the organization
+            table_name: Name of the table
+            connection_id: Optional connection ID to filter by
+
+        Returns:
+            The most recent profile data or None if not found
+        """
         try:
-            import os
-            import json
-            import datetime
-            from supabase import create_client
-            import traceback
-
-            # Get credentials from environment
-            supabase_url = os.getenv("SUPABASE_URL")
-            supabase_key = os.getenv("SUPABASE_SERVICE_KEY")
-
-            # Create a direct client
-            direct_client = create_client(supabase_url, supabase_key)
-
-            # Query the data with correct order parameter
-            response = direct_client.table("profiling_history") \
-                .select("collected_at, data") \
+            # Start building the query
+            logger.info(f"Getting latest profile for table {table_name}, connection {connection_id}")
+            query = self.supabase.table("profiling_history") \
+                .select("data") \
                 .eq("organization_id", organization_id) \
-                .eq("table_name", table_name) \
-                .order("collected_at", desc=True) \
-                .limit(num_periods) \
-                .execute()
+                .eq("table_name", table_name)
+
+            # Add connection_id filter if provided
+            if connection_id:
+                query = query.eq("connection_id", connection_id)
+
+            # Complete the query
+            response = query.order("collected_at", desc=True).limit(1).execute()
 
             if not response.data or len(response.data) == 0:
-                logger.warning(f"No historical data found for organization {organization_id}, table {table_name}")
-                return {"error": "No historical data found"}
+                logger.info(f"No profile found for table {table_name}")
+                return None
 
-            # Process data into trends format
+            logger.info(f"Found latest profile for table {table_name}")
+            return response.data[0].get("data")
+
+        except Exception as e:
+            logger.error(f"Error getting latest profile: {str(e)}")
+            logger.exception("Exception details")
+            return None
+
+    def get_trends(self, organization_id: str, table_name: str, days: int = 30, connection_id: Optional[str] = None) -> \
+    Dict[str, Any]:
+        """
+        Get trend data for a table from profiling history
+
+        Args:
+            organization_id: Organization ID
+            table_name: Table name
+            days: Number of days to look back
+            connection_id: Optional connection ID to filter by
+
+        Returns:
+            Trend data dictionary with timestamps and metrics
+        """
+        try:
+            logger.info(f"Getting trend data for table {table_name} over {days} days")
+
+            # Calculate the date range
+            start_date = (datetime.now() - timedelta(days=days)).isoformat()
+
+            # Query Supabase for trend data - only select collected_at and data
+            query = self.supabase.table("profiling_history") \
+                .select("collected_at,data") \
+                .eq("organization_id", organization_id) \
+                .eq("table_name", table_name) \
+                .gte("collected_at", start_date)
+
+            # Add connection_id filter if provided
+            if connection_id:
+                query = query.eq("connection_id", connection_id)
+
+            # Complete the query
+            response = query.order("collected_at").execute()
+
+            if not response.data:
+                logger.info(f"No trend data found for table {table_name}")
+                return {
+                    "timestamps": [],
+                    "row_counts": [],
+                    "column_counts": []
+                }
+
+            # Process results into time series
+            timestamps = []
+            row_counts = []
+            column_counts = []
+
+            for item in response.data:
+                timestamps.append(item.get("collected_at"))
+
+                # Extract data from the data JSON
+                profile_data = item.get("data", {})
+                row_counts.append(profile_data.get("row_count", 0))
+
+                # Count columns from completeness data or fall back to 0
+                completeness = profile_data.get("completeness", {})
+                column_counts.append(len(completeness) if completeness else 0)
+
+            # Calculate change metrics
+            row_count_change = None
+            if len(row_counts) >= 2:
+                first_count = row_counts[0]
+                last_count = row_counts[-1]
+                row_count_change = last_count - first_count
+
             trends = {
-                "timestamps": [],
-                "formatted_timestamps": [],
-                "row_counts": [],
-                "duplicate_counts": [],
-                "null_rates": {},
-                "validation_success_rates": []
+                "timestamps": timestamps,
+                "row_counts": row_counts,
+                "column_counts": column_counts,
+                "row_count_change": row_count_change,
+                "count": len(timestamps)
             }
 
-            # Reverse to get chronological order (oldest to newest)
-            profiles = list(reversed(response.data))
-
-            # First pass: collect all possible column names across all profiles
-            all_columns = set()
-            for profile in profiles:
-                profile_data = profile["data"]
-                completeness = profile_data.get("completeness", {})
-                all_columns.update(completeness.keys())
-
-            # Initialize null_rates with empty arrays for all columns
-            for col in all_columns:
-                trends["null_rates"][col] = []
-
-            # Second pass: process each profile
-            for profile in profiles:
-                # Format timestamp for display
-                timestamp = profile["collected_at"]
-
-                # Add the raw timestamp
-                if isinstance(timestamp, str):
-                    trends["timestamps"].append(timestamp)
-                else:
-                    trends["timestamps"].append(timestamp.isoformat())
-
-                # Add a formatted timestamp for display
-                try:
-                    # Try to parse the timestamp
-                    if isinstance(timestamp, str):
-                        dt = datetime.datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
-                    else:
-                        dt = timestamp
-                    # Format in a readable way
-                    formatted = dt.strftime("%m/%d %H:%M")
-                    trends["formatted_timestamps"].append(formatted)
-                except Exception as e:
-                    # If parsing fails, use the original
-                    logger.warning(f"Error formatting timestamp: {e}")
-                    trends["formatted_timestamps"].append(str(timestamp))
-
-                # Get the data from the profile
-                profile_data = profile["data"]
-
-                # Extract data points
-                trends["row_counts"].append(profile_data.get("row_count", 0))
-                trends["duplicate_counts"].append(profile_data.get("duplicate_count", 0))
-
-                # Process null rates for each column
-                completeness = profile_data.get("completeness", {})
-
-                # For each column we know about
-                for col in all_columns:
-                    if col in completeness:
-                        # Column exists in this profile
-                        stats = completeness[col]
-                        trends["null_rates"][col].append(stats.get("null_percentage", 0))
-                    else:
-                        # Column doesn't exist in this profile (added later or removed earlier)
-                        trends["null_rates"][col].append(None)
-
-                # Process validation results if available
-                validation_results = profile_data.get("validation_results", [])
-                if validation_results:
-                    valid_count = sum(1 for result in validation_results if result.get("is_valid", False))
-                    total_count = len(validation_results)
-                    success_rate = (valid_count / total_count * 100) if total_count > 0 else 100
-                    trends["validation_success_rates"].append(success_rate)
-                else:
-                    trends["validation_success_rates"].append(None)
-
-            logger.info(
-                f"Retrieved trend data with {len(trends['timestamps'])} data points for {len(all_columns)} columns")
+            logger.info(f"Retrieved trend data with {len(timestamps)} points")
             return trends
 
         except Exception as e:
             logger.error(f"Error getting trends: {str(e)}")
-            logger.error(traceback.format_exc())
-            return {"error": f"Error retrieving trend data: {str(e)}"}
-
-    def delete_old_profiles(self, organization_id: str, table_name: str, keep_latest: int = 30):
-        """Delete older profiles, keeping only the specified number of latest runs"""
-        return self.supabase.delete_old_profiles(organization_id, table_name, keep_latest)
+            logger.error("Exception details", exc_info=True)
+            return {"error": str(e)}
