@@ -32,8 +32,7 @@ jobs:
       - name: Install dependencies
         run: |
           cd backend
-          python -m ensurepip --default-pip || curl -O https://bootstrap.pypa.io/get-pip.py && python get-pip.py --user
-          python -m pip install --upgrade pip
+          python -m pip install --upgrade pip setuptools wheel
           pip install -r requirements.txt
         
       # Optional: Add step to run tests here (PyTest, Django test suites, etc.)
