@@ -1209,7 +1209,7 @@ def setup_cors(app):
     """
     try:
         # Define allowed origins
-        allowed_origins = ["https://cloud.sparvi.io", "http://localhost:3000"]
+        allowed_origins = ["https://cloud.sparvi.io", "http://localhost:3000", "https://ambitious-wave-0fdea0310.6.azurestaticapps.net"]
 
         CORS(app,
              resources={r"/api/*": {
@@ -6406,7 +6406,7 @@ def after_request(response):
     origin = request.headers.get('Origin', '')
 
     # Define allowed origins
-    allowed_origins = ["https://cloud.sparvi.io", "http://localhost:3000"]
+    allowed_origins = ["https://cloud.sparvi.io", "http://localhost:3000", "https://ambitious-wave-0fdea0310.6.azurestaticapps.net"]
 
     # Check if the origin is in our list of allowed origins
     if origin in allowed_origins:
