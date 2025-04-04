@@ -1211,21 +1211,35 @@ def setup_cors(app):
         # Define allowed origins
         allowed_origins = ["https://cloud.sparvi.io", "http://localhost:3000", "https://ambitious-wave-0fdea0310.6.azurestaticapps.net"]
 
-        CORS(app,
-             resources={r"/api/*": {
-                 "origins": allowed_origins,
-                 "supports_credentials": True,
-                 "allow_headers": ["Content-Type", "Authorization", "X-Requested-With"],
-                 "expose_headers": ["Content-Type", "Authorization"],
-                 "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"]
-             }},
+        # Create a CORS instance with specific settings
+        cors = CORS(app,
+             resources={
+                 r"/api/*": {
+                     "origins": allowed_origins,
+                     "supports_credentials": True,
+                     "allow_headers": ["Content-Type", "Authorization", "X-Requested-With"],
+                     "expose_headers": ["Content-Type", "Authorization"],
+                     "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"]
+                 },
+                 # Explicitly define the batch endpoint with its own settings
+                 r"/api/batch": {
+                     "origins": allowed_origins,
+                     "supports_credentials": True,
+                     "allow_headers": ["Content-Type", "Authorization", "X-Requested-With"],
+                     "expose_headers": ["Content-Type", "Authorization"],
+                     "methods": ["POST", "OPTIONS"]
+                 }
+             },
              supports_credentials=True)
 
-        # Add logging for CORS configuration
-        logging.info(f"CORS configured successfully with allowed origins: {allowed_origins}")
+        # Log the CORS configuration for diagnostics
+        logger.info(f"CORS configured with the following origins: {allowed_origins}")
+        logger.info(f"Special configuration for /api/batch endpoint: {cors.resources.get(r'/api/batch', {})}")
     except Exception as e:
-        logging.error(f"CORS configuration failed: {str(e)}")
+        logger.error(f"CORS configuration failed: {str(e)}")
+        logger.error(traceback.format_exc())
         # Fallback CORS if primary config fails
+        logger.warning("Using fallback CORS configuration")
         CORS(app)  # Minimal CORS if primary config fails
 
 
@@ -6287,8 +6301,13 @@ def get_analytics_dashboard_metrics(current_user, organization_id, connection_id
         return jsonify({"error": str(e)}), 500
 
 
-@app.route('/api/batch', methods=['POST'])
+@app.route('/api/batch', methods=['POST', 'OPTIONS'])
 def batch_requests():
+    """Process multiple API requests in a single call"""
+    # Check if this is a preflight request
+    if request.method == 'OPTIONS':
+        return '', 204  # Return empty response with 204 No Content for OPTIONS
+
     batch_data = request.json
 
     if not batch_data or 'requests' not in batch_data:
@@ -6308,10 +6327,10 @@ def batch_requests():
     # Increase timeout and use a more robust client configuration
     client = httpx.Client(
         timeout=httpx.Timeout(
-            connect=10.0,   # Connection timeout
-            read=30.0,      # Read timeout (increased from default)
-            write=10.0,     # Write timeout
-            pool=None       # Disable connection pooling to prevent potential issues
+            connect=10.0,  # Connection timeout
+            read=30.0,  # Read timeout (increased from default)
+            write=10.0,  # Write timeout
+            pool=None  # Disable connection pooling to prevent potential issues
         ),
         follow_redirects=True,
         limits=httpx.Limits(
@@ -6403,10 +6422,12 @@ def batch_requests():
 
 @app.after_request
 def after_request(response):
+    """Add CORS headers to all responses"""
     origin = request.headers.get('Origin', '')
 
     # Define allowed origins
-    allowed_origins = ["https://cloud.sparvi.io", "http://localhost:3000", "https://ambitious-wave-0fdea0310.6.azurestaticapps.net"]
+    allowed_origins = ["https://cloud.sparvi.io", "http://localhost:3000",
+                       "https://ambitious-wave-0fdea0310.6.azurestaticapps.net"]
 
     # Check if the origin is in our list of allowed origins
     if origin in allowed_origins:
@@ -6415,14 +6436,26 @@ def after_request(response):
         # Default to your production domain if origin not allowed
         response.headers.set('Access-Control-Allow-Origin', 'https://cloud.sparvi.io')
 
+    # Set standard CORS headers
     response.headers.set('Access-Control-Allow-Headers', 'Content-Type,Authorization,X-Requested-With')
     response.headers.set('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS')
     response.headers.set('Access-Control-Allow-Credentials', 'true')
+
     # Cache preflight requests to reduce OPTIONS calls
     response.headers.set('Access-Control-Max-Age', '3600')  # 1 hour
+
+    # Add special handling for the batch endpoint to ensure it works
+    if request.path == '/api/batch':
+        logger.debug(f"Special handling for batch endpoint: {request.method}")
+        if request.method == 'OPTIONS':
+            # For preflight requests, ensure we return proper CORS headers
+            response.headers.set('Access-Control-Allow-Methods', 'POST,OPTIONS')
+            response.headers.set('Access-Control-Allow-Headers', 'Content-Type,Authorization,X-Requested-With')
+            response.headers.set('Access-Control-Max-Age', '86400')  # 24 hours for batch endpoint
+
     return response
 
 
 if __name__ == "__main__":
     # In production, ensure you run with HTTPS (via a reverse proxy or WSGI server with SSL configured)
-    app.run(debug=True)
+    app.run(debug=False)
