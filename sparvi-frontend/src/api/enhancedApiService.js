@@ -627,6 +627,7 @@ export const validationsAPI = {
 
     if (!connectionId) {
       console.warn('connectionId is required for getRules');
+      return Promise.reject(new Error('connectionId is required'));
     }
 
     return enhancedRequest({
@@ -636,6 +637,24 @@ export const validationsAPI = {
       cacheTTL: 10 * 60 * 1000, // 10 minutes
       requestId,
       forceFresh
+    }).then(response => {
+      console.log('Raw validation rules response:', response);
+
+      // Normalize the response structure
+      if (response && response.data && response.data.rules) {
+        return { data: { rules: response.data.rules } };
+      } else if (response && response.rules) {
+        return { data: { rules: response.rules } };
+      } else if (Array.isArray(response)) {
+        return { data: { rules: response } };
+      }
+
+      // If we can't find rules, return an empty array in the expected format
+      console.warn('Unexpected validation rules API response format:', response);
+      return { data: { rules: [] } };
+    }).catch(error => {
+      console.error(`Error fetching validation rules for ${tableName}:`, error);
+      throw error;
     });
   },
 
@@ -840,6 +859,8 @@ export const validationsAPI = {
       return Promise.reject(new Error('connectionId is required'));
     }
 
+    console.log(`Generating default validations for table: ${tableName}, connectionId: ${connectionId}`);
+
     return enhancedRequest({
       method: 'POST',
       url: '/generate-default-validations',
@@ -850,9 +871,36 @@ export const validationsAPI = {
       },
       requestId: `validations.generate.${connectionId}.${tableName}`
     }).then(response => {
-      // Invalidate rules cache for this table since new rules have been created
+      // Log the response to see what we're getting back
+      console.log('Default validation generation response:', response);
+
+      // Clear all validation-related caches for this table
       clearCacheItem(`validations.rules.${tableName}`);
-      return response;
+      clearCacheItem(`validations.summary.${connectionId}`);
+      clearCacheItem(`table.dashboard.${connectionId}.${tableName}`);
+
+      // After generating, explicitly fetch the validations with the connection ID
+      return enhancedRequest({
+        url: '/validations',
+        params: {
+          table: tableName,
+          connection_id: connectionId
+        },
+        requestId: `validations.get.${tableName}.${connectionId}`,
+        forceFresh: true // Skip cache to get fresh data
+      }).then(rulesResponse => {
+        console.log('Validation rules after generation:', rulesResponse);
+
+        // Return both responses in a structured way
+        return {
+          generation: response,
+          rules: rulesResponse
+        };
+      }).catch(fetchError => {
+        console.error('Error fetching rules after generation:', fetchError);
+        // Still return the original response if fetching the rules fails
+        return response;
+      });
     });
   }
 };

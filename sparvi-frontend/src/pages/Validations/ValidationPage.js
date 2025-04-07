@@ -73,6 +73,29 @@ const ValidationPage = () => {
     }
   );
 
+  // When validations query data changes and it's not the initial load
+  useEffect(() => {
+    if (validationsQuery.data && initialLoadComplete) {
+      console.log('Validation query data updated:', validationsQuery.data);
+
+      // Extract the validations from the response
+      let newValidations = [];
+      if (Array.isArray(validationsQuery.data)) {
+        newValidations = validationsQuery.data;
+      } else if (validationsQuery.data.rules && Array.isArray(validationsQuery.data.rules)) {
+        newValidations = validationsQuery.data.rules;
+      } else if (validationsQuery.data.data && validationsQuery.data.data.rules &&
+                Array.isArray(validationsQuery.data.data.rules)) {
+        newValidations = validationsQuery.data.data.rules;
+      }
+
+      if (newValidations.length > 0) {
+        console.log(`Updating state with ${newValidations.length} validations from query`);
+        setCurrentValidations(newValidations);
+      }
+    }
+  }, [validationsQuery.data, initialLoadComplete]);
+
   // Get last run timestamp for all validations
   const getLastRunTimestamp = (validations) => {
     const timestamps = validations
@@ -368,19 +391,95 @@ const ValidationPage = () => {
     try {
       setLoading('generating', true);
 
+      // Log the connection ID and table name for debugging
+      console.log(`Generating validations for table ${selectedTable} with connection ID ${activeConnection.id}`);
+
       const response = await validationsAPI.generateDefaultValidations(
-        activeConnection.id,  // Pass connectionId first
+        activeConnection.id,
         selectedTable,
         null
       );
 
-      // Invalidate the query to refetch validation rules
-      queryClient.invalidateQueries(['table-validations', selectedTable]);
+      console.log('Full generation response:', response);
 
-      showNotification(`Generated ${response.data.count} default validations for ${selectedTable}`, 'success');
+      // Check if we have the rules already in the response
+      let newRules = [];
+
+      if (response.rules) {
+        // Extract rules from the nested response
+        if (Array.isArray(response.rules)) {
+          newRules = response.rules;
+        } else if (response.rules.rules && Array.isArray(response.rules.rules)) {
+          newRules = response.rules.rules;
+        } else if (response.rules.data && response.rules.data.rules && Array.isArray(response.rules.data.rules)) {
+          newRules = response.rules.data.rules;
+        }
+
+        console.log(`Found ${newRules.length} rules in the response`);
+      }
+
+      // If we got rules directly, use them
+      if (newRules.length > 0) {
+        setCurrentValidations(newRules);
+        showNotification(`Generated ${newRules.length} default validations for ${selectedTable}`, 'success');
+      } else {
+        // Otherwise, force a refetch
+        try {
+          // Invalidate the query cache first
+          queryClient.invalidateQueries(['table-validations', selectedTable]);
+
+          // Wait a moment for the backend to process
+          await new Promise(resolve => setTimeout(resolve, 800));
+
+          // Explicitly refetch with the connection ID
+          const fetched = await validationsAPI.getRules(
+            selectedTable,
+            {
+              connectionId: activeConnection.id,
+              forceFresh: true
+            }
+          );
+
+          console.log('Fetched rules after generation:', fetched);
+
+          // Extract rules based on the response format
+          let rules = [];
+          if (Array.isArray(fetched)) {
+            rules = fetched;
+          } else if (fetched.rules && Array.isArray(fetched.rules)) {
+            rules = fetched.rules;
+          } else if (fetched.data && fetched.data.rules && Array.isArray(fetched.data.rules)) {
+            rules = fetched.data.rules;
+          }
+
+          if (rules.length > 0) {
+            setCurrentValidations(rules);
+          }
+
+          // Get count from either response
+          const count = (response.generation && response.generation.count) ||
+                         (response.count) ||
+                         rules.length;
+
+          showNotification(`Generated ${count} default validations for ${selectedTable}`, 'success');
+        } catch (fetchError) {
+          console.error('Error fetching validations after generation:', fetchError);
+
+          // Fallback notification with count from the generation response
+          const count = response.generation?.count || response.count || 0;
+          showNotification(`Generated ${count} default validations for ${selectedTable}. Refresh to view.`, 'success');
+        }
+      }
+
+      // Explicitly triggering a refetch
+      validationsQuery.refetch();
+
+      // Reset initialization flags to force a refresh
+      setInitialLoadComplete(false);
+      runInitialValidationsComplete.current = false;
     } catch (error) {
       console.error('Error generating validations:', error);
-      showNotification('Failed to generate validations', 'error');
+      showNotification('Failed to generate validations: ' + (error.message || 'Unknown error'), 'error');
     } finally {
       setLoading('generating', false);
     }
