@@ -20,11 +20,11 @@ import ValidationRuleEditor from './components/ValidationRuleEditor';
 import ValidationRuleList from './components/ValidationRuleList';
 import ValidationErrorHandler from './components/ValidationErrorHandler';
 import ValidationDebugHelper from './components/ValidationDebugHelper';
-import ValidationHistorySummary from './components/ValidationHistorySummary';
 import SearchInput from '../../components/common/SearchInput';
 import { useTablesData } from '../../hooks/useTablesData';
 import { useTableValidations } from '../../hooks/useValidationsData';
 import { queryClient } from '../../api/queryClient';
+import { formatDate } from '../../utils/formatting';
 
 const ValidationPage = () => {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -127,7 +127,7 @@ const ValidationPage = () => {
         }, 500); // Add a small delay
       }
     }
-  }, [validationsQuery.data, initialLoadComplete, activeConnection?.id, selectedTable]);
+  }, [validationsQuery.data, initialLoadComplete, activeConnection?.id, selectedTable, currentValidations]);
 
   // Compute filtered validations for display based on filters
   const filteredValidations = useMemo(() => {
@@ -162,6 +162,7 @@ const ValidationPage = () => {
     setSelectedTable(tableName);
     setSearchParams({ table: tableName });
     setInitialLoadComplete(false); // Reset for the new table
+    runInitialValidationsComplete.current = false; // Reset for new table
   };
 
   // Handle search
@@ -184,6 +185,63 @@ const ValidationPage = () => {
   const handleCloseDebugHelper = () => {
     setShowDebugHelper(false);
     setSelectedValidationForDebug(null);
+  };
+
+  // Handle run single validation rule
+  const handleRunSingleValidation = async (validation) => {
+    if (!activeConnection || !selectedTable) return;
+
+    try {
+      // We're just running this one validation
+      const response = await validationsAPI.runValidations(
+        activeConnection.id,
+        selectedTable,
+        null,
+        // The API doesn't support running a single rule, but we'll handle it client-side
+        // by checking just this rule's result
+      );
+
+      // Check for valid response with results
+      if (response && response.results && Array.isArray(response.results)) {
+        // Find the result for this specific validation
+        const result = response.results.find(r => r.rule_name === validation.rule_name);
+
+        if (result) {
+          // Update just this validation with the new result
+          const updatedValidations = currentValidations.map(v => {
+            if (v.rule_name === validation.rule_name) {
+              return {
+                ...v,
+                last_result: result.error ? null : result.is_valid,
+                actual_value: result.actual_value,
+                error: result.error,
+                last_run_at: new Date().toISOString()
+              };
+            }
+            return v;
+          });
+
+          setCurrentValidations(updatedValidations);
+
+          // Show notification
+          if (result.error) {
+            showNotification(`Validation encountered an error: ${result.error}`, 'warning');
+          } else {
+            showNotification(
+              `Validation ${result.is_valid ? 'passed' : 'failed'}`,
+              result.is_valid ? 'success' : 'warning'
+            );
+          }
+        } else {
+          showNotification('No result returned for this validation', 'error');
+        }
+      } else {
+        showNotification('Unexpected response format', 'error');
+      }
+    } catch (error) {
+      console.error('Error running validation:', error);
+      showNotification('Failed to run validation: ' + (error.message || 'Unknown error'), 'error');
+    }
   };
 
   // Handle run all validations with status updating
@@ -467,6 +525,25 @@ const ValidationPage = () => {
                     <PlusIcon className="-ml-1 mr-2 h-4 w-4" aria-hidden="true" />
                     New Rule
                   </button>
+
+                  <button
+                    type="button"
+                    onClick={handleRunAll}
+                    disabled={loadingStates?.validations}
+                    className="inline-flex items-center px-3 py-1.5 border border-transparent shadow-sm text-sm font-medium rounded-md text-green-50 bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 disabled:opacity-50"
+                  >
+                    {loadingStates?.validations ? (
+                      <>
+                        <LoadingSpinner size="sm" className="mr-2" />
+                        Running...
+                      </>
+                    ) : (
+                      <>
+                        <ArrowPathIcon className="-ml-1 mr-2 h-4 w-4" />
+                        Run All
+                      </>
+                    )}
+                  </button>
                 </div>
               </div>
 
@@ -482,18 +559,31 @@ const ValidationPage = () => {
                 </div>
               )}
 
-              {/* Validation History Summary */}
-              <ValidationHistorySummary
-                validations={currentValidations}
-                lastRunTimestamp={getLastRunTimestamp(currentValidations)}
-                onRunAll={handleRunAll}
-                isRunning={loadingStates?.validations}
-                connectionId={activeConnection?.id}
-                tableName={selectedTable}
-              />
+              {/* Last run summary */}
+              {currentValidations.length > 0 && (
+                <div className="px-4 py-3 bg-secondary-50 border-b border-secondary-200">
+                  <div className="text-sm text-secondary-500 flex items-center justify-between">
+                    <div>
+                      <span className="font-medium text-secondary-700">{currentValidations.length}</span> validation rules
+                      {" | "}
+                      <span className="font-medium text-accent-600">{currentValidations.filter(v => v.last_result === true).length}</span> passing
+                      {" | "}
+                      <span className="font-medium text-danger-600">{currentValidations.filter(v => v.last_result === false).length}</span> failing
+                      {" | "}
+                      <span className="font-medium text-secondary-600">{currentValidations.filter(v => v.last_result === undefined || v.last_result === null).length}</span> not run
+                    </div>
+
+                    <div>
+                      <span className="text-sm text-secondary-500">
+                        Last run: {getLastRunTimestamp(currentValidations) ? formatDate(getLastRunTimestamp(currentValidations), true) : 'Never'}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {/* Search and filters */}
-              <div className="px-4 py-3 border-b border-secondary-200 bg-secondary-50 sm:px-6">
+              <div className="px-4 py-3 border-b border-secondary-200 bg-white sm:px-6">
                 <div className="flex items-center justify-between">
                   <div className="flex-1">
                     <SearchInput
@@ -503,7 +593,7 @@ const ValidationPage = () => {
                     />
                   </div>
 
-                  <div className="flex items-center space-x-2">
+                  <div className="flex items-center space-x-2 ml-4">
                     <span className="text-sm text-secondary-700">Status:</span>
                     <div className="flex space-x-1">
                       <button
@@ -557,7 +647,7 @@ const ValidationPage = () => {
                 </div>
               </div>
 
-              {/* Validation rule list */}
+              {/* Enhanced Validation rule list */}
               <ValidationRuleList
                 validations={filteredValidations}
                 isLoading={validationsQuery.isLoading}
@@ -565,9 +655,10 @@ const ValidationPage = () => {
                 onDebug={handleDebugValidation}
                 onRefreshList={() => validationsQuery.refetch()}
                 onUpdate={setCurrentValidations}
+                onRunSingle={handleRunSingleValidation}
+                isRunningValidation={loadingStates?.validations}
                 tableName={selectedTable}
                 connectionId={activeConnection?.id}
-                showResults={false} // New prop to hide results
               />
             </div>
           )}

@@ -3,12 +3,16 @@ import {
   PencilIcon,
   TrashIcon,
   BugAntIcon,
-  ExclamationCircleIcon
+  ExclamationCircleIcon,
+  CheckCircleIcon,
+  XCircleIcon,
+  ArrowPathIcon
 } from '@heroicons/react/24/outline';
 import LoadingSpinner from '../../../components/common/LoadingSpinner';
 import { validationsAPI } from '../../../api/enhancedApiService';
 import { useUI } from '../../../contexts/UIContext';
 import ValidationErrorHandler from './ValidationErrorHandler';
+import { formatDate } from '../../../utils/formatting';
 
 const ValidationRuleList = ({
   validations = [],
@@ -18,14 +22,16 @@ const ValidationRuleList = ({
   tableName,
   connectionId,
   onDebug,
-  onUpdate, // Added this prop
-  showResults = false // Add this prop to control whether to show results
+  onUpdate,
+  onRunSingle,
+  isRunningValidation = false
 }) => {
   const { showNotification } = useUI();
 
   const [isDeleting, setIsDeleting] = useState(false);
   const [validationToDelete, setValidationToDelete] = useState(null);
   const [validationErrors, setValidationErrors] = useState(null);
+  const [runningRuleId, setRunningRuleId] = useState(null);
   const componentIsMounted = useRef(true);
 
   // Add useEffect for cleanup
@@ -50,24 +56,78 @@ const ValidationRuleList = ({
     if (!validationToDelete || !tableName) return;
 
     try {
-      await validationsAPI.deleteRule(
-        tableName,
-        validationToDelete.rule_name,
-        connectionId  // Pass connectionId
-      );
+      // Store the deleted rule information before making the API call
+      const ruleToDelete = validationToDelete;
 
-      showNotification(`Validation "${validationToDelete.rule_name}" deleted`, 'success');
-
-      // Refresh the list
-      if (onRefreshList) onRefreshList();
-
-      // Close the modal
+      // Close the modal immediately for better UX
       setIsDeleting(false);
       setValidationToDelete(null);
+
+      // Attempt to delete the rule
+      try {
+        await validationsAPI.deleteRule(
+          tableName,
+          ruleToDelete.rule_name,
+          connectionId
+        );
+
+        // If successful, show success notification
+        showNotification(`Validation "${ruleToDelete.rule_name}" deleted successfully`, 'success');
+      } catch (apiError) {
+        // If the API call fails but we got a 404 (rule not found), we'll still update the UI
+        // This handles cases where the backend can't find the rule but we want to remove it from UI
+        console.log(`API error deleting rule: ${apiError.message}`);
+
+        if (apiError.response && apiError.response.status === 404) {
+          showNotification(
+            `Backend couldn't find rule "${ruleToDelete.rule_name}" but it will be removed from UI.`,
+            'warning'
+          );
+        } else {
+          throw apiError; // Re-throw for the outer catch to handle
+        }
+      }
+
+      // Update the UI by removing the deleted rule
+      if (onUpdate) {
+        const updatedValidations = validations.filter(
+          v => v.rule_name !== ruleToDelete.rule_name
+        );
+        onUpdate(updatedValidations);
+      }
+
+      // Also refresh the data from server
+      if (onRefreshList) {
+        onRefreshList();
+      }
     } catch (error) {
-      console.error(`Error deleting validation ${validationToDelete.rule_name}:`, error);
-      showNotification(`Failed to delete validation: ${error.message}`, 'error');
+      console.error(`Error in delete operation: ${error.message}`, error);
+      showNotification(`Failed to delete validation: ${error.message || 'Unknown error'}`, 'error');
     }
+  };
+
+  // Run a single validation rule
+  const handleRunSingle = async (validation) => {
+    if (!validation || !connectionId || !tableName) return;
+
+    setRunningRuleId(validation.id || validation.rule_name);
+
+    try {
+      if (onRunSingle) {
+        await onRunSingle(validation);
+      }
+    } catch (error) {
+      console.error(`Error running validation ${validation.rule_name}:`, error);
+      showNotification(`Failed to run validation: ${error.message}`, 'error');
+    } finally {
+      setRunningRuleId(null);
+    }
+  };
+
+  // Format timestamp
+  const formatTimestamp = (timestamp) => {
+    if (!timestamp) return 'Never';
+    return formatDate(timestamp, true);
   };
 
   // If loading with no validations, show loading state
@@ -105,84 +165,129 @@ const ValidationRuleList = ({
         </div>
       )}
 
-      <ul className="divide-y divide-secondary-200">
-        {validations.map((validation) => (
-          <li key={validation.id} className="py-4 px-6 hover:bg-secondary-50">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center flex-1 min-w-0">
-                <div>
-                  <h4 className="text-sm font-medium text-secondary-900">{validation.rule_name}</h4>
+      <div className="overflow-x-auto">
+        <table className="min-w-full divide-y divide-secondary-200">
+          <thead className="bg-secondary-50">
+            <tr>
+              <th scope="col" className="py-3.5 pl-4 pr-3 text-left text-sm font-semibold text-secondary-900 sm:pl-6">
+                Rule
+              </th>
+              <th scope="col" className="px-3 py-3.5 text-left text-sm font-semibold text-secondary-900">
+                Status
+              </th>
+              <th scope="col" className="px-3 py-3.5 text-left text-sm font-semibold text-secondary-900">
+                Last Run
+              </th>
+              <th scope="col" className="px-3 py-3.5 text-left text-sm font-semibold text-secondary-900">
+                Result
+              </th>
+              <th scope="col" className="relative py-3.5 pl-3 pr-4 sm:pr-6">
+                <span className="sr-only">Actions</span>
+              </th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-secondary-200 bg-white">
+            {validations.map((validation) => (
+              <tr key={validation.id || validation.rule_name} className="hover:bg-secondary-50">
+                <td className="py-4 pl-4 pr-3 text-sm sm:pl-6">
+                  <div className="font-medium text-secondary-900">{validation.rule_name}</div>
                   {validation.description && (
-                    <p className="text-sm text-secondary-500 truncate">{validation.description}</p>
+                    <div className="text-xs text-secondary-500">{validation.description}</div>
                   )}
-                </div>
-              </div>
+                  <div className="mt-1 text-xs font-mono bg-secondary-50 p-2 rounded overflow-x-auto max-w-md">
+                    {validation.query} {validation.operator} {validation.expected_value}
+                  </div>
+                </td>
+                <td className="px-3 py-4 text-sm">
+                  {validation.error ? (
+                    <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-warning-100 text-warning-800">
+                      <ExclamationCircleIcon className="-ml-0.5 mr-1 h-3 w-3" />
+                      Error
+                    </span>
+                  ) : validation.last_result === true ? (
+                    <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-accent-100 text-accent-800">
+                      <CheckCircleIcon className="-ml-0.5 mr-1 h-3 w-3" />
+                      Passed
+                    </span>
+                  ) : validation.last_result === false ? (
+                    <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-danger-100 text-danger-800">
+                      <XCircleIcon className="-ml-0.5 mr-1 h-3 w-3" />
+                      Failed
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-secondary-100 text-secondary-800">
+                      Not Run
+                    </span>
+                  )}
+                </td>
+                <td className="px-3 py-4 text-sm text-secondary-500">
+                  {formatTimestamp(validation.last_run_at)}
+                </td>
+                <td className="px-3 py-4 text-sm">
+                  {validation.actual_value !== undefined && validation.actual_value !== null ? (
+                    <span className={validation.last_result === true ? 'text-accent-600' : 'text-danger-600 font-medium'}>
+                      {validation.actual_value}
+                    </span>
+                  ) : '—'}
 
-              <div className="flex items-center space-x-2">
-                <button
-                  type="button"
-                  onClick={() => onEdit(validation)}
-                  className="p-1 text-secondary-400 hover:text-secondary-500 focus:outline-none"
-                  title="Edit validation"
-                >
-                  <PencilIcon className="h-5 w-5" aria-hidden="true" />
-                </button>
+                  {/* Show error message if validation failed with error */}
+                  {validation.error && (
+                    <div className="mt-1 text-xs text-danger-600 bg-danger-50 p-1 rounded">
+                      {validation.error}
+                    </div>
+                  )}
+                </td>
+                <td className="py-4 pl-3 pr-4 text-right text-sm font-medium sm:pr-6">
+                  <div className="flex space-x-2 justify-end">
+                    <button
+                      type="button"
+                      onClick={() => handleRunSingle(validation)}
+                      disabled={isRunningValidation || runningRuleId === (validation.id || validation.rule_name)}
+                      className="text-primary-600 hover:text-primary-900"
+                      title="Run validation"
+                    >
+                      {runningRuleId === (validation.id || validation.rule_name) ? (
+                        <LoadingSpinner size="sm" />
+                      ) : (
+                        <ArrowPathIcon className="h-5 w-5" />
+                      )}
+                    </button>
 
-                {onDebug && (
-                  <button
-                    type="button"
-                    onClick={() => onDebug(validation)}
-                    className="p-1 text-secondary-400 hover:text-primary-500 focus:outline-none"
-                    title="Debug validation"
-                  >
-                    <BugAntIcon className="h-5 w-5" aria-hidden="true" />
-                  </button>
-                )}
+                    <button
+                      type="button"
+                      onClick={() => onEdit(validation)}
+                      className="text-secondary-600 hover:text-secondary-900"
+                      title="Edit validation"
+                    >
+                      <PencilIcon className="h-5 w-5" />
+                    </button>
 
-                <button
-                  type="button"
-                  onClick={() => confirmDelete(validation)}
-                  className="p-1 text-secondary-400 hover:text-danger-500 focus:outline-none"
-                  title="Delete validation"
-                >
-                  <TrashIcon className="h-5 w-5" aria-hidden="true" />
-                </button>
-              </div>
-            </div>
-
-            <div className="mt-2 text-xs text-secondary-500 font-mono bg-secondary-50 p-2 rounded">
-              {validation.query} {validation.operator} {validation.expected_value}
-            </div>
-
-            {/* Show result information only if showResults is true */}
-            {showResults && (
-              <div className="mt-2 text-xs text-secondary-500">
-                {validation.last_run_at ? (
-                  <>
-                    Last run: <span className="font-medium">{new Date(validation.last_run_at).toLocaleString()}</span>
-                    {validation.actual_value !== undefined && (
-                      <span className="ml-2">
-                        Actual value: <span className={`font-medium ${
-                          validation.last_result === true ? 'text-accent-600' : 'text-danger-600'
-                        }`}>{validation.actual_value}</span>
-                      </span>
+                    {onDebug && (
+                      <button
+                        type="button"
+                        onClick={() => onDebug(validation)}
+                        className="text-secondary-600 hover:text-primary-600"
+                        title="Debug validation"
+                      >
+                        <BugAntIcon className="h-5 w-5" />
+                      </button>
                     )}
-                  </>
-                ) : (
-                  <span className="italic">Not run yet</span>
-                )}
-              </div>
-            )}
 
-            {/* Always display error message if available */}
-            {validation.error && (
-              <div className="mt-2 text-xs text-danger-600 bg-danger-50 p-2 rounded-md">
-                <span className="font-medium">Error:</span> {validation.error}
-              </div>
-            )}
-          </li>
-        ))}
-      </ul>
+                    <button
+                      type="button"
+                      onClick={() => confirmDelete(validation)}
+                      className="text-secondary-600 hover:text-danger-600"
+                      title="Delete validation"
+                    >
+                      <TrashIcon className="h-5 w-5" />
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
 
       {/* Delete confirmation modal */}
       {isDeleting && validationToDelete && (
@@ -213,14 +318,14 @@ const ValidationRuleList = ({
               <div className="bg-secondary-50 px-4 py-3 sm:px-6 sm:flex sm:flex-row-reverse">
                 <button
                   type="button"
-                  className="w-full inline-flex justify-center rounded-md border border-transparent shadow-sm px-4 py-2 bg-danger-600 text-base font-medium text-white hover:bg-danger-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-danger-500 sm:ml-3 sm:w-auto sm:text-sm"
+                  className="inline-flex justify-center rounded-md border border-transparent shadow-sm px-4 py-2 bg-red-600 text-sm font-medium text-red-50 hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 sm:ml-3 sm:w-auto"
                   onClick={handleDeleteValidation}
                 >
                   Delete
                 </button>
                 <button
                   type="button"
-                  className="mt-3 w-full inline-flex justify-center rounded-md border border-secondary-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-secondary-700 hover:bg-secondary-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm"
+                  className="mt-3 inline-flex justify-center rounded-md border border-secondary-300 shadow-sm px-4 py-2 bg-white text-sm font-medium text-secondary-700 hover:bg-secondary-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 sm:mt-0 sm:ml-3 sm:w-auto"
                   onClick={() => {
                     setIsDeleting(false);
                     setValidationToDelete(null);
