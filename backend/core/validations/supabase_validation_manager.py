@@ -76,13 +76,20 @@ class SupabaseValidationManager:
         Returns the ID of the inserted rule
         """
         try:
-            # Try with connection_id parameter first
+            # Always add connection_id to the rule data
+            rule_copy = rule.copy()
+            rule_copy['connection_id'] = connection_id
+
+            # Log the rule being added
+            logger.info(
+                f"Adding rule: {rule_copy.get('name')} for table {table_name} with connection_id {connection_id}")
+
             try:
-                return self.supabase.add_validation_rule(organization_id, table_name, connection_id, rule)
-            except TypeError:
-                # If that fails, try adding connection_id to the rule data
-                rule_copy = rule.copy()
-                rule_copy['connection_id'] = connection_id
+                # First try with explicit connection_id parameter
+                return self.supabase.add_validation_rule(organization_id, table_name, connection_id, rule_copy)
+            except (TypeError, ValueError):
+                # If that approach fails, try without the separate connection_id parameter
+                # since it's already included in rule_copy
                 return self.supabase.add_validation_rule(organization_id, table_name, rule_copy)
         except Exception as e:
             logger.error(f"Error adding validation rule: {str(e)}")

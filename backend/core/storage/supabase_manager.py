@@ -240,7 +240,7 @@ class SupabaseManager:
             logger.error(f"Error getting validation rules: {str(e)}")
             return []
 
-    def add_validation_rule(self, organization_id: str, table_name: str, rule: Dict) -> str:
+    def add_validation_rule(self, organization_id: str, table_name: str, connection_id: str, rule: Dict) -> str:
         """Add a new validation rule"""
         try:
             # Ensure expected_value is stored as a JSON string
@@ -249,12 +249,16 @@ class SupabaseManager:
             data = {
                 "organization_id": organization_id,
                 "table_name": table_name,
+                "connection_id": connection_id,  # Add this field!
                 "rule_name": rule.get("name", ""),
                 "description": rule.get("description", ""),
                 "query": rule.get("query", ""),
                 "operator": rule.get("operator", "equals"),
                 "expected_value": expected_value
             }
+
+            # Debug log to verify the connection_id is being included
+            logger.debug(f"Inserting validation rule with connection_id: {connection_id}")
 
             response = self.supabase.table("validation_rules").insert(data).execute()
 
