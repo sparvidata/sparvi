@@ -692,6 +692,28 @@ export const validationsAPI = {
     });
   },
 
+  // Add a new method for deactivating a rule
+  deactivateRule: (tableName, ruleName, connectionId) => {
+    if (!connectionId) {
+      console.warn('connectionId is required for deactivateRule');
+    }
+
+    return enhancedRequest({
+      method: 'PUT', // Use PUT instead of DELETE
+      url: '/validations/deactivate', // New endpoint for deactivation
+      params: {
+        table: tableName,
+        rule_name: ruleName,
+        connection_id: connectionId
+      },
+      requestId: `validations.deactivate.${tableName}.${ruleName}`
+    }).then(response => {
+      // Invalidate rules cache for this table
+      clearCacheItem(`validations.rules.${tableName}`);
+      return response;
+    });
+  },
+
   getSummary: (connectionId, options = {}) => {
     const { forceFresh = false, requestId = `validations.summary.${connectionId}` } = options;
 

@@ -2343,6 +2343,35 @@ def delete_validation_rule(current_user, organization_id):
         return jsonify({"error": str(e)}), 500
 
 
+@app.route("/api/validations/deactivate", methods=["PUT"])
+@token_required
+def deactivate_validation_rule(current_user, organization_id):
+    """Deactivate a validation rule without deleting it"""
+    table_name = request.args.get("table")
+    rule_name = request.args.get("rule_name")
+    connection_id = request.args.get("connection_id")
+
+    if not table_name:
+        return jsonify({"error": "Table name is required"}), 400
+    if not rule_name:
+        return jsonify({"error": "Rule name is required"}), 400
+    if not connection_id:
+        return jsonify({"error": "Connection ID is required"}), 400
+
+    try:
+        logger.info(f"Deactivating validation rule {rule_name} for organization: {organization_id}, table: {table_name}, connection: {connection_id}")
+        success = validation_manager.deactivate_rule(organization_id, table_name, rule_name, connection_id)
+
+        if success:
+            return jsonify({"success": True})
+        else:
+            return jsonify({"error": "Rule not found or deactivation failed"}), 404
+    except Exception as e:
+        logger.error(f"Error deactivating validation rule: {str(e)}")
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route("/api/run-validations", methods=["POST"])
 @token_required
 def run_validation_rules(current_user, organization_id):

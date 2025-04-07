@@ -104,6 +104,66 @@ class SupabaseValidationManager:
             logger.error(f"Error deleting validation rule: {str(e)}")
             return False
 
+    def deactivate_rule(self, organization_id, table_name, rule_name, connection_id=None):
+        """Deactivate a validation rule by setting is_active=False"""
+        try:
+            # Build SQL query for updating the is_active flag
+            query = """
+            UPDATE validation_rules
+            SET is_active = false
+            WHERE organization_id = :org_id
+            AND table_name = :table_name
+            AND rule_name = :rule_name
+            """
+
+            params = {
+                "org_id": organization_id,
+                "table_name": table_name,
+                "rule_name": rule_name
+            }
+
+            # Add connection_id filter if provided
+            if connection_id:
+                query += " AND connection_id = :connection_id"
+                params["connection_id"] = connection_id
+
+            # Execute the query using your Supabase client
+            response = self.supabase.query(query, params)
+
+            # Check if any rows were affected
+            affected_rows = response.get('count', 0)
+            return affected_rows > 0
+        except Exception as e:
+            logger.error(f"Error deactivating validation rule: {str(e)}")
+            raise
+
+    def check_rule_exists(self, organization_id, table_name, rule_name, connection_id=None):
+        """Check if a rule exists"""
+        try:
+            query = """
+            SELECT COUNT(*) as count
+            FROM validation_rules
+            WHERE organization_id = :org_id
+            AND table_name = :table_name
+            AND rule_name = :rule_name
+            """
+
+            params = {
+                "org_id": organization_id,
+                "table_name": table_name,
+                "rule_name": rule_name
+            }
+
+            if connection_id:
+                query += " AND connection_id = :connection_id"
+                params["connection_id"] = connection_id
+
+            result = self.supabase.query(query, params)
+            return result.get('count', 0) > 0
+        except Exception as e:
+            logger.error(f"Error checking if rule exists: {str(e)}")
+            return False
+
     def execute_rules(self, organization_id: str, connection_string: str, table_name: str) -> List[Dict[str, Any]]:
         """Execute all validation rules for a table against the specified database"""
         # Get all rules for this table

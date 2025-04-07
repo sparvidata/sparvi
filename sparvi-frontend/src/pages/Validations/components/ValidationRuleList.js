@@ -51,58 +51,50 @@ const ValidationRuleList = ({
     setIsDeleting(true);
   };
 
-  // Delete validation
-  const handleDeleteValidation = async () => {
+  // Deactivate Validation
+  const handleDeactivateValidation = async () => {
     if (!validationToDelete || !tableName) return;
 
     try {
-      // Store the deleted rule information before making the API call
-      const ruleToDelete = validationToDelete;
+      // Store rule info for later use
+      const ruleToDeactivate = { ...validationToDelete };
 
-      // Close the modal immediately for better UX
+      // Close the modal immediately
       setIsDeleting(false);
       setValidationToDelete(null);
 
-      // Attempt to delete the rule
+      // Try to deactivate on the server
       try {
-        await validationsAPI.deleteRule(
+        await validationsAPI.deactivateRule(
           tableName,
-          ruleToDelete.rule_name,
+          ruleToDeactivate.rule_name,
           connectionId
         );
 
-        // If successful, show success notification
-        showNotification(`Validation "${ruleToDelete.rule_name}" deleted successfully`, 'success');
-      } catch (apiError) {
-        // If the API call fails but we got a 404 (rule not found), we'll still update the UI
-        // This handles cases where the backend can't find the rule but we want to remove it from UI
-        console.log(`API error deleting rule: ${apiError.message}`);
-
-        if (apiError.response && apiError.response.status === 404) {
-          showNotification(
-            `Backend couldn't find rule "${ruleToDelete.rule_name}" but it will be removed from UI.`,
-            'warning'
+        // Update UI to remove the deactivated rule
+        if (onUpdate) {
+          const updatedValidations = validations.filter(
+            v => v.rule_name !== ruleToDeactivate.rule_name
           );
-        } else {
-          throw apiError; // Re-throw for the outer catch to handle
+          onUpdate(updatedValidations);
         }
-      }
 
-      // Update the UI by removing the deleted rule
-      if (onUpdate) {
-        const updatedValidations = validations.filter(
-          v => v.rule_name !== ruleToDelete.rule_name
+        showNotification(`Validation "${ruleToDeactivate.rule_name}" deactivated successfully`, 'success');
+      } catch (apiError) {
+        console.error(`API error deactivating rule:`, apiError);
+        showNotification(
+          `Error deactivating rule: ${apiError.response?.data?.error || apiError.message}`,
+          'error'
         );
-        onUpdate(updatedValidations);
       }
 
-      // Also refresh the data from server
+      // Refresh the data
       if (onRefreshList) {
         onRefreshList();
       }
     } catch (error) {
-      console.error(`Error in delete operation: ${error.message}`, error);
-      showNotification(`Failed to delete validation: ${error.message || 'Unknown error'}`, 'error');
+      console.error('Error in deactivation operation:', error);
+      showNotification(`Error deactivating rule: ${error.message}`, 'error');
     }
   };
 
@@ -306,10 +298,10 @@ const ValidationRuleList = ({
                     <ExclamationCircleIcon className="h-6 w-6 text-danger-600" aria-hidden="true" />
                   </div>
                   <div className="mt-3 text-center sm:mt-0 sm:ml-4 sm:text-left">
-                    <h3 className="text-lg leading-6 font-medium text-secondary-900">Delete validation rule</h3>
+                    <h3 className="text-lg leading-6 font-medium text-secondary-900">Deactivate validation rule</h3>
                     <div className="mt-2">
                       <p className="text-sm text-secondary-500">
-                        Are you sure you want to delete the validation rule "{validationToDelete.rule_name}"? This action cannot be undone.
+                        Are you sure you want to deactivate the validation rule "{validationToDelete.rule_name}"? The rule will no longer be executed, but historical results will be preserved.
                       </p>
                     </div>
                   </div>
@@ -319,9 +311,9 @@ const ValidationRuleList = ({
                 <button
                   type="button"
                   className="inline-flex justify-center rounded-md border border-transparent shadow-sm px-4 py-2 bg-red-600 text-sm font-medium text-red-50 hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 sm:ml-3 sm:w-auto"
-                  onClick={handleDeleteValidation}
+                  onClick={handleDeactivateValidation}
                 >
-                  Delete
+                  Deactivate
                 </button>
                 <button
                   type="button"
