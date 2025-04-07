@@ -2444,7 +2444,7 @@ def run_validation_rules(current_user, organization_id):
 def generate_default_validations(current_user, organization_id):
     data = request.get_json()
 
-    logger.info(f"Received data: {data}")
+    logger.info(f"Received default validations request: {data}")
 
     if not data or "table" not in data:
         return jsonify({"error": "Table name is required"}), 400
@@ -2452,22 +2452,132 @@ def generate_default_validations(current_user, organization_id):
     if not data.get("connection_id"):
         return jsonify({"error": "Connection ID is required"}), 400
 
-    # Extract values and provide fallbacks
-    connection_string = data.get("connection_string")
-    if not connection_string:
-        connection_string = os.getenv("DEFAULT_CONNECTION_STRING")
-
+    # Extract values
     table_name = data["table"]
     connection_id = data.get("connection_id")
 
     try:
+        # Check access to connection
+        connection = connection_access_check(connection_id, organization_id)
+        if not connection:
+            return jsonify({"error": "Connection not found or access denied"}), 404
+
+        # Build proper connection string
+        connection_string = get_connection_string(connection)
+        if not connection_string:
+            return jsonify({"error": "Failed to build connection string"}), 400
+
         # Get existing rules
         existing_rules = validation_manager.get_rules(organization_id, table_name, connection_id)
         existing_rule_names = {rule['rule_name'] for rule in existing_rules}
 
-        # Generate potential new validations using sparvi-core
-        validations = get_default_validations(connection_string, table_name)
+        logger.info(f"Found {len(existing_rules)} existing rules for table {table_name}")
 
+        # Try to verify table first
+        try:
+            # Create a temporary connection to verify table
+            connector = get_connector_for_connection(connection)
+            connector.connect()
+
+            # Try a simple count query to verify access
+            try:
+                result = connector.execute_query(f"SELECT COUNT(*) FROM {table_name}")
+                row_count = result[0][0] if result and len(result) > 0 else 0
+                logger.info(f"Table {table_name} exists with {row_count} rows")
+            except Exception as query_error:
+                logger.error(f"Error querying table: {str(query_error)}")
+                return jsonify({"error": f"Error accessing table {table_name}: {str(query_error)}"}), 400
+
+        except Exception as conn_error:
+            logger.error(f"Error connecting to database: {str(conn_error)}")
+            return jsonify({"error": f"Error connecting to database: {str(conn_error)}"}), 500
+
+        # Generate validations through connector to ensure consistent schema access
+        try:
+            # Get columns first
+            columns = connector.get_columns(table_name)
+            logger.info(f"Found {len(columns)} columns for table {table_name}")
+
+            # Get primary keys
+            primary_keys = connector.get_primary_keys(table_name)
+            logger.info(f"Found primary keys: {primary_keys}")
+
+            # Now generate validations manually instead of using get_default_validations
+            validations = []
+
+            # 1. Basic row count validation
+            validations.append({
+                "name": f"check_{table_name}_not_empty",
+                "description": f"Ensure {table_name} table has at least one row",
+                "query": f"SELECT COUNT(*) FROM {table_name}",
+                "operator": "greater_than",
+                "expected_value": 0
+            })
+
+            # 2. Add validations for each column
+            for column in columns:
+                column_name = column.get("name")
+                column_type = str(column.get("type", "")).lower()
+                is_nullable = column.get("nullable", True)
+
+                # Not null check for non-nullable columns
+                if not is_nullable and column_name not in primary_keys:
+                    validations.append({
+                        "name": f"check_{column_name}_not_null",
+                        "description": f"Ensure {column_name} has no NULL values",
+                        "query": f"SELECT COUNT(*) FROM {table_name} WHERE {column_name} IS NULL",
+                        "operator": "equals",
+                        "expected_value": 0
+                    })
+
+                # Type-specific checks
+                if "int" in column_type or "float" in column_type or "numeric" in column_type:
+                    # Check for negative values in numeric columns
+                    validations.append({
+                        "name": f"check_{column_name}_not_negative",
+                        "description": f"Ensure {column_name} has no negative values",
+                        "query": f"SELECT COUNT(*) FROM {table_name} WHERE {column_name} < 0",
+                        "operator": "equals",
+                        "expected_value": 0
+                    })
+
+                elif "char" in column_type or "text" in column_type or "string" in column_type:
+                    # Check for empty strings
+                    validations.append({
+                        "name": f"check_{column_name}_not_empty_string",
+                        "description": f"Ensure {column_name} has no empty strings",
+                        "query": f"SELECT COUNT(*) FROM {table_name} WHERE {column_name} = ''",
+                        "operator": "equals",
+                        "expected_value": 0
+                    })
+
+                    # Email pattern check if column name suggests email
+                    if "email" in column_name.lower():
+                        validations.append({
+                            "name": f"check_{column_name}_valid_email",
+                            "description": f"Ensure {column_name} contains valid email format",
+                            "query": f"SELECT COUNT(*) FROM {table_name} WHERE {column_name} IS NOT NULL AND {column_name} NOT LIKE '%@%.%'",
+                            "operator": "equals",
+                            "expected_value": 0
+                        })
+
+                elif "date" in column_type or "time" in column_type:
+                    # Check for future dates
+                    validations.append({
+                        "name": f"check_{column_name}_not_future",
+                        "description": f"Ensure {column_name} contains no future dates",
+                        "query": f"SELECT COUNT(*) FROM {table_name} WHERE {column_name} > CURRENT_DATE",
+                        "operator": "equals",
+                        "expected_value": 0
+                    })
+
+            logger.info(f"Generated {len(validations)} validation rules")
+
+        except Exception as gen_error:
+            logger.error(f"Error generating validations: {str(gen_error)}")
+            return jsonify({"error": f"Error generating validations: {str(gen_error)}"}), 500
+
+        # Add the validations
         count_added = 0
         count_skipped = 0
 
@@ -2478,10 +2588,11 @@ def generate_default_validations(current_user, organization_id):
                     count_skipped += 1
                     continue
 
+                # Add the rule through the validation manager
                 validation_manager.add_rule(organization_id, table_name, connection_id, validation)
                 count_added += 1
-            except Exception as e:
-                logger.error(f"Failed to add validation rule {validation['name']}: {str(e)}")
+            except Exception as add_error:
+                logger.error(f"Failed to add validation rule {validation['name']}: {str(add_error)}")
 
         result = {
             "added": count_added,
