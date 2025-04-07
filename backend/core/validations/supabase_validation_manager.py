@@ -104,38 +104,31 @@ class SupabaseValidationManager:
             logger.error(f"Error deleting validation rule: {str(e)}")
             return False
 
-    def deactivate_rule(self, organization_id, table_name, rule_name, connection_id=None):
-        """Deactivate a validation rule by setting is_active=False"""
+    def deactivate_rule(self, organization_id: str, table_name: str, rule_name: str, connection_id: str = None) -> bool:
+        """
+        Deactivate a validation rule by setting is_active=False
+
+        Args:
+            organization_id: Organization ID
+            table_name: Table name
+            rule_name: Name of the rule to deactivate
+            connection_id: Optional connection ID to filter by
+
+        Returns:
+            bool: True if successfully deactivated, False otherwise
+        """
         try:
-            # Build SQL query for updating the is_active flag
-            query = """
-            UPDATE validation_rules
-            SET is_active = false
-            WHERE organization_id = :org_id
-            AND table_name = :table_name
-            AND rule_name = :rule_name
-            """
-
-            params = {
-                "org_id": organization_id,
-                "table_name": table_name,
-                "rule_name": rule_name
-            }
-
-            # Add connection_id filter if provided
-            if connection_id:
-                query += " AND connection_id = :connection_id"
-                params["connection_id"] = connection_id
-
-            # Execute the query using your Supabase client
-            response = self.supabase.query(query, params)
-
-            # Check if any rows were affected
-            affected_rows = response.get('count', 0)
-            return affected_rows > 0
+            # Use the supabase manager's deactivation method
+            return self.supabase.deactivate_validation_rule(
+                organization_id=organization_id,
+                table_name=table_name,
+                rule_name=rule_name,
+                connection_id=connection_id
+            )
         except Exception as e:
             logger.error(f"Error deactivating validation rule: {str(e)}")
-            raise
+            logger.error(traceback.format_exc())
+            return False
 
     def check_rule_exists(self, organization_id, table_name, rule_name, connection_id=None):
         """Check if a rule exists"""

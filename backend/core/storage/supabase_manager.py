@@ -675,3 +675,46 @@ class SupabaseManager:
         except Exception as e:
             logger.error(f"Token verification error: {str(e)}")
             return None
+
+    def deactivate_validation_rule(self, organization_id: str, table_name: str, rule_name: str,
+                                   connection_id: str = None) -> bool:
+        """
+        Deactivate a validation rule by setting is_active=False
+
+        Args:
+            organization_id: Organization ID
+            table_name: Table name
+            rule_name: Name of the rule to deactivate
+            connection_id: Optional connection ID to filter by
+
+        Returns:
+            bool: True if successfully deactivated, False otherwise
+        """
+        try:
+            # Build the update data
+            update_data = {
+                "is_active": False,
+                "updated_at": datetime.datetime.now().isoformat()
+            }
+
+            # Start the query builder
+            query = self.supabase.table("validation_rules") \
+                .update(update_data) \
+                .eq("organization_id", organization_id) \
+                .eq("table_name", table_name) \
+                .eq("rule_name", rule_name)
+
+            # Add connection_id filter if provided
+            if connection_id:
+                query = query.eq("connection_id", connection_id)
+
+            # Execute the update
+            response = query.execute()
+
+            # Return True if any rows were affected
+            return response.data is not None and len(response.data) > 0
+
+        except Exception as e:
+            logger.error(f"Error deactivating validation rule: {str(e)}")
+            logger.error(traceback.format_exc())
+            return False
