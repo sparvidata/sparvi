@@ -6,7 +6,8 @@ import {
   ExclamationCircleIcon,
   CheckCircleIcon,
   XCircleIcon,
-  ArrowPathIcon
+  ArrowPathIcon,
+  ClockIcon
 } from '@heroicons/react/24/outline';
 import LoadingSpinner from '../../../components/common/LoadingSpinner';
 import { validationsAPI } from '../../../api/enhancedApiService';
@@ -32,6 +33,7 @@ const ValidationRuleList = ({
   const [validationToDelete, setValidationToDelete] = useState(null);
   const [validationErrors, setValidationErrors] = useState(null);
   const [runningRuleId, setRunningRuleId] = useState(null);
+  const [filterStatus, setFilterStatus] = useState('all');
   const componentIsMounted = useRef(true);
 
   // Add useEffect for cleanup
@@ -44,6 +46,16 @@ const ValidationRuleList = ({
       componentIsMounted.current = false;
     };
   }, []);
+
+  // Filter validations based on status
+  const filteredValidations = validations.filter(validation => {
+    if (filterStatus === 'all') return true;
+    if (filterStatus === 'passed') return validation.last_result === true;
+    if (filterStatus === 'failed') return validation.last_result === false;
+    if (filterStatus === 'error') return !!validation.error;
+    if (filterStatus === 'notrun') return validation.last_result === undefined;
+    return true;
+  });
 
   // Confirm deletion
   const confirmDelete = (validation) => {
@@ -157,6 +169,68 @@ const ValidationRuleList = ({
         </div>
       )}
 
+      {/* Filter UI */}
+      <div className="p-2 bg-secondary-50 border-b border-secondary-200">
+        <div className="flex items-center text-sm">
+          <span className="mr-2 text-secondary-700">Filter:</span>
+          <div className="flex space-x-1">
+            <button
+              onClick={() => setFilterStatus('all')}
+              className={`px-2 py-1 rounded ${
+                filterStatus === 'all' 
+                  ? 'bg-secondary-200 text-secondary-800' 
+                  : 'hover:bg-secondary-100'
+              }`}
+            >
+              All
+            </button>
+            <button
+              onClick={() => setFilterStatus('passed')}
+              className={`px-2 py-1 rounded ${
+                filterStatus === 'passed' 
+                  ? 'bg-accent-100 text-accent-800' 
+                  : 'hover:bg-secondary-100'
+              }`}
+            >
+              <CheckCircleIcon className="inline h-4 w-4 mr-1" />
+              Passed
+            </button>
+            <button
+              onClick={() => setFilterStatus('failed')}
+              className={`px-2 py-1 rounded ${
+                filterStatus === 'failed' 
+                  ? 'bg-danger-100 text-danger-800' 
+                  : 'hover:bg-secondary-100'
+              }`}
+            >
+              <XCircleIcon className="inline h-4 w-4 mr-1" />
+              Failed
+            </button>
+            <button
+              onClick={() => setFilterStatus('error')}
+              className={`px-2 py-1 rounded ${
+                filterStatus === 'error' 
+                  ? 'bg-warning-100 text-warning-800' 
+                  : 'hover:bg-secondary-100'
+              }`}
+            >
+              <ExclamationCircleIcon className="inline h-4 w-4 mr-1" />
+              Errors
+            </button>
+            <button
+              onClick={() => setFilterStatus('notrun')}
+              className={`px-2 py-1 rounded ${
+                filterStatus === 'notrun' 
+                  ? 'bg-secondary-100 text-secondary-800' 
+                  : 'hover:bg-secondary-100'
+              }`}
+            >
+              Not Run
+            </button>
+          </div>
+        </div>
+      </div>
+
       <div className="overflow-x-auto">
         <table className="min-w-full divide-y divide-secondary-200">
           <thead className="bg-secondary-50">
@@ -179,7 +253,7 @@ const ValidationRuleList = ({
             </tr>
           </thead>
           <tbody className="divide-y divide-secondary-200 bg-white">
-            {validations.map((validation) => (
+            {filteredValidations.map((validation) => (
               <tr key={validation.id || validation.rule_name} className="hover:bg-secondary-50">
                 <td className="py-4 pl-4 pr-3 text-sm sm:pl-6">
                   <div className="font-medium text-secondary-900">{validation.rule_name}</div>
@@ -226,6 +300,19 @@ const ValidationRuleList = ({
                   {validation.error && (
                     <div className="mt-1 text-xs text-danger-600 bg-danger-50 p-1 rounded">
                       {validation.error}
+                    </div>
+                  )}
+
+                  {/* Performance indicator */}
+                  {validation.execution_time_ms && (
+                    <div className="mt-1 text-xs text-secondary-500">
+                      <ClockIcon className="inline-block h-3 w-3 mr-1" />
+                      {validation.execution_time_ms}ms
+                      {validation.execution_time_ms > 1000 && (
+                        <span className="ml-1 text-warning-600">
+                          (slow)
+                        </span>
+                      )}
                     </div>
                   )}
                 </td>

@@ -20,9 +20,13 @@ import ValidationRuleEditor from './components/ValidationRuleEditor';
 import ValidationRuleList from './components/ValidationRuleList';
 import ValidationErrorHandler from './components/ValidationErrorHandler';
 import ValidationDebugHelper from './components/ValidationDebugHelper';
+import ValidationResultsSummary from './components/ValidationResultsSummary';
+import ValidationResultsTrend from './components/ValidationResultsTrend';
 import SearchInput from '../../components/common/SearchInput';
 import { useTablesData } from '../../hooks/useTablesData';
 import { useTableValidations } from '../../hooks/useValidationsData';
+import { processValidationResults } from '../../utils/validationResultsProcessor';
+import { ValidationResultsProvider, useValidationResults } from '../../contexts/ValidationResultsContext';
 import { queryClient } from '../../api/queryClient';
 import { formatDate } from '../../utils/formatting';
 
@@ -30,6 +34,7 @@ const ValidationPage = () => {
   const [searchParams, setSearchParams] = useSearchParams();
   const { connections, activeConnection, setCurrentConnection } = useConnection();
   const { updateBreadcrumbs, showNotification, setLoading, loadingStates } = useUI();
+  const { updateResultsAfterRun } = useValidationResults();
 
   const [currentValidations, setCurrentValidations] = useState([]);
   const [selectedTable, setSelectedTable] = useState('');
@@ -212,58 +217,91 @@ const ValidationPage = () => {
 
   // Handle run single validation rule
   const handleRunSingleValidation = async (validation) => {
-    if (!activeConnection || !selectedTable) return;
+    if (!activeConnection || !selectedTable || !validation) return;
 
     try {
-      // We're just running this one validation
+      // Update UI to show this validation is running
+      setCurrentValidations(prevValidations =>
+        prevValidations.map(v => ({
+          ...v,
+          isRunning: v.rule_name === validation.rule_name
+        }))
+      );
+
+      // Run all validations but we'll only process the one we're interested in
       const response = await validationsAPI.runValidations(
         activeConnection.id,
         selectedTable,
         null,
-        // The API doesn't support running a single rule, but we'll handle it client-side
-        // by checking just this rule's result
+        { timeout: 60000 } // 1 minute timeout for single validation
       );
 
-      // Check for valid response with results
-      if (response && response.results && Array.isArray(response.results)) {
-        // Find the result for this specific validation
-        const result = response.results.find(r => r.rule_name === validation.rule_name);
+      // Check for valid response
+      if (!response || !response.results || !Array.isArray(response.results)) {
+        throw new Error("Unexpected response format from server");
+      }
 
-        if (result) {
-          // Update just this validation with the new result
-          const updatedValidations = currentValidations.map(v => {
-            if (v.rule_name === validation.rule_name) {
-              return {
-                ...v,
-                last_result: result.error ? null : result.is_valid,
-                actual_value: result.actual_value,
-                error: result.error,
-                last_run_at: new Date().toISOString()
-              };
-            }
-            return v;
-          });
+      // Find the result for this specific validation
+      const result = response.results.find(r => r.rule_name === validation.rule_name);
 
-          setCurrentValidations(updatedValidations);
+      if (!result) {
+        throw new Error("No result returned for this validation");
+      }
 
-          // Show notification
-          if (result.error) {
-            showNotification(`Validation encountered an error: ${result.error}`, 'warning');
-          } else {
-            showNotification(
-              `Validation ${result.is_valid ? 'passed' : 'failed'}`,
-              result.is_valid ? 'success' : 'warning'
-            );
-          }
-        } else {
-          showNotification('No result returned for this validation', 'error');
+      // Update just this validation with the new result
+      const updatedValidations = currentValidations.map(v => {
+        if (v.rule_name === validation.rule_name) {
+          return {
+            ...v,
+            isRunning: false,
+            last_result: result.error ? null : result.is_valid,
+            actual_value: result.actual_value,
+            error: result.error,
+            last_run_at: new Date().toISOString(),
+            execution_time_ms: result.execution_time_ms,
+            execution_details: result.execution_details || null
+          };
         }
+        return v;
+      });
+
+      setCurrentValidations(updatedValidations);
+
+      // Show appropriate notification
+      if (result.error) {
+        const errorType = categorizeValidationError(result.error);
+        showNotification(
+          `Validation error: ${errorType.shortMessage}`,
+          'warning',
+          errorType.details
+        );
       } else {
-        showNotification('Unexpected response format', 'error');
+        showNotification(
+          `Validation ${result.is_valid ? 'passed' : 'failed'}: ${validation.rule_name}`,
+          result.is_valid ? 'success' : 'warning'
+        );
+      }
+
+      // Update results context with this single result
+      if (updateResultsAfterRun) {
+        updateResultsAfterRun([result], selectedTable);
       }
     } catch (error) {
       console.error('Error running validation:', error);
-      showNotification('Failed to run validation: ' + (error.message || 'Unknown error'), 'error');
+
+      // Update UI to show validation is no longer running
+      setCurrentValidations(prevValidations =>
+        prevValidations.map(v => ({
+          ...v,
+          isRunning: false
+        }))
+      );
+
+      // Provide helpful error message
+      showNotification(
+        `Failed to run validation: ${error.message || "Unknown error"}`,
+        'error'
+      );
     }
   };
 
@@ -275,83 +313,123 @@ const ValidationPage = () => {
       setLoading('validations', true);
       setValidationErrors(null);
 
+      // Update UI to show validations are running
+      setCurrentValidations(prevValidations =>
+        prevValidations.map(v => ({
+          ...v,
+          isRunning: true,
+          error: null // Clear previous errors
+        }))
+      );
+
       const response = await validationsAPI.runValidations(
-        activeConnection.id,  // Pass connectionId first
+        activeConnection.id,
         selectedTable,
-        null
+        null,
+        { timeout: 120000 } // Increase timeout to 2 minutes for complex validations
       );
 
       console.log("Full validation response:", response);
 
-      // Check if we have a valid response with results
-      if (response && response.results && Array.isArray(response.results)) {
-        // Process each validation result
-        const errors = [];
-
-        // Create a map of results by rule_name for easier access
-        const resultsByRuleName = {};
-        response.results.forEach(result => {
-          if (result.rule_name) {
-            resultsByRuleName[result.rule_name] = result;
-          }
-
-          if (result.error) {
-            errors.push({
-              name: result.rule_name || "Unknown validation",
-              error: result.error,
-              is_valid: false
-            });
-          }
-        });
-
-        // Update each validation with its current result
-        if (currentValidations.length > 0) {
-          const updatedValidations = currentValidations.map(validation => {
-            const result = resultsByRuleName[validation.rule_name];
-            if (result) {
-              return {
-                ...validation,
-                last_result: result.error ? null : result.is_valid,
-                actual_value: result.actual_value,
-                error: result.error,
-                last_run_at: new Date().toISOString()
-              };
-            }
-            return validation;
-          });
-
-          // Update the current validations with new results
-          setCurrentValidations(updatedValidations);
-        }
-
-        if (errors.length > 0) {
-          setValidationErrors(errors);
-          showNotification(`${errors.length} validations encountered errors. See details below.`, 'warning');
-        } else {
-          // Clear any previous errors
-          setValidationErrors(null);
-
-          // Count successes and failures
-          const passedCount = response.results.filter(r => r.is_valid === true).length;
-          const failedCount = response.results.filter(r => r.is_valid === false).length;
-
-          showNotification(
-            `Ran ${response.results.length} validations: ${passedCount} passed, ${failedCount} failed`,
-            failedCount > 0 ? 'warning' : 'success'
-          );
-        }
-
-        // Invalidate the validations query to trigger a refetch after a short delay
-        // This helps ensure our UI updates have time to apply first
-        setTimeout(() => {
-          queryClient.invalidateQueries(['table-validations', selectedTable]);
-        }, 500);
-      } else {
-        showNotification('Unexpected response format from server', 'error');
+      if (!response || !response.results) {
+        throw new Error("Unexpected response format from server");
       }
+
+      // Process results with our new processor
+      const processedResults = processValidationResults(
+        response.results,
+        currentValidations
+      );
+
+      // Update validations with processed results
+      setCurrentValidations(currentValidations.map(validation => {
+        const matchingResult = processedResults.processed.find(
+          r => r.rule_name === validation.rule_name
+        );
+
+        if (!matchingResult) {
+          return {
+            ...validation,
+            isRunning: false
+          };
+        }
+
+        return {
+          ...validation,
+          isRunning: false,
+          last_result: matchingResult.status === 'passed',
+          actual_value: matchingResult.actual_value,
+          error: matchingResult.error,
+          last_run_at: matchingResult.timestamp,
+          execution_time_ms: matchingResult.meta?.execution_time_ms
+        };
+      }));
+
+      // Handle errors if any
+      const errorsCount = processedResults.metrics.counts.error;
+      if (errorsCount > 0) {
+        // Extract errors
+        const errorsList = processedResults.processed
+          .filter(r => r.status === 'error')
+          .map(r => ({
+            name: r.rule_name,
+            error: r.error,
+            query: r.query,
+            is_valid: false
+          }));
+
+        setValidationErrors(errorsList);
+
+        // Categorize errors for better messaging
+        const errorCategories = categorizeErrors(errorsList);
+        const primaryError = getPrimaryErrorCategory(errorCategories);
+
+        showNotification(
+          `${errorsList.length} validation errors encountered: ${primaryError}. See details below.`,
+          'warning'
+        );
+      } else {
+        // Clear any previous errors
+        setValidationErrors(null);
+
+        // Success message
+        const passedCount = processedResults.metrics.counts.passed;
+        const failedCount = processedResults.metrics.counts.failed;
+
+        showNotification(
+          `Ran ${processedResults.processed.length} validations: ${passedCount} passed, ${failedCount} failed`,
+          failedCount > 0 ? 'warning' : 'success'
+        );
+      }
+
+      // Update validation results context
+      if (updateResultsAfterRun) {
+        updateResultsAfterRun(response.results, selectedTable);
+      }
+
+      // Invalidate the validations query to trigger a refetch after a short delay
+      setTimeout(() => {
+        queryClient.invalidateQueries(['table-validations', selectedTable]);
+      }, 500);
     } catch (error) {
       console.error('Error running validations:', error);
-      showNotification('Failed to run validations. Error: ' + (error.message || 'Unknown error'), 'error');
+
+      // Update UI to show validations are no longer running
+      setCurrentValidations(prevValidations =>
+        prevValidations.map(v => ({
+          ...v,
+          isRunning: false
+        }))
+      );
+
+      // Categorize the error to provide better feedback
+      const errorType = categorizeSystemError(error);
+
+      showNotification(
+        `Failed to run validations: ${errorType.message || "Unknown error"}`,
+        'error',
+        errorType.recommendedAction
+      );
     } finally {
       setLoading('validations', false);
     }
@@ -513,6 +591,147 @@ const ValidationPage = () => {
     });
   };
 
+  // Helper function to categorize system errors
+  const categorizeSystemError = (error) => {
+    // Network or server errors
+    if (error.message?.includes('timeout') || error.code === 'ECONNABORTED') {
+      return {
+        type: 'timeout',
+        message: 'Request timed out. The validation may be too complex or the server is busy.',
+        recommendedAction: 'Try running validations individually or try again later.'
+      };
+    }
+
+    if (error.message?.includes('Network Error') || error.response?.status === 502) {
+      return {
+        type: 'network',
+        message: 'Network connection issue or server unavailable.',
+        recommendedAction: 'Check your internet connection and try again.'
+      };
+    }
+
+    // Authentication errors
+    if (error.response?.status === 401 || error.response?.status === 403) {
+      return {
+        type: 'auth',
+        message: 'Authentication error. Your session may have expired.',
+        recommendedAction: 'Try logging in again.'
+      };
+    }
+
+    // Default unknown error
+    return {
+      type: 'unknown',
+      message: error.message || 'Unknown error occurred',
+      recommendedAction: 'Check the console for more details.'
+    };
+  };
+
+  // Helper function to categorize validation errors
+  const categorizeValidationError = (errorMessage) => {
+    if (!errorMessage) {
+      return {
+        type: 'unknown',
+        shortMessage: 'Unknown error',
+        details: 'No error details available'
+      };
+    }
+
+    // SQL syntax errors
+    if (errorMessage.includes('syntax error') ||
+        errorMessage.includes('SQL compilation error') ||
+        errorMessage.includes('invalid syntax')) {
+      return {
+        type: 'syntax',
+        shortMessage: 'SQL Syntax Error',
+        details: errorMessage
+      };
+    }
+
+    // Schema-related errors
+    if (errorMessage.includes('no such column') ||
+        errorMessage.includes('table not found') ||
+        errorMessage.includes('does not exist')) {
+      return {
+        type: 'schema',
+        shortMessage: 'Schema Error',
+        details: 'The table or column referenced in the validation may no longer exist.'
+      };
+    }
+
+    // Default case
+    return {
+      type: 'execution',
+      shortMessage: 'Execution Error',
+      details: errorMessage
+    };
+  };
+
+  // Helper functions for error analysis
+  const categorizeErrors = (errorsList) => {
+    const categories = {
+      syntax: 0,
+      schema: 0,
+      connection: 0,
+      plugin: 0,
+      timeout: 0,
+      permission: 0,
+      regex: 0,
+      unknown: 0
+    };
+
+    errorsList.forEach(error => {
+      const errorMsg = error.error || '';
+
+      if (errorMsg.includes('syntax') || errorMsg.includes('SQL compilation')) {
+        categories.syntax++;
+      } else if (errorMsg.includes('no such column') || errorMsg.includes('table not found')) {
+        categories.schema++;
+      } else if (errorMsg.includes('connection') || errorMsg.includes('Authentication')) {
+        categories.connection++;
+      } else if (errorMsg.includes('plugin') || errorMsg.includes('_instantiate_plugins')) {
+        categories.plugin++;
+      } else if (errorMsg.includes('timeout') || errorMsg.includes('execution time')) {
+        categories.timeout++;
+      } else if (errorMsg.includes('permission') || errorMsg.includes('access denied')) {
+        categories.permission++;
+      } else if (errorMsg.includes('regular expression') || errorMsg.includes('regex')) {
+        categories.regex++;
+      } else {
+        categories.unknown++;
+      }
+    });
+
+    return categories;
+  };
+
+  const getPrimaryErrorCategory = (categories) => {
+    // Find the category with the most errors
+    let maxCount = 0;
+    let primaryCategory = 'unknown';
+
+    for (const [category, count] of Object.entries(categories)) {
+      if (count > maxCount) {
+        maxCount = count;
+        primaryCategory = category;
+      }
+    }
+
+    // Map category to user-friendly message
+    const categoryMessages = {
+      syntax: 'SQL syntax issues',
+      schema: 'table schema mismatches',
+      connection: 'database connection problems',
+      plugin: 'validation plugin errors',
+      timeout: 'execution timeouts',
+      permission: 'permission denied errors',
+      regex: 'regular expression problems',
+      unknown: 'unknown issues'
+    };
+
+    return categoryMessages[primaryCategory] || 'unknown issues';
+  };
+
   // If no connections, show empty state
   if (!connections.length) {
     return (
@@ -601,164 +820,177 @@ const ValidationPage = () => {
               onCancel={handleCloseEditor}
             />
           ) : (
-            <div className="bg-white shadow rounded-lg">
-              <div className="px-4 py-3 border-b border-secondary-200 flex items-center justify-between">
-                <h3 className="text-lg font-medium text-secondary-900">
-                  Validation Rules: {selectedTable}
-                </h3>
-                <div className="flex space-x-2">
-                  <button
-                    type="button"
-                    onClick={handleGenerateValidations}
-                    className="inline-flex items-center px-3 py-1.5 border border-secondary-300 shadow-sm text-sm font-medium rounded-md text-secondary-700 bg-white hover:bg-secondary-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-secondary-500"
-                  >
-                    <ClipboardDocumentCheckIcon className="-ml-1 mr-2 h-4 w-4" aria-hidden="true" />
-                    Generate Default
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={handleNewValidation}
-                    className="inline-flex items-center px-3 py-1.5 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-primary-600 hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500"
-                  >
-                    <PlusIcon className="-ml-1 mr-2 h-4 w-4" aria-hidden="true" />
-                    New Rule
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={handleRunAll}
-                    disabled={loadingStates?.validations}
-                    className="inline-flex items-center px-3 py-1.5 border border-transparent shadow-sm text-sm font-medium rounded-md text-green-50 bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 disabled:opacity-50"
-                  >
-                    {loadingStates?.validations ? (
-                      <>
-                        <LoadingSpinner size="sm" className="mr-2" />
-                        Running...
-                      </>
-                    ) : (
-                      <>
-                        <ArrowPathIcon className="-ml-1 mr-2 h-4 w-4" />
-                        Run All
-                      </>
-                    )}
-                  </button>
-                </div>
-              </div>
-
-              {/* Display validation errors at the top if present */}
-              {validationErrors && validationErrors.length > 0 && (
-                <div className="px-4 py-3 bg-white">
-                  <ValidationErrorHandler
-                    errors={validationErrors}
-                    onRefresh={handleRunAll}
-                    connectionId={activeConnection?.id}
-                    tableName={selectedTable}
+            <div className="space-y-4">
+              {/* Results Summary and Trend */}
+              {selectedTable && (
+                <div className="space-y-4">
+                  <ValidationResultsSummary
+                    onRunAll={handleRunAll}
+                    isRunning={loadingStates?.validations}
                   />
+                  <ValidationResultsTrend />
                 </div>
               )}
 
-              {/* Last run summary */}
-              {currentValidations.length > 0 && (
-                <div className="px-4 py-3 bg-secondary-50 border-b border-secondary-200">
-                  <div className="text-sm text-secondary-500 flex items-center justify-between">
-                    <div>
-                      <span className="font-medium text-secondary-700">{currentValidations.length}</span> validation rules
-                      {" | "}
-                      <span className="font-medium text-accent-600">{currentValidations.filter(v => v.last_result === true).length}</span> passing
-                      {" | "}
-                      <span className="font-medium text-danger-600">{currentValidations.filter(v => v.last_result === false).length}</span> failing
-                      {" | "}
-                      <span className="font-medium text-secondary-600">{currentValidations.filter(v => v.last_result === undefined || v.last_result === null).length}</span> not run
-                    </div>
+              <div className="bg-white shadow rounded-lg">
+                <div className="px-4 py-3 border-b border-secondary-200 flex items-center justify-between">
+                  <h3 className="text-lg font-medium text-secondary-900">
+                    Validation Rules: {selectedTable}
+                  </h3>
+                  <div className="flex space-x-2">
+                    <button
+                      type="button"
+                      onClick={handleGenerateValidations}
+                      className="inline-flex items-center px-3 py-1.5 border border-secondary-300 shadow-sm text-sm font-medium rounded-md text-secondary-700 bg-white hover:bg-secondary-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-secondary-500"
+                    >
+                      <ClipboardDocumentCheckIcon className="-ml-1 mr-2 h-4 w-4" aria-hidden="true" />
+                      Generate Default
+                    </button>
 
-                    <div>
-                      <span className="text-sm text-secondary-500">
-                        Last run: {getLastRunTimestamp(currentValidations) ? formatDate(getLastRunTimestamp(currentValidations), true) : 'Never'}
-                      </span>
-                    </div>
+                    <button
+                      type="button"
+                      onClick={handleNewValidation}
+                      className="inline-flex items-center px-3 py-1.5 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-primary-600 hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500"
+                    >
+                      <PlusIcon className="-ml-1 mr-2 h-4 w-4" aria-hidden="true" />
+                      New Rule
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={handleRunAll}
+                      disabled={loadingStates?.validations}
+                      className="inline-flex items-center px-3 py-1.5 border border-transparent shadow-sm text-sm font-medium rounded-md text-green-50 bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 disabled:opacity-50"
+                    >
+                      {loadingStates?.validations ? (
+                        <>
+                          <LoadingSpinner size="sm" className="mr-2" />
+                          Running...
+                        </>
+                      ) : (
+                        <>
+                          <ArrowPathIcon className="-ml-1 mr-2 h-4 w-4" />
+                          Run All
+                        </>
+                      )}
+                    </button>
                   </div>
                 </div>
-              )}
 
-              {/* Search and filters */}
-              <div className="px-4 py-3 border-b border-secondary-200 bg-white sm:px-6">
-                <div className="flex items-center justify-between">
-                  <div className="flex-1">
-                    <SearchInput
-                      onSearch={handleSearch}
-                      placeholder="Search validations..."
-                      initialValue={searchQuery}
+                {/* Display validation errors at the top if present */}
+                {validationErrors && validationErrors.length > 0 && (
+                  <div className="px-4 py-3 bg-white">
+                    <ValidationErrorHandler
+                      errors={validationErrors}
+                      onRefresh={handleRunAll}
+                      connectionId={activeConnection?.id}
+                      tableName={selectedTable}
                     />
                   </div>
+                )}
 
-                  <div className="flex items-center space-x-2 ml-4">
-                    <span className="text-sm text-secondary-700">Status:</span>
-                    <div className="flex space-x-1">
-                      <button
-                        type="button"
-                        onClick={() => handleStatusFilter('all')}
-                        className={`px-3 py-1 rounded-md text-xs font-medium ${
-                          statusFilter === 'all' 
-                            ? 'bg-secondary-200 text-secondary-800' 
-                            : 'bg-white text-secondary-600 hover:bg-secondary-100'
-                        }`}
-                      >
-                        All
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleStatusFilter('passed')}
-                        className={`px-3 py-1 rounded-md text-xs font-medium ${
-                          statusFilter === 'passed' 
-                            ? 'bg-accent-100 text-accent-800' 
-                            : 'bg-white text-secondary-600 hover:bg-secondary-100'
-                        }`}
-                      >
-                        <CheckCircleIcon className="inline-block h-3 w-3 mr-1" />
-                        Passed
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleStatusFilter('failed')}
-                        className={`px-3 py-1 rounded-md text-xs font-medium ${
-                          statusFilter === 'failed' 
-                            ? 'bg-danger-100 text-danger-800' 
-                            : 'bg-white text-secondary-600 hover:bg-secondary-100'
-                        }`}
-                      >
-                        <XCircleIcon className="inline-block h-3 w-3 mr-1" />
-                        Failed
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleStatusFilter('unknown')}
-                        className={`px-3 py-1 rounded-md text-xs font-medium ${
-                          statusFilter === 'unknown' 
-                            ? 'bg-secondary-300 text-secondary-800' 
-                            : 'bg-white text-secondary-600 hover:bg-secondary-100'
-                        }`}
-                      >
-                        Not Run
-                      </button>
+                {/* Last run summary */}
+                {currentValidations.length > 0 && (
+                  <div className="px-4 py-3 bg-secondary-50 border-b border-secondary-200">
+                    <div className="text-sm text-secondary-500 flex items-center justify-between">
+                      <div>
+                        <span className="font-medium text-secondary-700">{currentValidations.length}</span> validation rules
+                        {" | "}
+                        <span className="font-medium text-accent-600">{currentValidations.filter(v => v.last_result === true).length}</span> passing
+                        {" | "}
+                        <span className="font-medium text-danger-600">{currentValidations.filter(v => v.last_result === false).length}</span> failing
+                        {" | "}
+                        <span className="font-medium text-secondary-600">{currentValidations.filter(v => v.last_result === undefined || v.last_result === null).length}</span> not run
+                      </div>
+
+                      <div>
+                        <span className="text-sm text-secondary-500">
+                          Last run: {getLastRunTimestamp(currentValidations) ? formatDate(getLastRunTimestamp(currentValidations), true) : 'Never'}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Search and filters */}
+                <div className="px-4 py-3 border-b border-secondary-200 bg-white sm:px-6">
+                  <div className="flex items-center justify-between">
+                    <div className="flex-1">
+                      <SearchInput
+                        onSearch={handleSearch}
+                        placeholder="Search validations..."
+                        initialValue={searchQuery}
+                      />
+                    </div>
+
+                    <div className="flex items-center space-x-2 ml-4">
+                      <span className="text-sm text-secondary-700">Status:</span>
+                      <div className="flex space-x-1">
+                        <button
+                          type="button"
+                          onClick={() => handleStatusFilter('all')}
+                          className={`px-3 py-1 rounded-md text-xs font-medium ${
+                            statusFilter === 'all' 
+                              ? 'bg-secondary-200 text-secondary-800' 
+                              : 'bg-white text-secondary-600 hover:bg-secondary-100'
+                          }`}
+                        >
+                          All
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleStatusFilter('passed')}
+                          className={`px-3 py-1 rounded-md text-xs font-medium ${
+                            statusFilter === 'passed' 
+                              ? 'bg-accent-100 text-accent-800' 
+                              : 'bg-white text-secondary-600 hover:bg-secondary-100'
+                          }`}
+                        >
+                          <CheckCircleIcon className="inline-block h-3 w-3 mr-1" />
+                          Passed
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleStatusFilter('failed')}
+                          className={`px-3 py-1 rounded-md text-xs font-medium ${
+                            statusFilter === 'failed' 
+                              ? 'bg-danger-100 text-danger-800' 
+                              : 'bg-white text-secondary-600 hover:bg-secondary-100'
+                          }`}
+                        >
+                          <XCircleIcon className="inline-block h-3 w-3 mr-1" />
+                          Failed
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleStatusFilter('unknown')}
+                          className={`px-3 py-1 rounded-md text-xs font-medium ${
+                            statusFilter === 'unknown' 
+                              ? 'bg-secondary-300 text-secondary-800' 
+                              : 'bg-white text-secondary-600 hover:bg-secondary-100'
+                          }`}
+                        >
+                          Not Run
+                        </button>
+                      </div>
                     </div>
                   </div>
                 </div>
-              </div>
 
-              {/* Enhanced Validation rule list */}
-              <ValidationRuleList
-                validations={filteredValidations}
-                isLoading={validationsQuery.isLoading}
-                onEdit={handleEditValidation}
-                onDebug={handleDebugValidation}
-                onRefreshList={() => validationsQuery.refetch()}
-                onUpdate={setCurrentValidations}
-                onRunSingle={handleRunSingleValidation}
-                isRunningValidation={loadingStates?.validations}
-                tableName={selectedTable}
-                connectionId={activeConnection?.id}
-              />
+                {/* Enhanced Validation rule list */}
+                <ValidationRuleList
+                  validations={filteredValidations}
+                  isLoading={validationsQuery.isLoading}
+                  onEdit={handleEditValidation}
+                  onDebug={handleDebugValidation}
+                  onRefreshList={() => validationsQuery.refetch()}
+                  onUpdate={setCurrentValidations}
+                  onRunSingle={handleRunSingleValidation}
+                  isRunningValidation={loadingStates?.validations}
+                  tableName={selectedTable}
+                  connectionId={activeConnection?.id}
+                />
+              </div>
             </div>
           )}
         </div>
@@ -779,4 +1011,13 @@ const ValidationPage = () => {
   );
 };
 
-export default ValidationPage;
+// Wrap the component with the provider for export
+const ValidationPageWithProvider = () => {
+  return (
+    <ValidationResultsProvider>
+      <ValidationPage />
+    </ValidationResultsProvider>
+  );
+};
+
+export default ValidationPageWithProvider;
