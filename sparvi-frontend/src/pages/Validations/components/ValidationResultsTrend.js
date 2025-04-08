@@ -1,140 +1,49 @@
-// src/pages/Validations/components/ValidationResultsTrend.js - UPDATED VERSION
 import React, { useEffect, useState, useCallback } from 'react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 import { useValidationResults } from '../../../contexts/ValidationResultsContext';
 import LoadingSpinner from '../../../components/common/LoadingSpinner';
 
 const ValidationResultsTrend = () => {
-  const { isLoading, current, history, trends, selectedTable, lastFetched } = useValidationResults();
+  const { isLoading, metrics, trends, selectedTable } = useValidationResults();
   const [chartData, setChartData] = useState([]);
-  const [processingKey, setProcessingKey] = useState('');
 
-  // Create a single data point from current validation results
-  const createSingleDataPoint = useCallback((validationResults) => {
-    try {
-      const today = new Date().toISOString().split('T')[0];
+  // Log what we're getting to debug
+  console.log("ValidationResultsTrend render with:", {
+    metrics,
+    isLoading,
+    selectedTable,
+    trendsLength: trends?.length || 0
+  });
 
-      // Count results by category
-      let passed = 0, failed = 0, error = 0;
-
-      validationResults.forEach(result => {
-        if (result.error) {
-          error++;
-        } else if (result.is_valid === true || result.last_result === true) {
-          passed++;
-        } else if (result.is_valid === false || result.last_result === false) {
-          failed++;
-        }
-      });
-
-      // Calculate health score
-      const total = validationResults.length;
-      const validResults = passed + failed;
-      const health_score = validResults > 0 ? Math.round((passed / validResults) * 100) : 0;
-
-      // Create data point
-      const dataPoint = {
-        date: today,
-        total,
-        passed,
-        failed,
-        error,
-        health_score
-      };
-
-      console.log("Created single data point:", dataPoint);
-      return [dataPoint];
-    } catch (error) {
-      console.error("Error creating data point:", error);
-      return [];
-    }
-  }, []);
-
-  // Generate a processing key when table or data changes to force re-processing
+  // Use trends if available, or create data from metrics
   useEffect(() => {
-    const newKey = `${selectedTable}-${lastFetched ? lastFetched.getTime() : 'initial'}`;
-    setProcessingKey(newKey);
-  }, [selectedTable, lastFetched]);
-
-  // Process data when processing key changes
-  useEffect(() => {
-    console.log(`Processing data for ${processingKey}`);
-
-    // If we already have prepared trend data, use it
     if (trends && trends.length > 0) {
-      console.log("Using pre-processed trend data:", trends);
+      console.log("Using existing trends data:", trends);
       setChartData(trends);
       return;
     }
 
-    // If we have history data, process it
-    if (history && history.length > 0) {
-      console.log("Processing history data for chart:", history.length, "records");
+    // If we have metrics but no trends, create a single data point
+    if (metrics && metrics.counts) {
+      console.log("Creating single trend point from metrics:", metrics);
 
-      // Group validation results by date
-      const resultsByDate = {};
+      const today = new Date().toISOString().split('T')[0];
+      const dataPoint = {
+        date: today,
+        total: metrics.total || 0,
+        passed: metrics.counts.passed || 0,
+        failed: metrics.counts.failed || 0,
+        error: metrics.counts.error || 0,
+        health_score: Math.round(metrics.health_score) || 0
+      };
 
-      history.forEach(item => {
-        // Extract date from run_at field
-        const runDate = item.run_at || item.timestamp || item.last_run_at || new Date().toISOString();
-        const dateStr = new Date(runDate).toISOString().split('T')[0];
-
-        // Initialize date entry if it doesn't exist
-        if (!resultsByDate[dateStr]) {
-          resultsByDate[dateStr] = {
-            date: dateStr,
-            total: 0,
-            passed: 0,
-            failed: 0,
-            error: 0,
-            health_score: 0
-          };
-        }
-
-        // Count this result
-        resultsByDate[dateStr].total++;
-
-        // Categorize result
-        if (item.error) {
-          resultsByDate[dateStr].error++;
-        } else if (item.is_valid === true || item.last_result === true) {
-          resultsByDate[dateStr].passed++;
-        } else if (item.is_valid === false || item.last_result === false) {
-          resultsByDate[dateStr].failed++;
-        }
-      });
-
-      // Calculate health scores for each date
-      Object.keys(resultsByDate).forEach(dateStr => {
-        const dateData = resultsByDate[dateStr];
-        const validResults = dateData.passed + dateData.failed;
-
-        if (validResults > 0) {
-          dateData.health_score = Math.round((dateData.passed / validResults) * 100);
-        }
-      });
-
-      // Convert to array and sort by date
-      const chartData = Object.values(resultsByDate).sort((a, b) => a.date.localeCompare(b.date));
-      console.log("Generated chart data:", chartData);
-
-      if (chartData.length > 0) {
-        setChartData(chartData);
-        return;
-      }
-    }
-
-    // If we only have current data, create a single point
-    if (current && current.length > 0) {
-      console.log("Using current data to create single data point");
-      const singlePoint = createSingleDataPoint(current);
-      setChartData(singlePoint);
+      setChartData([dataPoint]);
       return;
     }
 
-    // If no data available, clear chart
+    // No data available
     setChartData([]);
-  }, [processingKey, history, current, trends, createSingleDataPoint]);
+  }, [trends, metrics]);
 
   if (isLoading) {
     return (

@@ -1,4 +1,5 @@
-// src/pages/Validations/components/ValidationResultsSummary.js - UPDATED VERSION
+// src/pages/Validations/components/ValidationResultsSummary.js - FIXED VERSION
+
 import React from 'react';
 import {
   CheckCircleIcon,
@@ -14,6 +15,18 @@ import LoadingSpinner from '../../../components/common/LoadingSpinner';
 
 const ValidationResultsSummary = ({ onRunAll, isRunning }) => {
   const { metrics, lastFetched, isLoading, error, trends, selectedTable } = useValidationResults();
+
+  // Log what we're getting to debug
+  console.log("ValidationResultsSummary render with:", {
+    metrics,
+    lastFetched: lastFetched?.toString(),
+    isLoading,
+    selectedTable,
+    hasMetrics: !!(metrics &&
+      (metrics.total > 0 ||
+       metrics.counts?.passed > 0 ||
+       metrics.counts?.failed > 0))
+  });
 
   if (isLoading) {
     return (
@@ -44,11 +57,15 @@ const ValidationResultsSummary = ({ onRunAll, isRunning }) => {
     );
   }
 
-  // Check if we have meaningful metrics
+  // Check if we have meaningful metrics (explicitly check counts properties)
   const hasMetrics = metrics &&
     (metrics.total > 0 ||
-     metrics.counts?.passed > 0 ||
-     metrics.counts?.failed > 0);
+     (metrics.counts && (
+       metrics.counts.passed > 0 ||
+       metrics.counts.failed > 0 ||
+       metrics.counts.error > 0
+     ))
+    );
 
   if (!hasMetrics) {
     return (
@@ -86,7 +103,9 @@ const ValidationResultsSummary = ({ onRunAll, isRunning }) => {
     return 'danger';
   };
 
-  const healthColor = getHealthColor(metrics.health_score);
+  // Ensure health_score is a number and round it
+  const healthScore = metrics.health_score ? Math.round(Number(metrics.health_score)) : 0;
+  const healthColor = getHealthColor(healthScore);
 
   // Calculate trend (if we have enough data)
   let trend = null;
@@ -117,7 +136,7 @@ const ValidationResultsSummary = ({ onRunAll, isRunning }) => {
           {/* Health Score */}
           <div className="flex flex-col items-center">
             <div className={`text-2xl font-bold text-${healthColor}-600`}>
-              {Math.round(metrics.health_score)}%
+              {healthScore}%
             </div>
             <div className="text-xs text-secondary-500">Health Score</div>
 

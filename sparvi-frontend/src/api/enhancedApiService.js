@@ -806,7 +806,6 @@ export const validationsAPI = {
     });
   },
 
-  // Updated to use new path pattern from docs
   getValidationHistory: (tableName, connectionId, options = {}) => {
     const {
       limit = 10,
@@ -816,7 +815,10 @@ export const validationsAPI = {
 
     if (!connectionId) {
       console.warn('connectionId is required for getValidationHistory');
+      return Promise.reject(new Error('connectionId is required'));
     }
+
+    console.log(`getValidationHistory called for ${tableName} with connectionId ${connectionId}`);
 
     return enhancedRequest({
       url: '/validation-history',

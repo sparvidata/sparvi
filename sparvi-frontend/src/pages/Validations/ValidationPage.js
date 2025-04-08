@@ -34,7 +34,10 @@ const ValidationPage = () => {
   const [searchParams, setSearchParams] = useSearchParams();
   const { connections, activeConnection, setCurrentConnection } = useConnection();
   const { updateBreadcrumbs, showNotification, setLoading, loadingStates } = useUI();
-  const { updateResultsAfterRun } = useValidationResults();
+  const {
+    updateResultsAfterRun,
+    setSelectedTable: setContextSelectedTable
+  } = useValidationResults();
 
   const [currentValidations, setCurrentValidations] = useState([]);
   const [selectedTable, setSelectedTable] = useState('');
@@ -60,8 +63,12 @@ const ValidationPage = () => {
     const tableParam = searchParams.get('table');
     if (tableParam) {
       setSelectedTable(tableParam);
+      // Also set in context
+      if (setContextSelectedTable) {
+        setContextSelectedTable(tableParam);
+      }
     }
-  }, [searchParams]);
+  }, [searchParams, setContextSelectedTable]);
 
   // Use React Query to fetch tables data
   const tablesQuery = useTablesData(
@@ -129,33 +136,20 @@ const ValidationPage = () => {
       // This ensures we only run this code once
       runInitialValidationsComplete.current = true;
 
-      // Only auto-run if no validation has results yet
-      if (!validationsQuery.data.some(v => v.last_result !== undefined)) {
-        console.log("Running initial validations");
+      // Don't automatically run validations - check if we already have results first
+      const hasAnyResults = validationsQuery.data.some(v => v.last_result !== undefined);
 
-        // Use a setTimeout to prevent potential render loop issues
-        setTimeout(() => {
-          validationsAPI.runValidations(
-            activeConnection.id,
-            selectedTable,
-            null
-          ).then(response => {
-            // Process response and update state...
-            if (response?.results) {
-              // Update validation results in component state
-              const newValidations = updateValidationsWithResults(
-                currentValidations,
-                response.results
-              );
-              setCurrentValidations(newValidations);
-            }
-          }).catch(error => {
-            console.error("Error running initial validations:", error);
-          });
-        }, 500); // Add a small delay
+      if (!hasAnyResults) {
+        console.log("No existing validation results found - showing empty state");
+        // Don't run validations automatically - just update the UI to show no results
+
+        // Just update the validation results context instead
+        if (updateResultsAfterRun) {
+          updateResultsAfterRun([], selectedTable);
+        }
       }
     }
-  }, [validationsQuery.data, initialLoadComplete, activeConnection?.id, selectedTable, currentValidations]);
+  }, [validationsQuery.data, initialLoadComplete, activeConnection?.id, selectedTable, updateResultsAfterRun]);
 
   // Compute filtered validations for display based on filters
   const filteredValidations = useMemo(() => {
@@ -191,6 +185,11 @@ const ValidationPage = () => {
     setSearchParams({ table: tableName });
     setInitialLoadComplete(false); // Reset for the new table
     runInitialValidationsComplete.current = false; // Reset for new table
+
+    // Also set the table in the ValidationResultsContext
+    if (setContextSelectedTable) {
+      setContextSelectedTable(tableName);
+    }
   };
 
   // Handle search
