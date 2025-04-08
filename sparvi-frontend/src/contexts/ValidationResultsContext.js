@@ -1,4 +1,4 @@
-// src/contexts/ValidationResultsContext.js
+// src/contexts/ValidationResultsContext.js - UPDATED VERSION
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { useConnection } from './EnhancedConnectionContext';
 import { validationsAPI } from '../api/enhancedApiService';
@@ -105,11 +105,59 @@ export const ValidationResultsProvider = ({ children }) => {
         currentData = latestResults;
       }
 
+      // Process the data to generate metrics
+      const processedResults = processValidationResults(currentData, []);
+      const trends = getValidationTrends(historyData, 7);
+
+      // Create default metrics if none exist
+      const defaultMetrics = {
+        health_score: 0,
+        counts: {
+          passed: 0,
+          failed: 0,
+          error: 0,
+          unknown: 0
+        },
+        total: 0,
+        avg_execution_time: 0
+      };
+
+      // Use processed metrics or fetch from summary if available
+      let metrics = processedResults.metrics || defaultMetrics;
+      
+      // If we have no metrics but the table is selected, try to get metrics from the validation summary
+      if (metrics.total === 0 && selectedTable) {
+        try {
+          const summary = await validationsAPI.getSummary(connectionId);
+          console.log("Validation summary:", summary);
+          
+          // Check if we have data for the selected table
+          if (summary?.validations_by_table && summary.validations_by_table[tableName]) {
+            const tableData = summary.validations_by_table[tableName];
+            
+            // Update metrics with summary data
+            metrics = {
+              health_score: tableData.health_score || 0,
+              counts: {
+                passed: tableData.passing || 0,
+                failed: tableData.failing || 0,
+                error: 0,
+                unknown: tableData.unknown || 0
+              },
+              total: tableData.total || 0,
+              avg_execution_time: 0
+            };
+          }
+        } catch (error) {
+          console.error("Error fetching validation summary:", error);
+        }
+      }
+
       setValidationResults({
         current: currentData,
         history: historyData,
-        trends: [], // Let the component generate trends
-        metrics: null, // Will be calculated from current data
+        trends: trends.trend || [],
+        metrics: metrics,
         lastFetched: new Date(),
         isLoading: false,
         error: null

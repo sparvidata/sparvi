@@ -1,4 +1,4 @@
-// src/pages/Validations/components/ValidationResultsSummary.js
+// src/pages/Validations/components/ValidationResultsSummary.js - UPDATED VERSION
 import React from 'react';
 import {
   CheckCircleIcon,
@@ -13,7 +13,7 @@ import { formatDate } from '../../../utils/formatting';
 import LoadingSpinner from '../../../components/common/LoadingSpinner';
 
 const ValidationResultsSummary = ({ onRunAll, isRunning }) => {
-  const { metrics, lastFetched, isLoading, error, trends } = useValidationResults();
+  const { metrics, lastFetched, isLoading, error, trends, selectedTable } = useValidationResults();
 
   if (isLoading) {
     return (
@@ -30,16 +30,51 @@ const ValidationResultsSummary = ({ onRunAll, isRunning }) => {
           <ExclamationTriangleIcon className="h-5 w-5 mr-2" />
           <span>Error loading validation results: {error}</span>
         </div>
+
+        {/* Add a retry button */}
+        <div className="mt-2">
+          <button
+            onClick={onRunAll}
+            className="px-3 py-1 bg-primary-100 hover:bg-primary-200 text-primary-700 rounded-md text-sm"
+          >
+            Run Validations
+          </button>
+        </div>
       </div>
     );
   }
 
-  if (!metrics) {
+  // Check if we have meaningful metrics
+  const hasMetrics = metrics &&
+    (metrics.total > 0 ||
+     metrics.counts?.passed > 0 ||
+     metrics.counts?.failed > 0);
+
+  if (!hasMetrics) {
     return (
       <div className="bg-white px-4 py-5 border-b border-secondary-200">
-        <div className="text-secondary-500">
-          No validation results available. Run validations to see results.
+        <div className="text-secondary-700 mb-4 flex items-center">
+          <ExclamationTriangleIcon className="h-5 w-5 mr-2 text-secondary-400" />
+          <span>No validation results available for {selectedTable || 'this table'}.</span>
         </div>
+
+        <button
+          type="button"
+          onClick={onRunAll}
+          disabled={isRunning}
+          className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-primary-600 hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 disabled:opacity-50"
+        >
+          {isRunning ? (
+            <>
+              <LoadingSpinner size="sm" className="mr-2" />
+              Running...
+            </>
+          ) : (
+            <>
+              Run Validations
+            </>
+          )}
+        </button>
       </div>
     );
   }
@@ -82,7 +117,7 @@ const ValidationResultsSummary = ({ onRunAll, isRunning }) => {
           {/* Health Score */}
           <div className="flex flex-col items-center">
             <div className={`text-2xl font-bold text-${healthColor}-600`}>
-              {metrics.health_score}%
+              {Math.round(metrics.health_score)}%
             </div>
             <div className="text-xs text-secondary-500">Health Score</div>
 
@@ -105,7 +140,7 @@ const ValidationResultsSummary = ({ onRunAll, isRunning }) => {
           <div className="flex flex-col items-center">
             <div className="flex items-center text-xl font-semibold text-accent-600">
               <CheckCircleIcon className="h-5 w-5 mr-1" />
-              {metrics.counts.passed}
+              {metrics.counts?.passed || 0}
             </div>
             <div className="text-xs text-secondary-500">Passed</div>
           </div>
@@ -114,7 +149,7 @@ const ValidationResultsSummary = ({ onRunAll, isRunning }) => {
           <div className="flex flex-col items-center">
             <div className="flex items-center text-xl font-semibold text-danger-600">
               <XCircleIcon className="h-5 w-5 mr-1" />
-              {metrics.counts.failed}
+              {metrics.counts?.failed || 0}
             </div>
             <div className="text-xs text-secondary-500">Failed</div>
           </div>
@@ -123,7 +158,7 @@ const ValidationResultsSummary = ({ onRunAll, isRunning }) => {
           <div className="flex flex-col items-center">
             <div className="flex items-center text-xl font-semibold text-warning-600">
               <ExclamationTriangleIcon className="h-5 w-5 mr-1" />
-              {metrics.counts.error}
+              {metrics.counts?.error || 0}
             </div>
             <div className="text-xs text-secondary-500">Errors</div>
           </div>
