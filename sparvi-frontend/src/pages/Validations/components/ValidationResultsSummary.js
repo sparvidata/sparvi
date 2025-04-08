@@ -1,5 +1,3 @@
-// src/pages/Validations/components/ValidationResultsSummary.js - FIXED VERSION
-
 import React from 'react';
 import {
   CheckCircleIcon,
@@ -7,31 +5,41 @@ import {
   ExclamationTriangleIcon,
   ClockIcon,
   ArrowUpIcon,
-  ArrowDownIcon
+  ArrowDownIcon,
+  ArrowPathIcon
 } from '@heroicons/react/24/outline';
 import { useValidationResults } from '../../../contexts/ValidationResultsContext';
 import { formatDate } from '../../../utils/formatting';
 import LoadingSpinner from '../../../components/common/LoadingSpinner';
 
 const ValidationResultsSummary = ({ onRunAll, isRunning }) => {
-  const { metrics, lastFetched, isLoading, error, trends, selectedTable } = useValidationResults();
-
-  // Log what we're getting to debug
-  console.log("ValidationResultsSummary render with:", {
+  const {
     metrics,
-    lastFetched: lastFetched?.toString(),
+    lastFetched,
     isLoading,
+    isLoadingResults,
+    error,
+    trends,
     selectedTable,
-    hasMetrics: !!(metrics &&
-      (metrics.total > 0 ||
-       metrics.counts?.passed > 0 ||
-       metrics.counts?.failed > 0))
-  });
+    rulesLoaded,
+    resultsLoaded
+  } = useValidationResults();
 
-  if (isLoading) {
+  // Show loading state when we're loading the results specifically
+  if (isLoading || isLoadingResults) {
     return (
-      <div className="bg-white px-4 py-5 border-b border-secondary-200 flex justify-center">
-        <LoadingSpinner size="lg" />
+      <div className="bg-white px-4 py-5 border-b border-secondary-200">
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="text-lg font-semibold text-secondary-900">Validation Health</h2>
+            <p className="text-sm text-secondary-500">
+              Loading validation results...
+            </p>
+          </div>
+          <div className="flex items-center">
+            <LoadingSpinner size="md" />
+          </div>
+        </div>
       </div>
     );
   }
@@ -48,8 +56,9 @@ const ValidationResultsSummary = ({ onRunAll, isRunning }) => {
         <div className="mt-2">
           <button
             onClick={onRunAll}
-            className="px-3 py-1 bg-primary-100 hover:bg-primary-200 text-primary-700 rounded-md text-sm"
+            className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-primary-600 hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500"
           >
+            <ArrowPathIcon className="h-4 w-4 mr-2" />
             Run Validations
           </button>
         </div>
@@ -67,18 +76,41 @@ const ValidationResultsSummary = ({ onRunAll, isRunning }) => {
      ))
     );
 
+  // Handle cases where we have rules but no metrics yet
+  if (rulesLoaded && !resultsLoaded) {
+    return (
+      <div className="bg-white px-4 py-5 border-b border-secondary-200">
+        <div className="flex justify-between items-center">
+          <div>
+            <h2 className="text-lg font-semibold text-secondary-900">Validation Health</h2>
+            <p className="text-sm text-secondary-500">
+              Loading results for {selectedTable || 'this table'}...
+            </p>
+          </div>
+          <div>
+            <LoadingSpinner size="md" />
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   if (!hasMetrics) {
     return (
       <div className="bg-white px-4 py-5 border-b border-secondary-200">
         <div className="text-secondary-700 mb-4 flex items-center">
           <ExclamationTriangleIcon className="h-5 w-5 mr-2 text-secondary-400" />
-          <span>No validation results available for {selectedTable || 'this table'}.</span>
+          <span>
+            {rulesLoaded
+              ? `No validation results available for ${selectedTable || 'this table'}.`
+              : `Select a table to view validation results.`}
+          </span>
         </div>
 
         <button
           type="button"
           onClick={onRunAll}
-          disabled={isRunning}
+          disabled={isRunning || !selectedTable}
           className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-primary-600 hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 disabled:opacity-50"
         >
           {isRunning ? (

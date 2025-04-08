@@ -371,15 +371,21 @@ class SupabaseManager:
             logger.error(traceback.format_exc())
             return None
 
-    def get_validation_history(self, organization_id: str, table_name: str, limit: int = 10) -> List[Dict]:
+    def get_validation_history(self, organization_id: str, table_name: str, connection_id: str = None,
+                               limit: int = 30) -> List[Dict]:
         """Get the most recent validation results for a table"""
         try:
             # First, get the rule IDs for this table
-            rules_response = self.supabase.table("validation_rules") \
+            query = self.supabase.table("validation_rules") \
                 .select("id, rule_name, description, operator, expected_value") \
                 .eq("organization_id", organization_id) \
-                .eq("table_name", table_name) \
-                .execute()
+                .eq("table_name", table_name)
+
+            # Add connection filter if provided
+            if connection_id:
+                query = query.eq("connection_id", connection_id)
+
+            rules_response = query.execute()
 
             if not rules_response.data:
                 return []

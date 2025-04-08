@@ -1,25 +1,35 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState } from 'react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 import { useValidationResults } from '../../../contexts/ValidationResultsContext';
 import LoadingSpinner from '../../../components/common/LoadingSpinner';
 
 const ValidationResultsTrend = () => {
-  const { isLoading, metrics, trends, selectedTable } = useValidationResults();
-  const [chartData, setChartData] = useState([]);
-
-  // Log what we're getting to debug
-  console.log("ValidationResultsTrend render with:", {
-    metrics,
-    isLoading,
+  const { 
+    isLoading, 
+    isLoadingHistory,
+    metrics, 
+    trends, 
     selectedTable,
-    trendsLength: trends?.length || 0
-  });
+    rulesLoaded,
+    historyLoaded
+  } = useValidationResults();
+  
+  const [chartData, setChartData] = useState([]);
 
   // Use trends if available, or create data from metrics
   useEffect(() => {
     if (trends && trends.length > 0) {
       console.log("Using existing trends data:", trends);
-      setChartData(trends);
+      // Make sure we have proper number values in the trends data
+      const processedTrends = trends.map(point => ({
+        ...point,
+        total: Number(point.total || 0),
+        passed: Number(point.passed || 0),
+        failed: Number(point.failed || 0),
+        error: Number(point.error || 0),
+        health_score: Number(point.health_score || 0)
+      }));
+      setChartData(processedTrends);
       return;
     }
 
@@ -30,11 +40,11 @@ const ValidationResultsTrend = () => {
       const today = new Date().toISOString().split('T')[0];
       const dataPoint = {
         date: today,
-        total: metrics.total || 0,
-        passed: metrics.counts.passed || 0,
-        failed: metrics.counts.failed || 0,
-        error: metrics.counts.error || 0,
-        health_score: Math.round(metrics.health_score) || 0
+        total: Number(metrics.total || 0),
+        passed: Number(metrics.counts.passed || 0),
+        failed: Number(metrics.counts.failed || 0),
+        error: Number(metrics.counts.error || 0),
+        health_score: Number(Math.round(metrics.health_score) || 0)
       };
 
       setChartData([dataPoint]);
@@ -45,10 +55,23 @@ const ValidationResultsTrend = () => {
     setChartData([]);
   }, [trends, metrics]);
 
-  if (isLoading) {
+  // Show loading state specifically when we're loading history
+  if (isLoading || isLoadingHistory) {
     return (
-      <div className="bg-white p-4 rounded-lg shadow flex justify-center items-center h-64">
-        <LoadingSpinner size="lg" />
+      <div className="bg-white p-4 rounded-lg shadow">
+        <div className="flex justify-between items-center mb-4">
+          <h3 className="text-lg font-medium text-secondary-900">
+            Validation Health Trend
+            {selectedTable && (
+              <span className="text-sm font-normal text-secondary-500 ml-2">
+                {selectedTable}
+              </span>
+            )}
+          </h3>
+        </div>
+        <div className="flex justify-center items-center h-64">
+          <LoadingSpinner size="lg" />
+        </div>
       </div>
     );
   }
@@ -62,9 +85,13 @@ const ValidationResultsTrend = () => {
             Validation Health Trend
           </h3>
           <p className="text-secondary-500 text-center">
-            No historical data available yet for {selectedTable || 'this table'}.
+            {rulesLoaded && !historyLoaded
+              ? `Loading history data for ${selectedTable || 'this table'}...`
+              : rulesLoaded
+                ? `No historical data available yet for ${selectedTable || 'this table'}.`
+                : 'Select a table and run validations to see trends.'}
             <br />
-            Run validations multiple times to see trends.
+            Run validations multiple times to see trends over time.
           </p>
         </div>
       </div>
@@ -174,7 +201,9 @@ const ValidationResultsTrend = () => {
 
       {/* Run count */}
       <div className="mt-2 text-xs text-secondary-500 text-center">
-        Showing data for {chartData.length} day{chartData.length !== 1 ? 's' : ''}
+        {chartData.length > 1
+          ? `Showing data for ${chartData.length} days`
+          : `Showing data for 1 day`}
       </div>
     </div>
   );

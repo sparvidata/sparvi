@@ -1,13 +1,11 @@
-// src/contexts/ValidationResultsContext.js
-
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { useConnection } from './EnhancedConnectionContext';
 import { validationsAPI } from '../api/enhancedApiService';
 import { processValidationResults, getValidationTrends } from '../utils/validationResultsProcessor';
 
 // Helper function to process validation summary data into metrics format
 const processValidationSummary = (summary, tableName) => {
-  // If no summary or it doesn't have data for this table, return null
+  // Same as before - keeping your existing implementation
   if (!summary || !summary.validations_by_table) {
     return null;
   }
@@ -57,110 +55,86 @@ export const ValidationResultsProvider = ({ children }) => {
     metrics: null,
     lastFetched: null,
     isLoading: false,
+    isLoadingRules: false,
+    isLoadingResults: false,
+    isLoadingHistory: false,
     error: null
   });
 
   // State for selected table
   const [selectedTable, setSelectedTable] = useState(null);
 
-  // Effect to load results when table changes
-  useEffect(() => {
-    if (selectedTable) {
-      console.log(`Table selection changed to: ${selectedTable}, loading results...`);
+  // Track loaded state
+  const [rulesLoaded, setRulesLoaded] = useState(false);
+  const [resultsLoaded, setResultsLoaded] = useState(false);
+  const [historyLoaded, setHistoryLoaded] = useState(false);
 
-      // Clear previous results when table changes
-      setValidationResults(prev => ({
-        ...prev,
-        current: [],
-        history: [],
-        trends: [],
-        metrics: null,
-        isLoading: true,
-        error: null
-      }));
+  // Use a ref to prevent duplicate loading
+  const loadingInProgress = React.useRef(false);
 
-      // Load results for the new table
-      if (activeConnection?.id) {
-        loadResultsForTable(selectedTable, activeConnection.id);
-      }
-    }
-  }, [selectedTable, activeConnection?.id]);
-
-  // Load results for a specific table
-  const loadResultsForTable = async (tableName, connectionId) => {
-    if (!tableName || !connectionId) {
-      console.log("Missing table name or connection ID");
-      return;
-    }
+  // Load validation rules - separate from other data
+  const loadValidationRules = useCallback(async (tableName, connectionId) => {
+    if (!tableName || !connectionId) return [];
 
     try {
-      console.log(`Loading results for table ${tableName} with connection ${connectionId}`);
-
       setValidationResults(prev => ({
         ...prev,
-        isLoading: true,
-        error: null
+        isLoadingRules: true
       }));
 
-      // Fetch validation summary first to get basic metrics
-      let summaryData = null;
-      try {
-        console.log("Fetching validation summary...");
-        const summary = await validationsAPI.getSummary(connectionId);
-        console.log("Validation summary response:", summary);
+      console.log(`Fetching validation rules for table: ${tableName}`);
+      const response = await validationsAPI.getRules(
+        tableName,
+        { connectionId }
+      );
 
-        // Process the summary data
-        summaryData = processValidationSummary(summary, tableName);
-        console.log("Processed summary data:", summaryData);
-      } catch (error) {
-        console.error("Error fetching validation summary:", error);
+      // Get the rules array
+      let rules = [];
+      if (response?.data?.rules) {
+        rules = response.data.rules;
+      } else if (response?.rules) {
+        rules = response.rules;
+      } else if (Array.isArray(response)) {
+        rules = response;
       }
 
-      // Fetch latest validation results
-      let latestResults;
-      try {
-        console.log(`Fetching latest validation results for ${tableName}...`);
-        latestResults = await validationsAPI.getLatestValidationResults(
-          connectionId,
-          tableName
-        );
-        console.log("Latest results response:", latestResults);
-      } catch (error) {
-        console.error("Error fetching latest results:", error);
-        latestResults = { results: [] };
-      }
+      setRulesLoaded(true);
+      console.log(`Loaded ${rules.length} validation rules for ${tableName}`);
 
-      // Fetch historical validation results (increased limit for better trends)
-      let historyResults;
-      try {
-        console.log(`Fetching validation history for ${tableName} with connectionId ${connectionId}...`);
+      // Return the rules but also update the state
+      setValidationResults(prev => ({
+        ...prev,
+        current: rules,
+        isLoadingRules: false
+      }));
 
-        // Log what the API function is expecting
-        console.log("validationsAPI.getValidationHistory parameters:", {
-          tableName,
-          connectionId,
-          options: { limit: 100 }
-        });
+      return rules;
+    } catch (error) {
+      console.error(`Error loading validation rules for ${tableName}:`, error);
+      setValidationResults(prev => ({
+        ...prev,
+        isLoadingRules: false,
+        error: `Failed to load validation rules: ${error.message}`
+      }));
+      return [];
+    }
+  }, []);
 
-        historyResults = await validationsAPI.getValidationHistory(
-          tableName,
-          connectionId,
-          { limit: 100 } // Increased limit for better historical data
-        );
-        console.log("History results response:", historyResults);
-      } catch (error) {
-        console.error("Error fetching history:", error);
-        historyResults = { history: [] };
-      }
+  // Load latest validation results
+  const loadLatestResults = useCallback(async (tableName, connectionId, rules) => {
+    if (!tableName || !connectionId) return;
 
-      // Extract the history array
-      let historyData = [];
-      if (historyResults?.history && Array.isArray(historyResults.history)) {
-        historyData = historyResults.history;
-      } else if (Array.isArray(historyResults)) {
-        historyData = historyResults;
-      }
-      console.log("Extracted history data:", historyData.length, "records");
+    try {
+      setValidationResults(prev => ({
+        ...prev,
+        isLoadingResults: true
+      }));
+
+      console.log(`Fetching latest validation results for ${tableName}...`);
+      const latestResults = await validationsAPI.getLatestValidationResults(
+        connectionId,
+        tableName
+      );
 
       // Extract current data
       let currentData = [];
@@ -169,114 +143,218 @@ export const ValidationResultsProvider = ({ children }) => {
       } else if (Array.isArray(latestResults)) {
         currentData = latestResults;
       }
-      console.log("Extracted current data:", currentData.length, "records");
 
-      // Use summary data for metrics if available, otherwise process current data
-      let metrics;
-      if (summaryData) {
-        metrics = summaryData;
-      } else if (currentData.length > 0) {
-        // Process the data to generate metrics from current results
-        const processedResults = processValidationResults(currentData, []);
-        metrics = processedResults.metrics;
-        console.log("Using processed current data for metrics:", metrics);
-      } else {
-        // Default empty metrics
-        metrics = {
-          health_score: 0,
-          counts: {
+      console.log(`Loaded ${currentData.length} latest results for ${tableName}`);
+
+      // Now update the rules with the latest results
+      const updatedRules = (rules || []).map(rule => {
+        const latestResult = currentData.find(r => r.rule_name === rule.rule_name);
+        if (latestResult) {
+          return {
+            ...rule,
+            last_result: latestResult.is_valid,
+            actual_value: latestResult.actual_value,
+            error: latestResult.error,
+            last_run_at: latestResult.run_at || new Date().toISOString()
+          };
+        }
+        return rule;
+      });
+
+      // Process the data for metrics
+      const processedResults = processValidationResults(currentData, updatedRules);
+
+      setResultsLoaded(true);
+      setValidationResults(prev => ({
+        ...prev,
+        current: updatedRules,
+        metrics: processedResults.metrics,
+        isLoadingResults: false // Ensure this is set to false
+      }));
+
+      return { currentData, metrics: processedResults.metrics };
+    } catch (error) {
+      console.error(`Error loading latest results for ${tableName}:`, error);
+      // Make sure we still set loading to false on error
+      setValidationResults(prev => ({
+        ...prev,
+        isLoadingResults: false
+      }));
+      setResultsLoaded(true); // Still mark as "loaded" even with error
+      return { currentData: [], metrics: null };
+    }
+  }, []);
+
+  // Load validation history
+  const loadValidationHistory = useCallback(async (tableName, connectionId) => {
+    if (!tableName || !connectionId) return;
+
+    try {
+      setValidationResults(prev => ({
+        ...prev,
+        isLoadingHistory: true
+      }));
+
+      console.log(`Fetching validation history for ${tableName} with connectionId ${connectionId}...`);
+      const historyResults = await validationsAPI.getValidationHistory(
+        tableName,
+        connectionId,
+        { limit: 30 }
+      );
+
+      // Extract history data
+      let historyData = [];
+      if (historyResults?.history && Array.isArray(historyResults.history)) {
+        historyData = historyResults.history;
+      } else if (Array.isArray(historyResults)) {
+        historyData = historyResults;
+      }
+
+      console.log(`Loaded ${historyData.length} history records for ${tableName}`);
+
+      // Process history data for better trend calculation
+      // Group by date first
+      const historyByDate = {};
+
+      historyData.forEach(record => {
+        if (!record.run_at) return;
+
+        // Extract the date part
+        const date = record.run_at.split('T')[0];
+
+        if (!historyByDate[date]) {
+          historyByDate[date] = {
+            date,
+            total: 0,
             passed: 0,
             failed: 0,
-            error: 0,
-            unknown: 0
-          },
-          total: 0,
-          avg_execution_time: 0
-        };
-      }
+            error: 0
+          };
+        }
 
-      // Generate trends from history data
-      let trendsData = [];
-      if (historyData.length > 0) {
-        const trends = getValidationTrends(historyData, 7);
-        trendsData = trends.trend || [];
-        console.log("Generated trend data:", trendsData.length, "points");
-      } else if (currentData.length > 0) {
-        // Create a single data point for trend
-        const today = new Date().toISOString().split('T')[0];
+        // Count by result status
+        historyByDate[date].total++;
 
-        // Count results by category for current data
-        let passed = 0, failed = 0, error = 0;
-        currentData.forEach(result => {
-          if (result.error) error++;
-          else if (result.is_valid === true || result.last_result === true) passed++;
-          else if (result.is_valid === false || result.last_result === false) failed++;
-        });
+        if (record.error) {
+          historyByDate[date].error++;
+        } else if (record.is_valid === true) {
+          historyByDate[date].passed++;
+        } else if (record.is_valid === false) {
+          historyByDate[date].failed++;
+        }
+      });
 
-        // Calculate health score
-        const total = currentData.length;
-        const validResults = passed + failed;
-        const health_score = validResults > 0 ? Math.round((passed / validResults) * 100) : 0;
+      // Convert to array and calculate health score
+      const trendsData = Object.values(historyByDate).map(day => {
+        const validResults = day.passed + day.failed;
+        const health_score = validResults > 0
+          ? Math.round((day.passed / validResults) * 100)
+          : 0;
 
-        trendsData = [{
-          date: today,
-          total,
-          passed,
-          failed,
-          error,
+        return {
+          ...day,
           health_score
-        }];
-        console.log("Created single trend data point:", trendsData);
-      } else if (summaryData) {
-        // Create a trend point from summary data if we have it
-        const today = new Date().toISOString().split('T')[0];
-        trendsData = [{
-          date: today,
-          total: summaryData.total || 0,
-          passed: summaryData.counts.passed || 0,
-          failed: summaryData.counts.failed || 0,
-          error: summaryData.counts.error || 0,
-          health_score: Math.round(summaryData.health_score) || 0
-        }];
-        console.log("Created trend point from summary data:", trendsData);
-      }
+        };
+      }).sort((a, b) => a.date.localeCompare(b.date));
 
-      // Update state with all our data
-      setValidationResults({
-        current: currentData,
+      console.log("Generated trend data:", trendsData);
+
+      setHistoryLoaded(true);
+      setValidationResults(prev => ({
+        ...prev,
         history: historyData,
         trends: trendsData,
-        metrics: metrics,
-        lastFetched: new Date(),
-        isLoading: false,
+        isLoadingHistory: false,
+        lastFetched: new Date()
+      }));
+
+      return { historyData, trendsData };
+    } catch (error) {
+      console.error(`Error loading validation history for ${tableName}:`, error);
+      setValidationResults(prev => ({
+        ...prev,
+        isLoadingHistory: false
+      }));
+      return { historyData: [], trendsData: [] };
+    }
+  }, []);
+
+  // Main function to load results for a table - initiates parallel loading
+  const loadResultsForTable = useCallback(async (tableName, connectionId) => {
+    if (!tableName || !connectionId || loadingInProgress.current) {
+      return;
+    }
+
+    try {
+      // Set loading flags
+      loadingInProgress.current = true;
+      setRulesLoaded(false);
+      setResultsLoaded(false);
+      setHistoryLoaded(false);
+
+      // Clear previous results and set loading state
+      setValidationResults({
+        current: [],
+        history: [],
+        trends: [],
+        metrics: null,
+        lastFetched: null,
+        isLoading: true,
+        isLoadingRules: true,
+        isLoadingResults: true,
+        isLoadingHistory: true,
         error: null
       });
-      console.log("ValidationResults state updated successfully with:", {
-        currentDataCount: currentData.length,
-        historyDataCount: historyData.length,
-        trendsDataCount: trendsData.length,
-        metrics: metrics
-      });
+
+      console.log(`Loading all data for table ${tableName} with connection ${connectionId}`);
+
+      // Load rules first - we need these for the UI to show something quickly
+      const rules = await loadValidationRules(tableName, connectionId);
+
+      // Then start both processes in parallel
+      const resultsPromise = loadLatestResults(tableName, connectionId, rules);
+      const historyPromise = loadValidationHistory(tableName, connectionId);
+
+      // Let them execute in parallel
+      await Promise.allSettled([resultsPromise, historyPromise]);
+
+      console.log(`All data loading complete for ${tableName}`);
+
+      // Final update to clear main loading flag
+      setValidationResults(prev => ({
+        ...prev,
+        isLoading: false
+      }));
     } catch (error) {
-      console.error('Error loading validation results:', error);
+      console.error('Error in loadResultsForTable:', error);
       setValidationResults(prev => ({
         ...prev,
         isLoading: false,
         error: error.message || 'Failed to load validation results'
       }));
+    } finally {
+      loadingInProgress.current = false;
     }
-  };
+  }, [loadValidationRules, loadLatestResults, loadValidationHistory]);
 
-  // Force reload results
-  const reloadResults = () => {
-    if (selectedTable && activeConnection?.id) {
+  // Effect to load results when table or connection changes
+  useEffect(() => {
+    if (selectedTable && activeConnection?.id && !loadingInProgress.current) {
+      console.log(`Table selection changed to: ${selectedTable}, loading results...`);
       loadResultsForTable(selectedTable, activeConnection.id);
     }
-  };
+  }, [selectedTable, activeConnection?.id, loadResultsForTable]);
+
+  // Force reload results
+  const reloadResults = useCallback(() => {
+    if (selectedTable && activeConnection?.id && !loadingInProgress.current) {
+      loadResultsForTable(selectedTable, activeConnection.id);
+    }
+  }, [selectedTable, activeConnection?.id, loadResultsForTable]);
 
   // Update results after running validations
-  const updateResultsAfterRun = (results, tableName) => {
-    if (!tableName) return;
+  const updateResultsAfterRun = useCallback((results, tableName) => {
+    if (!tableName || !results || !Array.isArray(results)) return;
 
     try {
       console.log(`Updating results after run for table ${tableName} with ${results.length} results`);
@@ -304,26 +382,44 @@ export const ValidationResultsProvider = ({ children }) => {
           ...prev.history
         ];
 
+        // Update the current rules with the new results
+        const updatedRules = prev.current.map(rule => {
+          const newResult = results.find(r => r.rule_name === rule.rule_name);
+          if (newResult) {
+            return {
+              ...rule,
+              last_result: newResult.is_valid,
+              actual_value: newResult.actual_value,
+              error: newResult.error,
+              last_run_at: newResult.run_at || new Date().toISOString()
+            };
+          }
+          return rule;
+        });
+
         // Update trends
-        const trends = getValidationTrends(newHistory, 7);
+        const trends = getValidationTrends(newHistory, 30);
 
         return {
-          current: processedResults.processed || [],
+          current: updatedRules,
           history: newHistory,
           trends: trends.trend || [],
           metrics: processedResults.metrics,
           lastFetched: new Date(),
           isLoading: false,
+          isLoadingRules: false,
+          isLoadingResults: false,
+          isLoadingHistory: false,
           error: null
         };
       });
     } catch (error) {
       console.error('Error updating validation results:', error);
     }
-  };
+  }, []);
 
   // Clear results
-  const clearResults = () => {
+  const clearResults = useCallback(() => {
     setValidationResults({
       current: [],
       history: [],
@@ -331,10 +427,16 @@ export const ValidationResultsProvider = ({ children }) => {
       metrics: null,
       lastFetched: null,
       isLoading: false,
+      isLoadingRules: false,
+      isLoadingResults: false,
+      isLoadingHistory: false,
       error: null
     });
     setSelectedTable(null);
-  };
+    setRulesLoaded(false);
+    setResultsLoaded(false);
+    setHistoryLoaded(false);
+  }, []);
 
   // Value to provide
   const value = {
@@ -344,7 +446,10 @@ export const ValidationResultsProvider = ({ children }) => {
     loadResultsForTable,
     updateResultsAfterRun,
     reloadResults,
-    clearResults
+    clearResults,
+    rulesLoaded,
+    resultsLoaded,
+    historyLoaded
   };
 
   return (

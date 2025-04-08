@@ -808,7 +808,7 @@ export const validationsAPI = {
 
   getValidationHistory: (tableName, connectionId, options = {}) => {
     const {
-      limit = 10,
+      limit = 30,  // Default to 30 days
       forceFresh = false,
       requestId = `validations.history.${tableName}`
     } = options;
@@ -818,8 +818,6 @@ export const validationsAPI = {
       return Promise.reject(new Error('connectionId is required'));
     }
 
-    console.log(`getValidationHistory called for ${tableName} with connectionId ${connectionId}`);
-
     return enhancedRequest({
       url: '/validation-history',
       params: {
@@ -827,10 +825,15 @@ export const validationsAPI = {
         connection_id: connectionId,
         limit
       },
-      cacheKey: `validations.history.${tableName}.${connectionId}`,
+      cacheKey: `validations.history.${tableName}.${connectionId}.${limit}`,
       cacheTTL: 30 * 60 * 1000, // 30 minutes (historical data changes rarely)
       requestId,
       forceFresh
+    }).catch(error => {
+      console.error(`Error fetching validation history for ${tableName}:`, error);
+
+      // Return empty history if we fail
+      return { history: [] };
     });
   },
 

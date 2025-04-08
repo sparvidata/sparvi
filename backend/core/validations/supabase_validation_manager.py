@@ -290,9 +290,10 @@ class SupabaseValidationManager:
             logger.error(f"Error evaluating rule: {str(e)}")
             return False
 
-    def get_validation_history(self, organization_id: str, table_name: str, limit: int = 10) -> List[Dict[str, Any]]:
+    def get_validation_history(self, organization_id: str, table_name: str, connection_id: str = None,
+                               limit: int = 30) -> List[Dict[str, Any]]:
         """Get the most recent validation results for a table"""
-        return self.supabase.get_validation_history(organization_id, table_name, limit)
+        return self.supabase.get_validation_history(organization_id, table_name, connection_id, limit)
 
     def update_rule(self, organization_id: str, rule_id: str, rule: Dict[str, Any]) -> bool:
         """Update an existing validation rule without deleting and recreating it"""

@@ -3899,7 +3899,7 @@ def get_validation_history(current_user, organization_id):
     """Get history of validation results for a table"""
     table_name = request.args.get("table")
     connection_id = request.args.get("connection_id")
-    limit = request.args.get("limit", 10, type=int)
+    limit = request.args.get("limit", 30, type=int)  # Updated default to 30
 
     if not table_name:
         return jsonify({"error": "Table name is required"}), 400

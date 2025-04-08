@@ -7,13 +7,15 @@ import {
   CheckCircleIcon,
   XCircleIcon,
   ArrowPathIcon,
-  ClockIcon
+  ClockIcon,
+  TableCellsIcon
 } from '@heroicons/react/24/outline';
 import LoadingSpinner from '../../../components/common/LoadingSpinner';
 import { validationsAPI } from '../../../api/enhancedApiService';
 import { useUI } from '../../../contexts/UIContext';
 import ValidationErrorHandler from './ValidationErrorHandler';
 import { formatDate } from '../../../utils/formatting';
+import { useValidationResults } from '../../../contexts/ValidationResultsContext';
 
 const ValidationRuleList = ({
   validations = [],
@@ -28,6 +30,7 @@ const ValidationRuleList = ({
   isRunningValidation = false
 }) => {
   const { showNotification } = useUI();
+  const { isLoadingRules, rulesLoaded, resultsLoaded } = useValidationResults();
 
   const [isDeleting, setIsDeleting] = useState(false);
   const [validationToDelete, setValidationToDelete] = useState(null);
@@ -134,11 +137,12 @@ const ValidationRuleList = ({
     return formatDate(timestamp, true);
   };
 
-  // If loading with no validations, show loading state
-  if (isLoading && !validations.length) {
+  // If loading rules but nothing loaded yet, show loading state
+  if ((isLoading || isLoadingRules) && !validations.length) {
     return (
-      <div className="flex justify-center py-10">
+      <div className="px-4 py-10 flex flex-col items-center justify-center">
         <LoadingSpinner size="lg" />
+        <p className="mt-4 text-secondary-500">Loading validation rules...</p>
       </div>
     );
   }
@@ -147,11 +151,106 @@ const ValidationRuleList = ({
   if (!validations.length) {
     return (
       <div className="text-center py-10">
-        <ExclamationCircleIcon className="mx-auto h-12 w-12 text-secondary-400" />
+        <TableCellsIcon className="mx-auto h-12 w-12 text-secondary-400" />
         <h3 className="mt-2 text-sm font-medium text-secondary-900">No validation rules found</h3>
         <p className="mt-1 text-sm text-secondary-500">
-          Create validation rules to ensure data quality.
+          Create validation rules to ensure data quality for {tableName || 'this table'}.
         </p>
+      </div>
+    );
+  }
+
+  // Show loading state for results but show rules
+  if (rulesLoaded && !resultsLoaded && validations.length > 0) {
+    return (
+      <div>
+        {/* Same filter UI as before */}
+        <div className="p-2 bg-secondary-50 border-b border-secondary-200">
+          <div className="flex items-center text-sm">
+            {/* Filter buttons */}
+          </div>
+        </div>
+
+        <div className="overflow-x-auto">
+          <table className="min-w-full divide-y divide-secondary-200">
+            <thead className="bg-secondary-50">
+              <tr>
+                {/* Table headers */}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-secondary-200 bg-white">
+              {validations.map((validation) => (
+                <tr key={validation.id || validation.rule_name} className="hover:bg-secondary-50">
+                  {/* Rule name and details column */}
+                  <td className="py-4 pl-4 pr-3 text-sm sm:pl-6">
+                    <div className="font-medium text-secondary-900">{validation.rule_name}</div>
+                    {validation.description && (
+                      <div className="text-xs text-secondary-500">{validation.description}</div>
+                    )}
+                    <div className="mt-1 text-xs font-mono bg-secondary-50 p-2 rounded overflow-x-auto max-w-md">
+                      {validation.query} {validation.operator} {validation.expected_value}
+                    </div>
+                  </td>
+
+                  {/* Status column with loading indicator */}
+                  <td className="px-3 py-4 text-sm">
+                    <div className="inline-flex items-center">
+                      <LoadingSpinner size="sm" className="mr-2" />
+                      <span className="text-secondary-600">Loading...</span>
+                    </div>
+                  </td>
+
+                  {/* Last run column */}
+                  <td className="px-3 py-4 text-sm text-secondary-500">
+                    —
+                  </td>
+
+                  {/* Result column */}
+                  <td className="px-3 py-4 text-sm">
+                    —
+                  </td>
+
+                  {/* Actions column */}
+                  <td className="py-4 pl-3 pr-4 text-right text-sm font-medium sm:pr-6">
+                    <div className="flex space-x-2 justify-end">
+                      {/* Edit button */}
+                      <button
+                        type="button"
+                        onClick={() => onEdit(validation)}
+                        className="text-secondary-600 hover:text-secondary-900"
+                        title="Edit validation"
+                      >
+                        <PencilIcon className="h-5 w-5" />
+                      </button>
+
+                      {/* Debug button */}
+                      {onDebug && (
+                        <button
+                          type="button"
+                          onClick={() => onDebug(validation)}
+                          className="text-secondary-600 hover:text-primary-600"
+                          title="Debug validation"
+                        >
+                          <BugAntIcon className="h-5 w-5" />
+                        </button>
+                      )}
+
+                      {/* Delete button */}
+                      <button
+                        type="button"
+                        onClick={() => confirmDelete(validation)}
+                        className="text-secondary-600 hover:text-danger-600"
+                        title="Delete validation"
+                      >
+                        <TrashIcon className="h-5 w-5" />
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </div>
     );
   }
