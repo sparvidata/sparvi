@@ -1286,7 +1286,7 @@ threading.Timer(5.0, init_metadata_task_manager).start()  # 5-second delay to en
 # Decorator to require a valid token for protected routes
 import os
 
-# Modify your token_required decorator to include a testing bypass
+
 def token_required(f):
     @wraps(f)
     def decorated(*args, **kwargs):
@@ -1304,26 +1304,24 @@ def token_required(f):
                 token = parts[1]
         if not token:
             logger.warning("No token provided")
-            return jsonify({"error": "Token is missing!"}), 401
+            return jsonify({"error": "Token is missing!", "code": "token_missing"}), 401
 
         try:
-            # Use Supabase to verify the token
-            url = os.getenv("SUPABASE_URL")
-            key = os.getenv("SUPABASE_SERVICE_KEY")
+            # Use the new validation utility
+            from core.utils.auth_utils import validate_token
+            decoded = validate_token(token)
 
-            # Log environment variables for debugging
-            logger.debug(f"Supabase URL: {url}")
-            logger.debug(f"Supabase Service Key: {bool(key)}")  # Don't log actual key
+            if not decoded:
+                logger.warning("Token validation failed - expired or invalid")
+                return jsonify({
+                    "error": "Token is expired or invalid!",
+                    "code": "token_expired"
+                }), 401
 
-            if not url or not key:
-                logger.error("Supabase URL or Service Key is missing")
-                return jsonify({"error": "Server configuration error"}), 500
-
-            supabase_client = create_client(url, key)
-
-            # Verify the JWT token
-            decoded = supabase_client.auth.get_user(token)
-            current_user = decoded.user.id
+            current_user = decoded.get("sub")
+            if not current_user:
+                logger.error("User ID not found in token")
+                return jsonify({"error": "Invalid token format", "code": "token_invalid"}), 401
 
             logger.info(f"Token valid for user: {current_user}")
 
@@ -1333,12 +1331,12 @@ def token_required(f):
 
             if not organization_id:
                 logger.error(f"No organization found for user: {current_user}")
-                return jsonify({"error": "User has no associated organization"}), 403
+                return jsonify({"error": "User has no associated organization", "code": "org_missing"}), 403
 
         except Exception as e:
             logger.error(f"Token verification error: {str(e)}")
             logger.error(traceback.format_exc())
-            return jsonify({"error": "Token is invalid!", "message": str(e)}), 401
+            return jsonify({"error": "Token validation failed!", "message": str(e), "code": "token_error"}), 401
 
         # Pass both user_id and organization_id to the decorated function
         return f(current_user, organization_id, *args, **kwargs)

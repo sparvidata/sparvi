@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { Navigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 
@@ -7,8 +7,28 @@ import { useAuth } from '../../contexts/AuthContext';
  * Redirects to login if user is not authenticated
  */
 const ProtectedRoute = ({ children }) => {
-  const { user, loading } = useAuth();
+  const { user, loading, isAuthenticated, updateActivity, session } = useAuth();
   const location = useLocation();
+
+  // Check session on route access and update activity
+  useEffect(() => {
+    if (isAuthenticated) {
+      updateActivity();
+    }
+  }, [isAuthenticated, updateActivity, location.pathname]);
+
+  // Check token expiration
+  useEffect(() => {
+    if (session && session.expires_at) {
+      const now = Math.floor(Date.now() / 1000);
+      const expiresAt = session.expires_at;
+
+      if (now >= expiresAt) {
+        console.log('Session expired in protected route check');
+        return <Navigate to="/login" state={{ from: location }} replace />;
+      }
+    }
+  }, [session, location]);
 
   // Show loading state while authentication is being checked
   if (loading) {

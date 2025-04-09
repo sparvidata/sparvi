@@ -8,7 +8,13 @@ if (!supabaseUrl || !supabaseAnonKey) {
   console.error('Supabase URL or Anon Key is missing in environment variables');
 }
 
-export const supabase = createClient(supabaseUrl, supabaseAnonKey);
+export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
+  auth: {
+    autoRefreshToken: true,
+    persistSession: true,
+    storage: localStorage
+  }
+});
 
 // Authentication functions
 export const signIn = async (email, password) => {
@@ -92,6 +98,12 @@ export const getSession = async () => {
       return null;
     }
 
+    // Check if session exists
+    if (!data?.session) {
+      console.log('No active session found');
+      return null;
+    }
+
     // Proactively refresh if token is close to expiring
     if (data.session && data.session.expires_at) {
       const now = Math.floor(Date.now() / 1000);
@@ -99,8 +111,10 @@ export const getSession = async () => {
 
       if (expiresIn < 300) {  // Refresh if expiring in less than 5 minutes
         try {
+          console.log('Token expiring soon, refreshing...');
           const { data: refreshData, error: refreshError } = await supabase.auth.refreshSession();
           if (refreshError) throw refreshError;
+          console.log('Token refreshed successfully');
           return refreshData.session;
         } catch (refreshError) {
           console.error('Session refresh failed:', refreshError);
@@ -118,6 +132,7 @@ export const getSession = async () => {
 // Setup auth state change listener
 export const setupAuthListener = (callback) => {
   return supabase.auth.onAuthStateChange((event, session) => {
+    console.log('Auth state change detected:', event);
     callback(event, session);
   });
 };

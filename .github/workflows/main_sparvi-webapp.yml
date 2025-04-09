@@ -66,7 +66,6 @@ jobs:
       - name: Unzip artifact for deployment
         run: unzip release.zip
 
-      
       - name: Login to Azure
         uses: azure/login@v2
         with:
@@ -74,10 +73,38 @@ jobs:
           tenant-id: ${{ secrets.AZUREAPPSERVICE_TENANTID_7BDCDC09B99B42B0809EE74469359F09 }}
           subscription-id: ${{ secrets.AZUREAPPSERVICE_SUBSCRIPTIONID_9DC0C88DCA604D4EB2BBFA0AC414D66D }}
 
+      - name: Configure App Settings
+        uses: azure/appservice-settings@v1
+        with:
+          app-name: 'sparvi-webapp'
+          slot-name: 'Production'
+          app-settings-json: |
+            [
+              {
+                "name": "SUPABASE_JWT_SECRET",
+                "value": "${{ secrets.SUPABASE_JWT_SECRET }}",
+                "slotSetting": false
+              },
+              {
+                "name": "ACCESS_TOKEN_LIFETIME", 
+                "value": "${{ secrets.ACCESS_TOKEN_LIFETIME }}",
+                "slotSetting": false
+              },
+              {
+                "name": "REFRESH_TOKEN_LIFETIME",
+                "value": "${{ secrets.REFRESH_TOKEN_LIFETIME }}",
+                "slotSetting": false
+              },
+              {
+                "name": "ENABLE_SESSION_EXPIRY",
+                "value": "${{ secrets.ENABLE_SESSION_EXPIRY }}",
+                "slotSetting": false
+              }
+            ]
+
       - name: 'Deploy to Azure Web App'
         uses: azure/webapps-deploy@v3
         id: deploy-to-webapp
         with:
           app-name: 'sparvi-webapp'
           slot-name: 'Production'
-          
