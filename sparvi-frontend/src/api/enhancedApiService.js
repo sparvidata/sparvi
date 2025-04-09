@@ -1,5 +1,5 @@
 import axios from 'axios';
-import { getSession } from './supabase';
+import {getSession, signOut, supabase} from './supabase';
 import { getCacheItem, setCacheItem, clearCacheItem } from '../utils/cacheUtils';
 import { getRequestAbortController, requestCompleted } from '../utils/requestUtils';
 
@@ -108,39 +108,49 @@ export const setAuthReady = () => {
   }
 })();
 
-const debugAuth = async () => {
-  try {
-    const session = await getSession();
-    console.log("Auth check: Session exists:", !!session);
-
-    // Check different possible token locations
-    const token = session?.access_token ||
-                 session?.token ||
-                 session?.accessToken ||
-                 (session?.user?.token) ||
-                 (session?.data?.access_token);
-
-    console.log("Auth check: Token exists:", !!token);
-    if (token) {
-      console.log("Auth check: Token preview:", `${token.substring(0, 10)}...`);
-    } else {
-      // If no token found, log the session structure to help debug
-      console.log("Auth check: Session structure:", JSON.stringify(session, null, 2));
-    }
-    return !!token;
-  } catch (e) {
-    console.error("Error in debugAuth:", e);
-    return false;
-  }
-};
+// const debugAuth = async () => {
+//   try {
+//     const session = await getSession();
+//     console.log("Auth check: Session exists:", !!session);
+//
+//     // Check different possible token locations
+//     const token = session?.access_token ||
+//                  session?.token ||
+//                  session?.accessToken ||
+//                  (session?.user?.token) ||
+//                  (session?.data?.access_token);
+//
+//     console.log("Auth check: Token exists:", !!token);
+//     if (token) {
+//       console.log("Auth check: Token preview:", `${token.substring(0, 10)}...`);
+//     } else {
+//       // If no token found, log the session structure to help debug
+//       console.log("Auth check: Session structure:", JSON.stringify(session, null, 2));
+//     }
+//     return !!token;
+//   } catch (e) {
+//     console.error("Error in debugAuth:", e);
+//     return false;
+//   }
+// };
 
 apiClient.interceptors.request.use(
   async (config) => {
     try {
       const session = await getSession();
-      // The token is likely in session.access_token
-      if (session?.access_token) {
-        config.headers.Authorization = `Bearer ${session.access_token}`;
+      console.log("Full Session Object:", session);
+
+      const token =
+        session?.access_token ||
+        session?.token ||
+        session?.accessToken ||
+        (session?.user?.token) ||
+        (session?.data?.access_token);
+
+      console.log("Token being sent:", token ? token.substring(0, 20) + '...' : 'No token');
+
+      if (token) {
+        config.headers.Authorization = `Bearer ${token}`;
       }
     } catch (err) {
       console.error('Error adding auth token to request:', err);
@@ -150,30 +160,45 @@ apiClient.interceptors.request.use(
   (error) => Promise.reject(error)
 );
 
-// Add response interceptor for error handling
+// Response interceptor for error handling
 apiClient.interceptors.response.use(
   (response) => response,
-  (error) => {
+  async (error) => {
     // Don't treat cancelled requests as errors
     if (axios.isCancel(error)) {
-    // Silently handle canceled requests by default
-    // Use a debug flag for logging if needed
-    const isDevelopment = (typeof process !== 'undefined') &&
-                         (process.env) &&
-                         (process.env.NODE_ENV === 'development');
-
-    if (isDevelopment) {
-      console.debug('Request cancelled:', error.message);
+      return Promise.reject({ cancelled: true });
     }
-    return Promise.reject({ cancelled: true });
-  }
 
     // Handle specific error codes
     if (error.response) {
       if (error.response.status === 401) {
-        // Handle unauthorized errors (e.g., redirect to login)
         console.error('Unauthorized access. Redirecting to login...');
-        // You might want to dispatch an action or use a context here
+
+        // Prevent multiple redirects
+        if (!window._redirectingToLogin) {
+          window._redirectingToLogin = true;
+
+          try {
+            // Force signout from Supabase
+            await signOut();
+
+            // Clear any cached session data
+            window._sessionCache = null;
+
+            // Clear session storage
+            sessionStorage.removeItem('activeConnectionId');
+
+            // Redirect to login with current location
+            const returnPath = window.location.pathname;
+            window.location.href = `/login?returnTo=${encodeURIComponent(returnPath)}`;
+          } catch (e) {
+            console.error('Error during forced logout:', e);
+            // Still redirect to login as fallback
+            window.location.href = '/login';
+          }
+        }
+
+        return Promise.reject(error);
       }
 
       if (error.response.status === 403) {
@@ -274,7 +299,7 @@ const enhancedRequest = async (options) => {
   } catch (error) {
     // If it's a cancelled request, just rethrow
     if (axios.isCancel(error) || error.cancelled) {
-      throw { cancelled: true, originalError: error };
+      throw new Error(error?.message || 'Request cancelled');
     }
 
     // Log details about the error for debugging

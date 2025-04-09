@@ -91,30 +91,53 @@ export const getCurrentUser = async () => {
 
 export const getSession = async () => {
   try {
+    // Use a timestamp to prevent multiple calls within a short time
+    const now = Date.now();
+    const lastCheck = window._lastSessionCheck || 0;
+
+    // Throttle checks (no more than once every 5 seconds)
+    if (now - lastCheck < 5000) {
+      // Get from cache if available
+      if (window._sessionCache) {
+        return window._sessionCache;
+      }
+    }
+
+    // Update last check time
+    window._lastSessionCheck = now;
+
     const { data, error } = await supabase.auth.getSession();
 
     if (error) {
       console.error('Error getting session:', error);
+      window._sessionCache = null;
       return null;
     }
 
     // Check if session exists
     if (!data?.session) {
       console.log('No active session found');
+      window._sessionCache = null;
       return null;
     }
 
+    // Cache the session
+    window._sessionCache = data.session;
+
     // Proactively refresh if token is close to expiring
     if (data.session && data.session.expires_at) {
-      const now = Math.floor(Date.now() / 1000);
-      const expiresIn = data.session.expires_at - now;
+      const nowSeconds = Math.floor(Date.now() / 1000);
+      const expiresIn = data.session.expires_at - nowSeconds;
 
-      if (expiresIn < 300) {  // Refresh if expiring in less than 5 minutes
+      if (expiresIn < 300 && expiresIn > 0) {  // Refresh if expiring in less than 5 minutes
         try {
           console.log('Token expiring soon, refreshing...');
           const { data: refreshData, error: refreshError } = await supabase.auth.refreshSession();
           if (refreshError) throw refreshError;
           console.log('Token refreshed successfully');
+
+          // Update cache
+          window._sessionCache = refreshData.session;
           return refreshData.session;
         } catch (refreshError) {
           console.error('Session refresh failed:', refreshError);
