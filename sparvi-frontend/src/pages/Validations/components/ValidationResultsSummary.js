@@ -25,6 +25,15 @@ const ValidationResultsSummary = ({ onRunAll, isRunning }) => {
     resultsLoaded
   } = useValidationResults();
 
+  console.log("ValidationResultsSummary state:", {
+    metrics,
+    isLoading,
+    isLoadingResults,
+    rulesLoaded,
+    resultsLoaded,
+    selectedTable
+  });
+
   // Show loading state when we're loading the results specifically
   if (isLoading || isLoadingResults) {
     return (
@@ -76,6 +85,8 @@ const ValidationResultsSummary = ({ onRunAll, isRunning }) => {
      ))
     );
 
+  console.log("Has metrics:", hasMetrics, metrics);
+
   // Handle cases where we have rules but no metrics yet
   if (rulesLoaded && !resultsLoaded) {
     return (
@@ -84,11 +95,16 @@ const ValidationResultsSummary = ({ onRunAll, isRunning }) => {
           <div>
             <h2 className="text-lg font-semibold text-secondary-900">Validation Health</h2>
             <p className="text-sm text-secondary-500">
-              Loading results for {selectedTable || 'this table'}...
+              No validation results found for {selectedTable || 'this table'}.
             </p>
           </div>
           <div>
-            <LoadingSpinner size="md" />
+            <button
+              onClick={onRunAll}
+              className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-primary-600 hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500"
+            >
+              Run Validations
+            </button>
           </div>
         </div>
       </div>

@@ -133,23 +133,45 @@ export const ValidationResultsProvider = ({ children }) => {
 
       console.log(`Fetching latest validation results for ${tableName}...`);
 
-      // Add a try/catch specifically for cancelled requests
       try {
         const latestResults = await validationsAPI.getLatestValidationResults(
           connectionId,
           tableName
         );
 
-        // Rest of the existing code remains the same
-        // ...
+        console.log("Latest validation results received:", latestResults);
+
+        // Extract the results array depending on the response format
+        let resultsArray = [];
+        if (latestResults?.results && Array.isArray(latestResults.results)) {
+          resultsArray = latestResults.results;
+        } else if (Array.isArray(latestResults)) {
+          resultsArray = latestResults;
+        }
+
+        // Process the results to get metrics and formatted data
+        const processed = processValidationResults(resultsArray, rules);
+        console.log("Processed validation results:", processed);
+
+        // Update the state with the new data
+        setValidationResults(prev => ({
+          ...prev,
+          current: rules || [], // Use the rules we have
+          metrics: processed.metrics,
+          isLoadingResults: false,
+          lastFetched: new Date(),
+          resultsLoaded: true
+        }));
+
+        setResultsLoaded(true);
+
+        return { currentData: resultsArray, metrics: processed.metrics };
       } catch (error) {
-        // Specifically handle cancelled requests
+        // Handle cancelled requests
         if (axios.isCancel(error) || error.cancelled) {
           console.warn(`Request for ${tableName} validation results was cancelled`, error);
           return { currentData: [], metrics: null };
         }
-
-        // Re-throw other types of errors
         throw error;
       }
     } catch (error) {
@@ -162,7 +184,6 @@ export const ValidationResultsProvider = ({ children }) => {
         error: error.message || 'Failed to load validation results'
       }));
 
-      // Ensure we return a valid object
       return { currentData: [], metrics: null };
     }
   }, []);

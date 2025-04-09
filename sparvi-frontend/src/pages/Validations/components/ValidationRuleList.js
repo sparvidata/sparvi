@@ -29,6 +29,13 @@ const ValidationRuleList = ({
   onRunSingle,
   isRunningValidation = false
 }) => {
+  console.log("ValidationRuleList received props:", {
+    validationsCount: validations.length,
+    isLoading,
+    tableName,
+    connectionId,
+    firstRule: validations[0]
+  });
   const { showNotification } = useUI();
   const { isLoadingRules, rulesLoaded, resultsLoaded } = useValidationResults();
 
