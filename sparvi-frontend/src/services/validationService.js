@@ -92,7 +92,81 @@ export const validationService = {
       console.error(`Error running validations: ${error.message}`);
       throw error;
     }
-  }
+  },
+
+  /**
+ * Deactivate a validation rule
+ * @param {string} connectionId - Connection ID
+ * @param {string} tableName - Table name
+ * @param {string} ruleName - Rule name to deactivate
+ * @returns {Promise<Object>} Success status
+ */
+  deactivateRule: async (connectionId, tableName, ruleName) => {
+    if (!connectionId || !tableName || !ruleName) {
+      console.warn('Missing required parameters for deactivateRule');
+      throw new Error('Missing required parameters');
+    }
+
+    try {
+      console.log(`Deactivating rule ${ruleName} for table ${tableName}`);
+
+      const response = await validationsAPI.deactivateRule(
+        tableName,
+        ruleName,
+        connectionId
+      );
+
+      return response;
+    } catch (error) {
+      console.error(`Error deactivating rule: ${error.message}`);
+      throw error;
+    }
+  },
+
+  /**
+   * Get validation rules for a table
+   * @param {string} connectionId - Connection ID
+   * @param {string} tableName - Table name
+   * @param {object} options - Additional options (forceFresh, etc.)
+   * @returns {Promise<Array>} Validation rules
+   */
+  getRules: async (connectionId, tableName, options = {}) => {
+    if (!connectionId || !tableName) {
+      console.warn('Missing required parameters for getRules');
+      return [];
+    }
+
+    try {
+      console.log(`Fetching validation rules for table: ${tableName} with connection ${connectionId}`);
+
+      const response = await validationsAPI.getRules(
+        tableName,
+        {
+          connectionId,
+          ...options
+        }
+      );
+
+      // Extract the rules array based on response format
+      let rules = [];
+      if (Array.isArray(response)) {
+        rules = response;
+      } else if (response?.data?.rules) {
+        rules = response.data.rules;
+      } else if (response?.rules) {
+        rules = response.rules;
+      }
+
+      console.log(`Successfully retrieved ${rules.length} validation rules`);
+      return rules;
+    } catch (error) {
+      console.error(`Error fetching validation rules: ${error.message}`);
+      throw error;
+    }
+  },
+
+
 };
 
 export default validationService;
+

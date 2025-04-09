@@ -29,6 +29,7 @@ import { processValidationResults } from '../../utils/validationResultsProcessor
 import { ValidationResultsProvider, useValidationResults } from '../../contexts/ValidationResultsContext';
 import { queryClient } from '../../api/queryClient';
 import { formatDate } from '../../utils/formatting';
+import { useValidationRulesList } from '../../hooks/useValidationRulesList';
 
 const ValidationPage = () => {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -39,7 +40,6 @@ const ValidationPage = () => {
     setSelectedTable: setContextSelectedTable
   } = useValidationResults();
 
-  const [currentValidations, setCurrentValidations] = useState([]);
   const [selectedTable, setSelectedTable] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
@@ -50,6 +50,16 @@ const ValidationPage = () => {
   const [validationErrors, setValidationErrors] = useState(null);
   const [initialLoadComplete, setInitialLoadComplete] = useState(false);
   const runInitialValidationsComplete = useRef(false);
+
+  const {
+    validations: currentValidations,
+    setValidations: setCurrentValidations,
+    loading: loadingValidations,
+    error: validationsError,
+    loadRules: refreshValidations,
+    runAllRules,
+    runSingleRule
+  } = useValidationRulesList(selectedTable, activeConnection?.id, []);
 
   // Set breadcrumbs
   useEffect(() => {
@@ -219,88 +229,17 @@ const ValidationPage = () => {
     if (!activeConnection || !selectedTable || !validation) return;
 
     try {
-      // Update UI to show this validation is running
-      setCurrentValidations(prevValidations =>
-        prevValidations.map(v => ({
-          ...v,
-          isRunning: v.rule_name === validation.rule_name
-        }))
-      );
+      const result = await runSingleRule(validation);
 
-      // Run all validations but we'll only process the one we're interested in
-      const response = await validationsAPI.runValidations(
-        activeConnection.id,
-        selectedTable,
-        null,
-        { timeout: 60000 } // 1 minute timeout for single validation
-      );
-
-      // Check for valid response
-      if (!response || !response.results || !Array.isArray(response.results)) {
-        throw new Error("Unexpected response format from server");
-      }
-
-      // Find the result for this specific validation
-      const result = response.results.find(r => r.rule_name === validation.rule_name);
-
-      if (!result) {
-        throw new Error("No result returned for this validation");
-      }
-
-      // Update just this validation with the new result
-      const updatedValidations = currentValidations.map(v => {
-        if (v.rule_name === validation.rule_name) {
-          return {
-            ...v,
-            isRunning: false,
-            last_result: result.error ? null : result.is_valid,
-            actual_value: result.actual_value,
-            error: result.error,
-            last_run_at: new Date().toISOString(),
-            execution_time_ms: result.execution_time_ms,
-            execution_details: result.execution_details || null
-          };
-        }
-        return v;
-      });
-
-      setCurrentValidations(updatedValidations);
-
-      // Show appropriate notification
-      if (result.error) {
-        const errorType = categorizeValidationError(result.error);
-        showNotification(
-          `Validation error: ${errorType.shortMessage}`,
-          'warning',
-          errorType.details
-        );
-      } else {
+      if (result) {
         showNotification(
           `Validation ${result.is_valid ? 'passed' : 'failed'}: ${validation.rule_name}`,
           result.is_valid ? 'success' : 'warning'
         );
       }
-
-      // Update results context with this single result
-      if (updateResultsAfterRun) {
-        updateResultsAfterRun([result], selectedTable);
-      }
     } catch (error) {
-      console.error('Error running validation:', error);
-
-      // Update UI to show validation is no longer running
-      setCurrentValidations(prevValidations =>
-        prevValidations.map(v => ({
-          ...v,
-          isRunning: false
-        }))
-      );
-
-      // Provide helpful error message
-      showNotification(
-        `Failed to run validation: ${error.message || "Unknown error"}`,
-        'error'
-      );
+      console.error(`Error running validation ${validation.rule_name}:`, error);
+      showNotification(`Failed to run validation: ${error.message}`, 'error');
     }
   };
 
@@ -312,57 +251,10 @@ const ValidationPage = () => {
       setLoading('validations', true);
       setValidationErrors(null);
 
-      // Update UI to show validations are running
-      setCurrentValidations(prevValidations =>
-        prevValidations.map(v => ({
-          ...v,
-          isRunning: true,
-          error: null // Clear previous errors
-        }))
-      );
+      const result = await runAllRules();
 
-      const response = await validationsAPI.runValidations(
-        activeConnection.id,
-        selectedTable,
-        null,
-        { timeout: 120000 } // Increase timeout to 2 minutes for complex validations
-      );
-
-      console.log("Full validation response:", response);
-
-      if (!response || !response.results) {
-        throw new Error("Unexpected response format from server");
-      }
-
-      // Process results with our new processor
-      const processedResults = processValidationResults(
-        response.results,
-        currentValidations
-      );
-
-      // Update validations with processed results
-      setCurrentValidations(currentValidations.map(validation => {
-        const matchingResult = processedResults.processed.find(
-          r => r.rule_name === validation.rule_name
-        );
-
-        if (!matchingResult) {
-          return {
-            ...validation,
-            isRunning: false
-          };
-        }
-
-        return {
-          ...validation,
-          isRunning: false,
-          last_result: matchingResult.status === 'passed',
-          actual_value: matchingResult.actual_value,
-          error: matchingResult.error,
-          last_run_at: matchingResult.timestamp,
-          execution_time_ms: matchingResult.meta?.execution_time_ms
-        };
-      }));
+      // Process results for metrics
+      const processedResults = processValidationResults(result.results);
 
       // Handle errors if any
       const errorsCount = processedResults.metrics.counts.error;
@@ -379,12 +271,9 @@ const ValidationPage = () => {
 
         setValidationErrors(errorsList);
 
-        // Categorize errors for better messaging
-        const errorCategories = categorizeErrors(errorsList);
-        const primaryError = getPrimaryErrorCategory(errorCategories);
-
+        // Show notification
         showNotification(
-          `${errorsList.length} validation errors encountered: ${primaryError}. See details below.`,
+          `${errorsList.length} validation errors encountered. See details below.`,
           'warning'
         );
       } else {
@@ -400,34 +289,11 @@ const ValidationPage = () => {
           failedCount > 0 ? 'warning' : 'success'
         );
       }
-
-      // Update validation results context
-      if (updateResultsAfterRun) {
-        updateResultsAfterRun(response.results, selectedTable);
-      }
-
-      // Invalidate the validations query to trigger a refetch after a short delay
-      setTimeout(() => {
-        queryClient.invalidateQueries(['table-validations', selectedTable]);
-      }, 500);
     } catch (error) {
       console.error('Error running validations:', error);
-
-      // Update UI to show validations are no longer running
-      setCurrentValidations(prevValidations =>
-        prevValidations.map(v => ({
-          ...v,
-          isRunning: false
-        }))
-      );
-
-      // Categorize the error to provide better feedback
-      const errorType = categorizeSystemError(error);
-
       showNotification(
-        `Failed to run validations: ${errorType.message || "Unknown error"}`,
-        'error',
-        errorType.recommendedAction
+        `Failed to run validations: ${error.message || "Unknown error"}`,
+        'error'
       );
     } finally {
       setLoading('validations', false);
@@ -978,11 +844,11 @@ const ValidationPage = () => {
 
                 {/* Enhanced Validation rule list */}
                 <ValidationRuleList
-                  validations={filteredValidations}
-                  isLoading={validationsQuery.isLoading}
+                  validations={currentValidations}
+                  isLoading={loadingValidations || loadingStates?.validations}
                   onEdit={handleEditValidation}
                   onDebug={handleDebugValidation}
-                  onRefreshList={() => validationsQuery.refetch()}
+                  onRefreshList={refreshValidations}
                   onUpdate={setCurrentValidations}
                   onRunSingle={handleRunSingleValidation}
                   isRunningValidation={loadingStates?.validations}

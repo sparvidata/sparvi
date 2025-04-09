@@ -3,6 +3,7 @@ import { useConnection } from './EnhancedConnectionContext';
 import { validationsAPI } from '../api/enhancedApiService';
 import { processValidationResults, getValidationTrends } from '../utils/validationResultsProcessor';
 import axios from "axios";
+import validationService from "../services/validationService";
 
 // Helper function to process validation summary data into metrics format
 const processValidationSummary = (summary, tableName) => {
@@ -83,21 +84,10 @@ export const ValidationResultsProvider = ({ children }) => {
         isLoadingRules: true
       }));
 
-      console.log(`Fetching validation rules for table: ${tableName}`);
-      const response = await validationsAPI.getRules(
-        tableName,
-        { connectionId }
-      );
+      console.log(`Fetching validation rules for table: ${tableName} using validationService`);
 
-      // Get the rules array
-      let rules = [];
-      if (response?.data?.rules) {
-        rules = response.data.rules;
-      } else if (response?.rules) {
-        rules = response.rules;
-      } else if (Array.isArray(response)) {
-        rules = response;
-      }
+      // Use the validationService instead of direct API call
+      const rules = await validationService.getRules(connectionId, tableName);
 
       setRulesLoaded(true);
       console.log(`Loaded ${rules.length} validation rules for ${tableName}`);
@@ -134,30 +124,20 @@ export const ValidationResultsProvider = ({ children }) => {
       console.log(`Fetching latest validation results for ${tableName}...`);
 
       try {
-        const latestResults = await validationsAPI.getLatestValidationResults(
-          connectionId,
-          tableName
-        );
+        // Use validationService instead of direct API call
+        const latestResults = await validationService.getLatestResults(connectionId, tableName);
 
         console.log("Latest validation results received:", latestResults);
 
-        // Extract the results array depending on the response format
-        let resultsArray = [];
-        if (latestResults?.results && Array.isArray(latestResults.results)) {
-          resultsArray = latestResults.results;
-        } else if (Array.isArray(latestResults)) {
-          resultsArray = latestResults;
-        }
-
-        // Process the results to get metrics and formatted data
-        const processed = processValidationResults(resultsArray, rules);
-        console.log("Processed validation results:", processed);
+        // Extract the results and metrics
+        const resultsArray = latestResults.results || [];
+        const metrics = latestResults.metrics || null;
 
         // Update the state with the new data
         setValidationResults(prev => ({
           ...prev,
           current: rules || [], // Use the rules we have
-          metrics: processed.metrics,
+          metrics: metrics,
           isLoadingResults: false,
           lastFetched: new Date(),
           resultsLoaded: true
@@ -165,7 +145,7 @@ export const ValidationResultsProvider = ({ children }) => {
 
         setResultsLoaded(true);
 
-        return { currentData: resultsArray, metrics: processed.metrics };
+        return { currentData: resultsArray, metrics: metrics };
       } catch (error) {
         // Handle cancelled requests
         if (axios.isCancel(error) || error.cancelled) {
@@ -186,7 +166,7 @@ export const ValidationResultsProvider = ({ children }) => {
 
       return { currentData: [], metrics: null };
     }
-  }, []);
+  }, [setResultsLoaded]);
 
   // Load validation history
   const loadValidationHistory = useCallback(async (tableName, connectionId) => {

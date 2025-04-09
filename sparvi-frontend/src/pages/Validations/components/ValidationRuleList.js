@@ -11,11 +11,11 @@ import {
   TableCellsIcon
 } from '@heroicons/react/24/outline';
 import LoadingSpinner from '../../../components/common/LoadingSpinner';
-import { validationsAPI } from '../../../api/enhancedApiService';
 import { useUI } from '../../../contexts/UIContext';
 import ValidationErrorHandler from './ValidationErrorHandler';
 import { formatDate } from '../../../utils/formatting';
 import { useValidationResults } from '../../../contexts/ValidationResultsContext';
+import validationService from '../../../services/validationService';
 
 const ValidationRuleList = ({
   validations = [],
@@ -38,62 +38,128 @@ const ValidationRuleList = ({
   const [runningRuleId, setRunningRuleId] = useState(null);
   const [filterStatus, setFilterStatus] = useState('all');
   const [localValidations, setLocalValidations] = useState([]);
+  const [loadingState, setLoadingState] = useState('initial');
   const componentIsMounted = useRef(true);
+  const abortController = useRef(null);
 
   console.log("ValidationRuleList received props:", {
     validationsCount: validations.length,
+    localCount: localValidations.length,
     isLoading,
+    loadingState,
     tableName,
-    connectionId,
-    firstRule: validations[0]
+    connectionId
   });
 
-  // Add useEffect to directly fetch validations if necessary
+  // First try to use validations from props
+  useEffect(() => {
+    if (validations && validations.length > 0) {
+      console.log(`Using ${validations.length} validation rules from props`);
+      setLocalValidations(validations);
+      setLoadingState('success');
+    }
+  }, [validations]);
+
+  // If no validations in props, try to fetch them directly from our validation service
   useEffect(() => {
     const fetchValidations = async () => {
-      if (!tableName || !connectionId || validations.length > 0) {
+      // Skip if we already have validations or if we're not in initial/error state
+      if (!tableName ||
+          !connectionId ||
+          validations.length > 0 ||
+          localValidations.length > 0 ||
+          loadingState === 'loading' ||
+          loadingState === 'success') {
         return;
       }
 
+      // Cancel any existing request
+      if (abortController.current) {
+        abortController.current.abort();
+      }
+
+      // Create new abort controller
+      abortController.current = new AbortController();
+
+      setLoadingState('loading');
+      console.log(`Fetching validation rules for table: ${tableName} using validation service`);
+
       try {
-        console.log("Directly fetching validation rules from ValidationRuleList component");
-        const response = await validationsAPI.getRules(
-          tableName,
-          {
-            connectionId,
-            forceFresh: true
-          }
-        );
+        // Use the validation service
+        const rules = await validationService.getRules(connectionId, tableName);
 
-        console.log("Direct API response:", response);
+        if (!componentIsMounted.current) return;
 
-        // Extract rules based on the response format
-        let rules = [];
-        if (Array.isArray(response)) {
-          rules = response;
-        } else if (response?.rules && Array.isArray(response.rules)) {
-          rules = response.rules;
-        } else if (response?.data?.rules && Array.isArray(response.data.rules)) {
-          rules = response.data.rules;
-        }
-
-        if (rules.length > 0) {
-          console.log(`Found ${rules.length} rules, updating local state`);
-          setLocalValidations(rules);
-          if (onUpdate) {
-            onUpdate(rules);
-          }
-        }
+        console.log(`Loaded ${rules.length} validation rules successfully`);
+        setLocalValidations(rules);
+        if (onUpdate) onUpdate(rules);
+        setLoadingState('success');
       } catch (error) {
-        console.error("Error directly fetching validations:", error);
+        // Don't treat cancelled requests as errors
+        if (error.name === 'AbortError' || error.cancelled) {
+          console.log('Validation rules request cancelled');
+          return;
+        }
+
+        console.error("Error fetching validation rules:", error);
+        if (componentIsMounted.current) {
+          setLoadingState('error');
+        }
       }
     };
 
     fetchValidations();
-  }, [tableName, connectionId, validations.length, onUpdate]);
+  }, [tableName, connectionId, validations.length, localValidations.length, loadingState, onUpdate]);
 
-  // Use localValidations if available, otherwise use passed validations
-  const displayValidations = localValidations.length > 0 ? localValidations : validations;
+  // Effect to update validations with results when results are loaded
+  useEffect(() => {
+    if (resultsLoaded && rulesLoaded && localValidations.length > 0) {
+      // Request fresh latest results
+      const loadLatestValidationResults = async () => {
+        if (!componentIsMounted.current) return;
+
+        try {
+          const latestResults = await validationService.getLatestResults(
+            connectionId,
+            tableName
+          );
+
+          if (!componentIsMounted.current) return;
+
+          // Map the results to the existing rules
+          if (latestResults.results && latestResults.results.length > 0) {
+            console.log(`Applying ${latestResults.results.length} results to ${localValidations.length} rules`);
+
+            const resultsMap = {};
+            latestResults.results.forEach(result => {
+              if (result.rule_name) {
+                resultsMap[result.rule_name] = result;
+              }
+            });
+
+            // Update local validations with results
+            setLocalValidations(prev => prev.map(rule => {
+              const matchingResult = resultsMap[rule.rule_name];
+              if (matchingResult) {
+                return {
+                  ...rule,
+                  last_result: matchingResult.error ? null : matchingResult.is_valid,
+                  actual_value: matchingResult.actual_value,
+                  error: matchingResult.error,
+                  last_run_at: matchingResult.run_at || new Date().toISOString()
+                };
+              }
+              return rule;
+            }));
+          }
+        } catch (error) {
+          console.error("Error fetching latest validation results:", error);
+        }
+      };
+
+      loadLatestValidationResults();
+    }
+  }, [resultsLoaded, rulesLoaded, connectionId, tableName, localValidations.length]);
 
   // Add useEffect for cleanup
   useEffect(() => {
@@ -103,8 +169,16 @@ const ValidationRuleList = ({
     // Cleanup function
     return () => {
       componentIsMounted.current = false;
+
+      // Cancel any in-flight requests when component unmounts
+      if (abortController.current) {
+        abortController.current.abort();
+      }
     };
   }, []);
+
+  // Determine which validations to use
+  const displayValidations = localValidations.length > 0 ? localValidations : validations;
 
   // Filter validations based on status
   const filteredValidations = displayValidations.filter(validation => {
@@ -134,21 +208,21 @@ const ValidationRuleList = ({
       setIsDeleting(false);
       setValidationToDelete(null);
 
-      // Try to deactivate on the server
+      // Use validation service to deactivate the rule
       try {
-        await validationsAPI.deactivateRule(
+        await validationService.deactivateRule(
+          connectionId,
           tableName,
-          ruleToDeactivate.rule_name,
-          connectionId
+          ruleToDeactivate.rule_name
         );
 
         // Update UI to remove the deactivated rule
+        const updatedValidations = displayValidations.filter(
+          v => v.rule_name !== ruleToDeactivate.rule_name
+        );
+        setLocalValidations(updatedValidations);
         if (onUpdate) {
-          const updatedValidations = displayValidations.filter(
-            v => v.rule_name !== ruleToDeactivate.rule_name
-          );
           onUpdate(updatedValidations);
-          setLocalValidations(updatedValidations);
         }
 
         showNotification(`Validation "${ruleToDeactivate.rule_name}" deactivated successfully`, 'success');
@@ -179,6 +253,32 @@ const ValidationRuleList = ({
     try {
       if (onRunSingle) {
         await onRunSingle(validation);
+      } else {
+        // Use the validation service to run the validation
+        const result = await validationService.runValidations(connectionId, tableName);
+
+        // Find the specific validation result
+        const specificResult = result.results.find(r =>
+          r.rule_name === validation.rule_name || r.rule_id === validation.id
+        );
+
+        if (specificResult) {
+          // Update the local state with the new result
+          setLocalValidations(prev => prev.map(v => {
+            if (v.rule_name === validation.rule_name || v.id === validation.id) {
+              return {
+                ...v,
+                last_result: specificResult.is_valid,
+                actual_value: specificResult.actual_value,
+                error: specificResult.error,
+                last_run_at: new Date().toISOString(),
+                execution_time_ms: specificResult.execution_time_ms,
+                execution_details: specificResult.execution_details || null
+              };
+            }
+            return v;
+          }));
+        }
       }
     } catch (error) {
       console.error(`Error running validation ${validation.rule_name}:`, error);
@@ -195,7 +295,7 @@ const ValidationRuleList = ({
   };
 
   // If loading rules but nothing loaded yet, show loading state
-  if ((isLoading || isLoadingRules) && !displayValidations.length) {
+  if ((isLoading || loadingState === 'loading') && !displayValidations.length) {
     return (
       <div className="px-4 py-10 flex flex-col items-center justify-center">
         <LoadingSpinner size="lg" />

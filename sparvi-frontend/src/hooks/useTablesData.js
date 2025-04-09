@@ -1,6 +1,7 @@
-// src/hooks/useTablesData.js
 import { useQuery } from '@tanstack/react-query';
 import { schemaAPI } from '../api/enhancedApiService';
+
+let hasLogged = false; // This ensures the log only runs once per session
 
 /**
  * Custom hook to fetch tables data for a connection
@@ -22,21 +23,19 @@ export const useTablesData = (connectionId, options = {}) => {
     refetchInterval: refetchInterval,
     ...queryOptions,
     select: (data) => {
-      // More robust data normalization
-      console.log("Tables data received:", data);
+      if (!hasLogged) {
+        console.log("Tables data received:", data);
+        hasLogged = true;
+      }
 
       // Handle different response structures
       if (data?.data?.tables) {
         return data.data.tables;
-      }
-      else if (data?.tables) {
+      } else if (data?.tables) {
         return data.tables;
-      }
-      else if (Array.isArray(data)) {
+      } else if (Array.isArray(data)) {
         return data;
-      }
-      // Last resort - look through the entire object for an array
-      else if (data && typeof data === 'object') {
+      } else if (data && typeof data === 'object') {
         // Find the first array property
         for (const key in data) {
           if (Array.isArray(data[key])) {
