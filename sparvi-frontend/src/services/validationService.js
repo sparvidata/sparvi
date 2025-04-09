@@ -1,172 +1,237 @@
 import { validationsAPI } from '../api/enhancedApiService';
-import { processValidationResults } from '../utils/validationResultsProcessor';
 
-/**
- * Service for handling validation-related API calls with better error handling and data processing
- */
-export const validationService = {
-  /**
-   * Get the latest validation results for a table
-   * @param {string} connectionId - Connection ID
-   * @param {string} tableName - Table name
-   * @returns {Promise<Object>} Latest validation results
-   */
-  getLatestResults: async (connectionId, tableName) => {
+class ValidationService {
+  // Get validation rules with results
+  async getValidations(connectionId, tableName) {
     if (!connectionId || !tableName) {
-      console.warn('Missing required parameters for getLatestResults');
-      return { results: [], metrics: null };
+      throw new Error('Connection ID and table name are required');
     }
 
     try {
-      console.log(`Fetching latest validation results for ${tableName} with connection ${connectionId}`);
-
-      const response = await validationsAPI.getLatestValidationResults(
-        connectionId,
-        tableName,
-        { forceFresh: true } // Force fresh data to avoid stale cache
-      );
-
-      // Extract the results array based on response format
-      let resultsArray = [];
-      if (response?.results && Array.isArray(response.results)) {
-        resultsArray = response.results;
-      } else if (Array.isArray(response)) {
-        resultsArray = response;
-      }
-
-      console.log(`Received ${resultsArray.length} validation results`);
-
-      // Process the results
-      const processed = processValidationResults(resultsArray);
-
-      return {
-        results: resultsArray,
-        processed: processed.processed,
-        metrics: processed.metrics,
-        tableName,
-        connectionId
-      };
+      // Get validation rules first
+      const rules = await this.getRules(connectionId, tableName);
+      
+      // Then get the latest results for these rules
+      const results = await this.getLatestResults(connectionId, tableName);
+      
+      // Merge rules with results
+      return this.mergeRulesWithResults(rules, results);
     } catch (error) {
-      console.error(`Error fetching validation results: ${error.message}`);
+      console.error('Error fetching validations:', error);
       throw error;
     }
-  },
+  }
 
-  /**
-   * Run validations for a table
-   * @param {string} connectionId - Connection ID
-   * @param {string} tableName - Table name
-   * @returns {Promise<Object>} Validation results
-   */
-  runValidations: async (connectionId, tableName) => {
-    if (!connectionId || !tableName) {
-      console.warn('Missing required parameters for runValidations');
-      return { results: [], success: false };
-    }
-
+  // Get validation rules
+  async getRules(connectionId, tableName) {
     try {
-      console.log(`Running validations for ${tableName} with connection ${connectionId}`);
+      const response = await validationsAPI.getRules(tableName, { connectionId });
+      
+      // Handle different API response formats
+      if (Array.isArray(response)) {
+        return response;
+      } else if (response?.rules) {
+        return response.rules;
+      } else if (response?.data?.rules) {
+        return response.data.rules;
+      }
+      
+      return [];
+    } catch (error) {
+      console.error('Error getting validation rules:', error);
+      throw error;
+    }
+  }
 
+  // Get latest validation results
+  async getLatestResults(connectionId, tableName) {
+    try {
+      const response = await validationsAPI.getLatestValidationResults(
+        connectionId, 
+        tableName
+      );
+      
+      // Handle different API response formats
+      if (response?.results) {
+        return response.results;
+      } else if (Array.isArray(response)) {
+        return response;
+      }
+      
+      return [];
+    } catch (error) {
+      console.error('Error getting latest validation results:', error);
+      throw error;
+    }
+  }
+
+  // Run all validations
+  async runValidations(connectionId, tableName) {
+    try {
       const response = await validationsAPI.runValidations(
         connectionId,
-        tableName,
-        null,
-        { timeout: 60000 } // 1 minute timeout
+        tableName
       );
-
-      // Extract results array
-      let resultsArray = [];
-      if (response?.results && Array.isArray(response.results)) {
-        resultsArray = response.results;
+      
+      // Extract results based on response format
+      let results = [];
+      if (response?.results) {
+        results = response.results;
       } else if (Array.isArray(response)) {
-        resultsArray = response;
+        results = response;
       }
-
-      console.log(`Received ${resultsArray.length} validation results from execution`);
-
-      return {
-        results: resultsArray,
-        success: true
-      };
+      
+      return results;
     } catch (error) {
-      console.error(`Error running validations: ${error.message}`);
+      console.error('Error running validations:', error);
       throw error;
     }
-  },
+  }
 
-  /**
- * Deactivate a validation rule
- * @param {string} connectionId - Connection ID
- * @param {string} tableName - Table name
- * @param {string} ruleName - Rule name to deactivate
- * @returns {Promise<Object>} Success status
- */
-  deactivateRule: async (connectionId, tableName, ruleName) => {
-    if (!connectionId || !tableName || !ruleName) {
-      console.warn('Missing required parameters for deactivateRule');
-      throw new Error('Missing required parameters');
-    }
-
+  // Run a single validation
+  async runSingleValidation(connectionId, tableName, validationRule) {
     try {
-      console.log(`Deactivating rule ${ruleName} for table ${tableName}`);
+      // Run all validations (API doesn't support single rule execution)
+      const results = await this.runValidations(connectionId, tableName);
+      
+      // Find the result for this specific rule
+      return results.find(r => r.rule_name === validationRule.rule_name);
+    } catch (error) {
+      console.error('Error running single validation:', error);
+      throw error;
+    }
+  }
 
-      const response = await validationsAPI.deactivateRule(
+  // Deactivate a validation rule
+  async deactivateRule(connectionId, tableName, ruleName) {
+    try {
+      return await validationsAPI.deactivateRule(
         tableName,
         ruleName,
         connectionId
       );
-
-      return response;
     } catch (error) {
-      console.error(`Error deactivating rule: ${error.message}`);
+      console.error('Error deactivating rule:', error);
       throw error;
     }
-  },
+  }
 
-  /**
-   * Get validation rules for a table
-   * @param {string} connectionId - Connection ID
-   * @param {string} tableName - Table name
-   * @param {object} options - Additional options (forceFresh, etc.)
-   * @returns {Promise<Array>} Validation rules
-   */
-  getRules: async (connectionId, tableName, options = {}) => {
-    if (!connectionId || !tableName) {
-      console.warn('Missing required parameters for getRules');
-      return [];
-    }
-
+  // Generate default validations
+  async generateDefaultValidations(connectionId, tableName) {
     try {
-      console.log(`Fetching validation rules for table: ${tableName} with connection ${connectionId}`);
-
-      const response = await validationsAPI.getRules(
-        tableName,
-        {
-          connectionId,
-          ...options
-        }
+      return await validationsAPI.generateDefaultValidations(
+        connectionId,
+        tableName
       );
-
-      // Extract the rules array based on response format
-      let rules = [];
-      if (Array.isArray(response)) {
-        rules = response;
-      } else if (response?.data?.rules) {
-        rules = response.data.rules;
-      } else if (response?.rules) {
-        rules = response.rules;
-      }
-
-      console.log(`Successfully retrieved ${rules.length} validation rules`);
-      return rules;
     } catch (error) {
-      console.error(`Error fetching validation rules: ${error.message}`);
+      console.error('Error generating default validations:', error);
       throw error;
     }
-  },
+  }
 
+  // Helper to merge rules with their results
+  mergeRulesWithResults(rules, results) {
+    if (!rules || !results) return rules;
+    
+    const resultsMap = {};
+    results.forEach(result => {
+      if (result.rule_name) {
+        resultsMap[result.rule_name] = result;
+      }
+    });
+    
+    return rules.map(rule => {
+      const result = resultsMap[rule.rule_name];
+      if (result) {
+        return {
+          ...rule,
+          last_result: result.error ? null : result.is_valid,
+          actual_value: result.actual_value,
+          error: result.error,
+          last_run_at: result.run_at || new Date().toISOString(),
+          execution_time_ms: result.execution_time_ms
+        };
+      }
+      return rule;
+    });
+  }
 
-};
+  // Calculate validation metrics
+  calculateMetrics(validations) {
+    const total = validations.length;
+    const passed = validations.filter(v => v.last_result === true).length;
+    const failed = validations.filter(v => v.last_result === false).length;
+    const errored = validations.filter(v => v.error).length;
+    const notRun = validations.filter(v => v.last_result === undefined || v.last_result === null).length;
+    
+    // Calculate health score (only for rules that have been run)
+    const runCount = passed + failed;
+    const healthScore = runCount > 0 ? Math.round((passed / runCount) * 100) : 0;
+    
+    return {
+      total,
+      passed,
+      failed,
+      errored,
+      notRun,
+      healthScore,
+      lastRunAt: this.getLastRunTimestamp(validations)
+    };
+  }
 
-export default validationService;
+  // Get the most recent run timestamp
+  getLastRunTimestamp(validations) {
+    const timestamps = validations
+      .filter(v => v.last_run_at)
+      .map(v => new Date(v.last_run_at).getTime());
+    
+    return timestamps.length > 0 ? new Date(Math.max(...timestamps)) : null;
+  }
 
+  // Process validation history into trend data
+  processTrendData(history, days = 30) {
+    if (!history || !history.length) return [];
+    
+    // Group by date
+    const byDate = {};
+    
+    history.forEach(item => {
+      const date = item.run_at ? new Date(item.run_at).toISOString().split('T')[0] : null;
+      if (!date) return;
+      
+      if (!byDate[date]) {
+        byDate[date] = {
+          date,
+          total: 0,
+          passed: 0,
+          failed: 0,
+          error: 0,
+          health_score: 0
+        };
+      }
+      
+      byDate[date].total++;
+      
+      if (item.error) {
+        byDate[date].error++;
+      } else if (item.is_valid === true) {
+        byDate[date].passed++;
+      } else if (item.is_valid === false) {
+        byDate[date].failed++;
+      }
+    });
+    
+    // Calculate health scores and convert to array
+    return Object.values(byDate)
+      .map(day => {
+        const validResults = day.passed + day.failed;
+        if (validResults > 0) {
+          day.health_score = Math.round((day.passed / validResults) * 100);
+        }
+        return day;
+      })
+      .sort((a, b) => a.date.localeCompare(b.date));
+  }
+}
+
+export default new ValidationService();
