@@ -12,36 +12,42 @@ const useAuthenticatedEffect = (effect, dependencies = [], options = {}) => {
 
   useEffect(() => {
     let isMounted = true;
-    let timeoutId = null;
+    let authTimeoutId = null;
 
     const runEffect = async () => {
       try {
-        // Wait for auth to be ready with timeout
-        const authReady = await waitForAuth(timeout);
+        // Create a promise that resolves when auth is ready or times out
+        const authPromise = waitForAuth(timeout);
+        const timeoutPromise = new Promise((_, reject) => {
+          authTimeoutId = setTimeout(() => {
+            reject(new Error('Authentication timed out'));
+          }, timeout);
+        });
 
-        // Only proceed if component is still mounted
+        // Race between auth and timeout
+        const authReady = await Promise.race([authPromise, timeoutPromise]);
+
         if (!isMounted) return;
 
         if (authReady || runWithoutAuth) {
           return effect();
         }
       } catch (error) {
-        console.warn('Auth not ready for effect, but proceeding anyway:', error);
+        console.warn('Auth check failed:', error);
 
-        // If runWithoutAuth is true, run the effect anyway
         if (runWithoutAuth && isMounted) {
           return effect();
         }
+      } finally {
+        if (authTimeoutId) clearTimeout(authTimeoutId);
       }
     };
 
-    // Start the effect
     const cleanup = runEffect();
 
-    // Return cleanup function
     return () => {
       isMounted = false;
-      if (timeoutId) clearTimeout(timeoutId);
+      if (authTimeoutId) clearTimeout(authTimeoutId);
       if (cleanup && typeof cleanup === 'function') {
         cleanup();
       }

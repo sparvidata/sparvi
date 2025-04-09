@@ -64,6 +64,12 @@ const initAuthReadyPromise = () => {
   return authReadyPromise;
 };
 
+const isCancelledRequest = (error) => {
+  return axios.isCancel(error) ||
+         error.name === 'CanceledError' ||
+         error.cancelled === true;
+};
+
 // Function to check if auth is ready
 export const waitForAuth = async (timeoutMs = 5000) => {
   if (authReady) return true;
@@ -297,9 +303,10 @@ const enhancedRequest = async (options) => {
 
     return response.data;
   } catch (error) {
-    // If it's a cancelled request, just rethrow
-    if (axios.isCancel(error) || error.cancelled) {
-      throw new Error(error?.message || 'Request cancelled');
+    // If it's a cancelled request, log it but don't treat it as a full error
+    if (isCancelledRequest(error)) {
+      console.warn(`Request to ${url} was cancelled`, error);
+      return null;
     }
 
     // Log details about the error for debugging
