@@ -29,13 +29,6 @@ const ValidationRuleList = ({
   onRunSingle,
   isRunningValidation = false
 }) => {
-  console.log("ValidationRuleList received props:", {
-    validationsCount: validations.length,
-    isLoading,
-    tableName,
-    connectionId,
-    firstRule: validations[0]
-  });
   const { showNotification } = useUI();
   const { isLoadingRules, rulesLoaded, resultsLoaded } = useValidationResults();
 
@@ -44,7 +37,63 @@ const ValidationRuleList = ({
   const [validationErrors, setValidationErrors] = useState(null);
   const [runningRuleId, setRunningRuleId] = useState(null);
   const [filterStatus, setFilterStatus] = useState('all');
+  const [localValidations, setLocalValidations] = useState([]);
   const componentIsMounted = useRef(true);
+
+  console.log("ValidationRuleList received props:", {
+    validationsCount: validations.length,
+    isLoading,
+    tableName,
+    connectionId,
+    firstRule: validations[0]
+  });
+
+  // Add useEffect to directly fetch validations if necessary
+  useEffect(() => {
+    const fetchValidations = async () => {
+      if (!tableName || !connectionId || validations.length > 0) {
+        return;
+      }
+
+      try {
+        console.log("Directly fetching validation rules from ValidationRuleList component");
+        const response = await validationsAPI.getRules(
+          tableName,
+          {
+            connectionId,
+            forceFresh: true
+          }
+        );
+
+        console.log("Direct API response:", response);
+
+        // Extract rules based on the response format
+        let rules = [];
+        if (Array.isArray(response)) {
+          rules = response;
+        } else if (response?.rules && Array.isArray(response.rules)) {
+          rules = response.rules;
+        } else if (response?.data?.rules && Array.isArray(response.data.rules)) {
+          rules = response.data.rules;
+        }
+
+        if (rules.length > 0) {
+          console.log(`Found ${rules.length} rules, updating local state`);
+          setLocalValidations(rules);
+          if (onUpdate) {
+            onUpdate(rules);
+          }
+        }
+      } catch (error) {
+        console.error("Error directly fetching validations:", error);
+      }
+    };
+
+    fetchValidations();
+  }, [tableName, connectionId, validations.length, onUpdate]);
+
+  // Use localValidations if available, otherwise use passed validations
+  const displayValidations = localValidations.length > 0 ? localValidations : validations;
 
   // Add useEffect for cleanup
   useEffect(() => {
@@ -58,7 +107,7 @@ const ValidationRuleList = ({
   }, []);
 
   // Filter validations based on status
-  const filteredValidations = validations.filter(validation => {
+  const filteredValidations = displayValidations.filter(validation => {
     if (filterStatus === 'all') return true;
     if (filterStatus === 'passed') return validation.last_result === true;
     if (filterStatus === 'failed') return validation.last_result === false;
@@ -95,10 +144,11 @@ const ValidationRuleList = ({
 
         // Update UI to remove the deactivated rule
         if (onUpdate) {
-          const updatedValidations = validations.filter(
+          const updatedValidations = displayValidations.filter(
             v => v.rule_name !== ruleToDeactivate.rule_name
           );
           onUpdate(updatedValidations);
+          setLocalValidations(updatedValidations);
         }
 
         showNotification(`Validation "${ruleToDeactivate.rule_name}" deactivated successfully`, 'success');
@@ -145,7 +195,7 @@ const ValidationRuleList = ({
   };
 
   // If loading rules but nothing loaded yet, show loading state
-  if ((isLoading || isLoadingRules) && !validations.length) {
+  if ((isLoading || isLoadingRules) && !displayValidations.length) {
     return (
       <div className="px-4 py-10 flex flex-col items-center justify-center">
         <LoadingSpinner size="lg" />
@@ -155,7 +205,7 @@ const ValidationRuleList = ({
   }
 
   // If no validations, show empty state
-  if (!validations.length) {
+  if (!displayValidations.length) {
     return (
       <div className="text-center py-10">
         <TableCellsIcon className="mx-auto h-12 w-12 text-secondary-400" />
@@ -168,13 +218,68 @@ const ValidationRuleList = ({
   }
 
   // Show loading state for results but show rules
-  if (rulesLoaded && !resultsLoaded && validations.length > 0) {
+  if (rulesLoaded && !resultsLoaded && displayValidations.length > 0) {
     return (
       <div>
         {/* Same filter UI as before */}
         <div className="p-2 bg-secondary-50 border-b border-secondary-200">
           <div className="flex items-center text-sm">
-            {/* Filter buttons */}
+            <span className="mr-2 text-secondary-700">Filter:</span>
+            <div className="flex space-x-1">
+              <button
+                onClick={() => setFilterStatus('all')}
+                className={`px-2 py-1 rounded ${
+                  filterStatus === 'all' 
+                    ? 'bg-secondary-200 text-secondary-800' 
+                    : 'hover:bg-secondary-100'
+                }`}
+              >
+                All
+              </button>
+              <button
+                onClick={() => setFilterStatus('passed')}
+                className={`px-2 py-1 rounded ${
+                  filterStatus === 'passed' 
+                    ? 'bg-accent-100 text-accent-800' 
+                    : 'hover:bg-secondary-100'
+                }`}
+              >
+                <CheckCircleIcon className="inline h-4 w-4 mr-1" />
+                Passed
+              </button>
+              <button
+                onClick={() => setFilterStatus('failed')}
+                className={`px-2 py-1 rounded ${
+                  filterStatus === 'failed' 
+                    ? 'bg-danger-100 text-danger-800' 
+                    : 'hover:bg-secondary-100'
+                }`}
+              >
+                <XCircleIcon className="inline h-4 w-4 mr-1" />
+                Failed
+              </button>
+              <button
+                onClick={() => setFilterStatus('error')}
+                className={`px-2 py-1 rounded ${
+                  filterStatus === 'error' 
+                    ? 'bg-warning-100 text-warning-800' 
+                    : 'hover:bg-secondary-100'
+                }`}
+              >
+                <ExclamationCircleIcon className="inline h-4 w-4 mr-1" />
+                Errors
+              </button>
+              <button
+                onClick={() => setFilterStatus('notrun')}
+                className={`px-2 py-1 rounded ${
+                  filterStatus === 'notrun' 
+                    ? 'bg-secondary-100 text-secondary-800' 
+                    : 'hover:bg-secondary-100'
+                }`}
+              >
+                Not Run
+              </button>
+            </div>
           </div>
         </div>
 
@@ -182,13 +287,26 @@ const ValidationRuleList = ({
           <table className="min-w-full divide-y divide-secondary-200">
             <thead className="bg-secondary-50">
               <tr>
-                {/* Table headers */}
+                <th scope="col" className="py-3.5 pl-4 pr-3 text-left text-sm font-semibold text-secondary-900 sm:pl-6">
+                  Rule
+                </th>
+                <th scope="col" className="px-3 py-3.5 text-left text-sm font-semibold text-secondary-900">
+                  Status
+                </th>
+                <th scope="col" className="px-3 py-3.5 text-left text-sm font-semibold text-secondary-900">
+                  Last Run
+                </th>
+                <th scope="col" className="px-3 py-3.5 text-left text-sm font-semibold text-secondary-900">
+                  Result
+                </th>
+                <th scope="col" className="relative py-3.5 pl-3 pr-4 sm:pr-6">
+                  <span className="sr-only">Actions</span>
+                </th>
               </tr>
             </thead>
             <tbody className="divide-y divide-secondary-200 bg-white">
-              {validations.map((validation) => (
+              {displayValidations.map((validation) => (
                 <tr key={validation.id || validation.rule_name} className="hover:bg-secondary-50">
-                  {/* Rule name and details column */}
                   <td className="py-4 pl-4 pr-3 text-sm sm:pl-6">
                     <div className="font-medium text-secondary-900">{validation.rule_name}</div>
                     {validation.description && (
@@ -199,7 +317,6 @@ const ValidationRuleList = ({
                     </div>
                   </td>
 
-                  {/* Status column with loading indicator */}
                   <td className="px-3 py-4 text-sm">
                     <div className="inline-flex items-center">
                       <LoadingSpinner size="sm" className="mr-2" />
@@ -207,17 +324,14 @@ const ValidationRuleList = ({
                     </div>
                   </td>
 
-                  {/* Last run column */}
                   <td className="px-3 py-4 text-sm text-secondary-500">
                     —
                   </td>
 
-                  {/* Result column */}
                   <td className="px-3 py-4 text-sm">
                     —
                   </td>
 
-                  {/* Actions column */}
                   <td className="py-4 pl-3 pr-4 text-right text-sm font-medium sm:pr-6">
                     <div className="flex space-x-2 justify-end">
                       {/* Edit button */}
