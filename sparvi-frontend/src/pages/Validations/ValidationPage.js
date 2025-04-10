@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useConnection } from '../../contexts/EnhancedConnectionContext';
 import { useUI } from '../../contexts/UIContext';
@@ -14,6 +14,7 @@ import LoadingSpinner from '../../components/common/LoadingSpinner';
 import EmptyState from '../../components/common/EmptyState';
 import { ClipboardDocumentCheckIcon, ServerIcon } from '@heroicons/react/24/outline';
 import validationService from '../../services/validationService';
+import { schemaAPI } from '../../api/enhancedApiService';
 
 const ValidationPage = () => {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -27,6 +28,7 @@ const ValidationPage = () => {
   const [showDebugHelper, setShowDebugHelper] = useState(false);
   const [selectedValidationForDebug, setSelectedValidationForDebug] = useState(null);
   const [validationErrors, setValidationErrors] = useState(null);
+  const [columnsCache, setColumnsCache] = useState({});
 
   // Set breadcrumbs
   useEffect(() => {
@@ -48,10 +50,49 @@ const ValidationPage = () => {
   const tablesQuery = useTablesData(connectionId, { enabled: !!connectionId });
   const validationData = useValidations(connectionId, selectedTable);
 
+  // Preload columns for selected table
+  const preloadTableColumns = useCallback(async (tableName) => {
+    if (!connectionId || !tableName || columnsCache[tableName]) return;
+
+    try {
+      console.log(`Preloading columns for table: ${tableName}`);
+      const response = await schemaAPI.getColumns(connectionId, tableName);
+
+      // Handle different possible response structures
+      let columnsData = [];
+
+      if (response?.columns && Array.isArray(response.columns)) {
+        columnsData = response.columns;
+      } else if (response?.data?.columns && Array.isArray(response.data.columns)) {
+        columnsData = response.data.columns;
+      } else if (Array.isArray(response)) {
+        columnsData = response;
+      }
+
+      // Update cache
+      setColumnsCache(prev => ({
+        ...prev,
+        [tableName]: columnsData
+      }));
+
+      console.log(`Cached ${columnsData.length} columns for ${tableName}`);
+    } catch (error) {
+      console.error(`Error preloading columns for ${tableName}:`, error);
+    }
+  }, [connectionId, columnsCache]);
+
+  // Preload columns when table is selected
+  useEffect(() => {
+    if (selectedTable) {
+      preloadTableColumns(selectedTable);
+    }
+  }, [selectedTable, preloadTableColumns]);
+
   // Handle table selection
   const handleTableSelect = (tableName) => {
     setSelectedTable(tableName);
     setSearchParams({ table: tableName });
+    preloadTableColumns(tableName);
   };
 
   // Extract validations with errors
@@ -195,6 +236,7 @@ const ValidationPage = () => {
               connectionId={connectionId}
               tableName={selectedTable}
               rule={editingRule}
+              cachedColumns={columnsCache[selectedTable] || []}
               onSave={handleSaveValidation}
               onCancel={() => {
                 setShowEditor(false);

@@ -13,6 +13,7 @@ const ValidationRuleEditor = ({
   connectionId,
   tableName,
   rule = null,
+  cachedColumns = [], // Added cached columns prop
   onSave,
   onCancel
 }) => {
@@ -52,11 +53,37 @@ const ValidationRuleEditor = ({
     const loadColumns = async () => {
       if (!connectionId || !tableName) return;
 
+      // If we have cached columns, use them immediately
+      if (cachedColumns.length > 0) {
+        console.log(`Using ${cachedColumns.length} cached columns for ${tableName}`);
+        setColumns(cachedColumns);
+        return;
+      }
+
       try {
         setLoadingColumns(true);
 
         const response = await schemaAPI.getColumns(connectionId, tableName);
-        setColumns(response.data.columns || []);
+
+        // Add debug log to inspect response structure
+        console.log('Columns response:', response);
+
+        // Handle different possible response structures
+        let columnsData = [];
+
+        if (response?.columns && Array.isArray(response.columns)) {
+          // Direct columns array in response
+          columnsData = response.columns;
+        } else if (response?.data?.columns && Array.isArray(response.data.columns)) {
+          // Nested in data property
+          columnsData = response.data.columns;
+        } else if (Array.isArray(response)) {
+          // Response is the array itself
+          columnsData = response;
+        }
+
+        console.log(`Found ${columnsData.length} columns for table ${tableName}`);
+        setColumns(columnsData);
       } catch (error) {
         console.error(`Error loading columns for ${tableName}:`, error);
         showNotification(`Failed to load columns for ${tableName}`, 'error');
@@ -66,7 +93,7 @@ const ValidationRuleEditor = ({
     };
 
     loadColumns();
-  }, [connectionId, tableName]);
+  }, [connectionId, tableName, cachedColumns, showNotification]);
 
   // Handle input changes
   const handleChange = (e) => {
@@ -292,6 +319,8 @@ const ValidationRuleEditor = ({
                   >
                     {loadingColumns ? (
                       <option>Loading columns...</option>
+                    ) : columns.length === 0 ? (
+                      <option>No columns available</option>
                     ) : (
                       <>
                         <option value="">Select a column</option>
