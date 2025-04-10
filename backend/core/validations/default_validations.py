@@ -444,7 +444,7 @@ def get_outlier_threshold(table_name):
     return 5  # Allow only 5 outliers in small tables
 
 
-def add_default_validations(validation_manager, connection_string: str, table_name: str) -> dict:
+def add_default_validations(validation_manager, connection_string: str, table_name: str, connection_id: str) -> dict:
     """
     Add default validations for a table to the validation manager, avoiding duplicates
 
@@ -452,12 +452,13 @@ def add_default_validations(validation_manager, connection_string: str, table_na
         validation_manager: Instance of ValidationManager
         connection_string: Database connection string
         table_name: Name of the table to add validations for
+        connection_id: Connection ID to associate with rules
 
     Returns:
         Dictionary with count of rules added and skipped
     """
-    # Get existing rules first
-    existing_rules = validation_manager.get_rules(table_name)
+    # Get existing rules first, passing the connection_id
+    existing_rules = validation_manager.get_rules(table_name, connection_id)
     existing_rule_names = {rule['rule_name'] for rule in existing_rules}
 
     # Generate potential new validations
@@ -473,7 +474,8 @@ def add_default_validations(validation_manager, connection_string: str, table_na
                 count_skipped += 1
                 continue
 
-            validation_manager.add_rule(table_name, validation)
+            # Add connection_id to the validation to ensure proper association
+            validation_manager.add_rule(table_name, validation, connection_id)
             count_added += 1
         except Exception as e:
             print(f"Failed to add validation rule {validation['name']}: {str(e)}")

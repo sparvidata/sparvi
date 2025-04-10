@@ -328,8 +328,11 @@ const ValidationRuleEditor = ({
         showNotification('Validation rule created successfully', 'success');
       }
 
-      // Call onSave to refresh rules list
-      if (onSave) onSave();
+      // Wait for onSave to complete before proceeding
+      if (onSave) {
+        await onSave();
+      }
+
     } catch (error) {
       console.error('Error saving validation rule:', error);
       showNotification(`Failed to save validation rule: ${error.response?.data?.error || error.message}`, 'error');

@@ -215,14 +215,19 @@ class SupabaseManager:
 
     # Validation Rules Methods
 
-    def get_validation_rules(self, organization_id: str, table_name: str) -> List[Dict]:
+    def get_validation_rules(self, organization_id: str, table_name: str, connection_id: str = None) -> List[Dict]:
         """Get all validation rules for a specific table"""
         try:
-            response = self.supabase.table("validation_rules") \
+            query = self.supabase.table("validation_rules") \
                 .select("*") \
                 .eq("organization_id", organization_id) \
-                .eq("table_name", table_name) \
-                .execute()
+                .eq("table_name", table_name)
+
+            # Add connection filter if provided
+            if connection_id:
+                query = query.eq("connection_id", connection_id)
+
+            response = query.execute()
 
             rules = response.data or []
 
@@ -316,7 +321,7 @@ class SupabaseManager:
 
                     # Get rule details to know which table/column it belongs to
                     rule_details = None
-                    rule_response = self.supabase.supabase.table("validation_rules") \
+                    rule_response = self.supabase.table("validation_rules") \
                         .select("*") \
                         .eq("id", rule_id) \
                         .execute()
