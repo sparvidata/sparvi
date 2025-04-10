@@ -21,8 +21,11 @@ const ValidationResultsSummary = ({
   // Show loading state if loading or if metrics aren't available yet
   if (isLoading || !metrics) {
     return (
-      <div className="bg-white p-4 rounded-lg shadow flex justify-center items-center h-24">
+      <div className="bg-white p-4 rounded-lg shadow flex flex-col justify-center items-center h-24">
         <LoadingSpinner size="md" />
+        <p className="mt-2 text-secondary-500">
+          Loading validation summary for {tableName || 'this table'}...
+        </p>
       </div>
     );
   }

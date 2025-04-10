@@ -2007,6 +2007,147 @@ def collect_table_metadata_sync(self, table_name):
         }
 
 
+def calculate_current_health_score(rules, organization_id, connection_id):
+    """Calculate the current health score based on latest validation results"""
+    try:
+        supabase_mgr = SupabaseManager()
+        rule_ids = [rule["id"] for rule in rules]
+
+        # Get the latest result for each rule
+        latest_results_query = f"""
+        WITH ranked_results AS (
+            SELECT 
+                rule_id,
+                is_valid,
+                ROW_NUMBER() OVER (PARTITION BY rule_id ORDER BY run_at DESC) as rn
+            FROM validation_results
+            WHERE 
+                organization_id = '{organization_id}'
+                AND rule_id IN ('{"','".join(rule_ids)}')
+        )
+        SELECT
+            COUNT(*) as total,
+            COUNT(*) FILTER (WHERE is_valid = true) as passed
+        FROM ranked_results
+        WHERE rn = 1
+        """
+
+        results = supabase_mgr.supabase.rpc(
+            'execute_sql',
+            {'sql_query': latest_results_query}
+        ).execute()
+
+        if results.data and len(results.data) > 0:
+            data = results.data[0]
+            total = data.get("total", 0)
+            passed = data.get("passed", 0)
+
+            if total > 0:
+                return round((passed / total) * 100, 2)
+
+        return 0
+    except Exception as e:
+        logger.error(f"Error calculating current health score: {str(e)}")
+        return 0
+
+
+def fallback_validation_trends(organization_id, connection_id, table_name, rules, days):
+    """Fallback implementation for validation trends if RPC query fails"""
+    try:
+        # Get a date series for the past X days
+        start_date = (datetime.datetime.now() - datetime.timedelta(days=days))
+        date_series = []
+
+        # Generate date series
+        current = start_date
+        while current <= datetime.datetime.now():
+            date_series.append(current.date().isoformat())
+            current += datetime.timedelta(days=1)
+
+        # Get validation results for each rule
+        supabase_mgr = SupabaseManager()
+        rule_ids = [rule["id"] for rule in rules]
+
+        # Get all validation results for these rules in the date range
+        results = []
+        for rule_id in rule_ids:
+            response = supabase_mgr.supabase.table("validation_results") \
+                .select("*") \
+                .eq("organization_id", organization_id) \
+                .eq("rule_id", rule_id) \
+                .gte("run_at", start_date.isoformat()) \
+                .order("run_at") \
+                .execute()
+
+            if response.data:
+                results.extend(response.data)
+
+        # Process results into daily aggregates
+        daily_results = {}
+
+        for result in results:
+            # Extract date from timestamp
+            run_date = result["run_at"].split("T")[0]
+            rule_id = result["rule_id"]
+
+            # Initialize if needed
+            if run_date not in daily_results:
+                daily_results[run_date] = {}
+
+            # Only keep the latest result for each rule
+            if rule_id not in daily_results[run_date] or result["run_at"] > daily_results[run_date][rule_id]["run_at"]:
+                daily_results[run_date][rule_id] = {
+                    "is_valid": result["is_valid"],
+                    "run_at": result["run_at"]
+                }
+
+        # Build the complete trends data
+        complete_trends = []
+
+        for day in date_series:
+            if day in daily_results:
+                # Count results for this day
+                day_results = daily_results[day]
+                total = len(day_results)
+                passed = sum(1 for r in day_results.values() if r["is_valid"])
+                failed = total - passed
+                health_score = (passed / total * 100) if total > 0 else 0
+
+                complete_trends.append({
+                    "day": day,
+                    "total_validations": total,
+                    "passed": passed,
+                    "failed": failed,
+                    "health_score": round(health_score, 2),
+                    "not_run": len(rules) - total
+                })
+            else:
+                # No data for this day
+                complete_trends.append({
+                    "day": day,
+                    "total_validations": 0,
+                    "passed": 0,
+                    "failed": 0,
+                    "health_score": 0,
+                    "not_run": len(rules)
+                })
+
+        return jsonify({
+            "trends": complete_trends,
+            "table_name": table_name,
+            "days": days,
+            "rule_count": len(rules)
+        })
+
+    except Exception as e:
+        logger.error(f"Error in fallback validation trends: {str(e)}")
+        logger.error(traceback.format_exc())
+        return jsonify({
+            "error": f"Error processing validation trends: {str(e)}",
+            "trends": []
+        }), 500
+
+
 @request_cache
 def get_connection_string(connection):
     """Build and cache a connection string from connection details"""
@@ -5141,6 +5282,161 @@ def get_tables_for_connection(current_user, organization_id, connection_id):
 
     except Exception as e:
         logger.error(f"Error getting tables for connection {connection_id}: {str(e)}")
+        logger.error(traceback.format_exc())
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/connections/<connection_id>/validations/<table_name>/trends", methods=["GET"])
+@token_required
+def get_validation_trends(current_user, organization_id, connection_id, table_name):
+    """Get validation trends over time for a specific table"""
+    try:
+        # Get query parameters
+        days = int(request.args.get("days", 30))  # Default to 30 days
+
+        # Check access to connection
+        connection = connection_access_check(connection_id, organization_id)
+        if not connection:
+            return jsonify({"error": "Connection not found or access denied"}), 404
+
+        # Calculate the start date
+        start_date = (datetime.datetime.now() - datetime.timedelta(days=days)).isoformat()
+
+        # Get rule IDs for this table
+        validation_manager = SupabaseValidationManager()
+        rules = validation_manager.get_rules(organization_id, table_name, connection_id)
+
+        if not rules:
+            return jsonify({
+                "trends": [],
+                "message": "No validation rules found for this table"
+            }), 200
+
+        rule_ids = [rule["id"] for rule in rules]
+
+        # Use Supabase direct SQL queries via RPC for more efficient aggregation
+        supabase_mgr = SupabaseManager()
+
+        # Get the validation results data, optimized for trend analysis
+        try:
+            # This approach uses database functions for efficient aggregation:
+            # For each day and rule, get only the latest result
+
+            # Create date series for complete timeline
+            date_series_query = f"""
+            WITH date_series AS (
+                SELECT generate_series(
+                    date_trunc('day', now() - interval '{days} days'),
+                    date_trunc('day', now()),
+                    '1 day'::interval
+                )::date as day
+            )
+            SELECT day::text FROM date_series
+            """
+
+            # Convert to timestamp UTC format strings for consistent date handling
+            date_series_response = supabase_mgr.supabase.rpc(
+                'execute_sql',
+                {'sql_query': date_series_query}
+            ).execute()
+
+            date_series = [date["day"] for date in date_series_response.data]
+
+            # Get the actual validation results with daily aggregation
+            aggregation_query = f"""
+            WITH daily_results AS (
+                SELECT 
+                    date_trunc('day', run_at)::date as day,
+                    rule_id,
+                    -- Row with max run_at for each rule within each day
+                    FIRST_VALUE(is_valid) OVER (
+                        PARTITION BY date_trunc('day', run_at), rule_id 
+                        ORDER BY run_at DESC
+                    ) as is_valid,
+                    -- Add a row_number to identify the latest record per day per rule
+                    ROW_NUMBER() OVER (
+                        PARTITION BY date_trunc('day', run_at), rule_id 
+                        ORDER BY run_at DESC
+                    ) as rn
+                FROM validation_results
+                WHERE 
+                    organization_id = '{organization_id}'
+                    AND run_at >= '{start_date}'
+                    AND rule_id IN ('{"','".join(rule_ids)}')
+            ),
+            latest_daily_results AS (
+                -- Only keep latest result per day per rule
+                SELECT 
+                    day,
+                    COUNT(*) as total_validations,
+                    COUNT(*) FILTER (WHERE is_valid = true) as passed,
+                    COUNT(*) FILTER (WHERE is_valid = false) as failed
+                FROM daily_results
+                WHERE rn = 1
+                GROUP BY day
+            )
+            SELECT 
+                day::text,
+                total_validations,
+                passed,
+                failed,
+                CASE 
+                    WHEN total_validations > 0 
+                    THEN ROUND((passed::numeric / total_validations) * 100, 2)
+                    ELSE 0 
+                END as health_score
+            FROM latest_daily_results
+            ORDER BY day
+            """
+
+            results_response = supabase_mgr.supabase.rpc(
+                'execute_sql',
+                {'sql_query': aggregation_query}
+            ).execute()
+
+            # Process into a complete time series including days with no data
+            daily_data = {result["day"]: result for result in results_response.data}
+            complete_trends = []
+
+            # Build complete timeline with zeros for missing days
+            for day in date_series:
+                if day in daily_data:
+                    complete_trends.append({
+                        "day": day,
+                        "total_validations": daily_data[day]["total_validations"],
+                        "passed": daily_data[day]["passed"],
+                        "failed": daily_data[day]["failed"],
+                        "health_score": daily_data[day]["health_score"],
+                        "not_run": len(rules) - daily_data[day]["total_validations"]
+                    })
+                else:
+                    # No data for this day, add zeros
+                    complete_trends.append({
+                        "day": day,
+                        "total_validations": 0,
+                        "passed": 0,
+                        "failed": 0,
+                        "health_score": 0,
+                        "not_run": len(rules)
+                    })
+
+            return jsonify({
+                "trends": complete_trends,
+                "table_name": table_name,
+                "days": days,
+                "rule_count": len(rules),
+                "current_health_score": calculate_current_health_score(rules, organization_id, connection_id)
+            })
+
+        except Exception as query_error:
+            logger.error(f"Error executing SQL for trend aggregation: {str(query_error)}")
+            logger.error(traceback.format_exc())
+
+            # Fallback implementation if RPC doesn't work
+            return fallback_validation_trends(organization_id, connection_id, table_name, rules, days)
+
+    except Exception as e:
+        logger.error(f"Error getting validation trends: {str(e)}")
         logger.error(traceback.format_exc())
         return jsonify({"error": str(e)}), 500
 

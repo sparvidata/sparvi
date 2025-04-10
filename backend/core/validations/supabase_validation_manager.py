@@ -164,10 +164,11 @@ class SupabaseValidationManager:
             logger.error(f"Error checking if rule exists: {str(e)}")
             return False
 
-    def execute_rules(self, organization_id: str, connection_string: str, table_name: str) -> List[Dict[str, Any]]:
+    def execute_rules(self, organization_id: str, connection_string: str, table_name: str, connection_id: str = None) -> \
+    List[Dict[str, Any]]:
         """Execute all validation rules for a table against the specified database"""
         # Get all rules for this table
-        rules = self.get_rules(organization_id, table_name)
+        rules = self.get_rules(organization_id, table_name, connection_id)
         results = []
 
         logger.info(f"Executing {len(rules)} validation rules for table {table_name}")
@@ -220,14 +221,15 @@ class SupabaseValidationManager:
 
                             results.append(validation_result)
 
-                            # Store result in Supabase
+                            # Store result in Supabase - pass connection_id
                             try:
                                 logger.info(f"Storing result in Supabase for rule: {rule['rule_name']}")
                                 self.supabase.store_validation_result(
                                     organization_id,
                                     rule['id'],
                                     is_valid,
-                                    actual_value
+                                    actual_value,
+                                    connection_id=connection_id  # Pass connection_id
                                 )
                                 logger.info(f"Result stored successfully")
                             except Exception as storage_error:
@@ -295,7 +297,7 @@ class SupabaseValidationManager:
         """Get the most recent validation results for a table"""
         return self.supabase.get_validation_history(organization_id, table_name, connection_id, limit)
 
-    def update_rule(self, organization_id: str, rule_id: str, rule: Dict[str, Any]) -> bool:
+    def update_rule(self, organization_id: str, rule_id: str, rule: Dict[str, Any], connection_id: str = None) -> bool:
         """Update an existing validation rule without deleting and recreating it"""
         try:
             # Ensure expected_value is stored as a JSON string
@@ -309,11 +311,21 @@ class SupabaseValidationManager:
                 "expected_value": expected_value
             }
 
-            response = self.supabase.table("validation_rules") \
+            # Only include connection_id in the update if provided
+            if connection_id:
+                data["connection_id"] = connection_id
+
+            # Use the supabase client from the manager
+            query = self.supabase.supabase.table("validation_rules") \
                 .update(data) \
                 .eq("id", rule_id) \
-                .eq("organization_id", organization_id) \
-                .execute()
+                .eq("organization_id", organization_id)
+
+            # If connection_id is provided, add it to the query conditions
+            if connection_id:
+                query = query.eq("connection_id", connection_id)
+
+            response = query.execute()
 
             return bool(response.data)  # True if any records were updated
 
@@ -327,7 +339,7 @@ class SupabaseValidationManager:
             rule_id,
             is_valid,
             actual_value=None,
-            connection_id=None,
+            connection_id=None,  # Add default value
             profile_history_id=None
     ):
         """Store validation result in Supabase"""
@@ -344,7 +356,7 @@ class SupabaseValidationManager:
             # Get a Supabase client instance
             supabase_mgr = SupabaseManager()
 
-            # Create a record to insert
+            # Create a record to insert - including connection_id
             validation_result = {
                 "id": str(uuid.uuid4()),
                 "organization_id": organization_id,
@@ -352,7 +364,7 @@ class SupabaseValidationManager:
                 "is_valid": is_valid,
                 "run_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
                 "actual_value": json.dumps(actual_value) if actual_value is not None else None,
-                "connection_id": connection_id,
+                "connection_id": connection_id,  # Include connection_id
                 "profile_history_id": profile_history_id
             }
 

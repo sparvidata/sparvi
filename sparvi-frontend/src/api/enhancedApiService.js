@@ -869,6 +869,24 @@ export const validationsAPI = {
     });
   },
 
+  // Aggregated validation trends per day
+  getValidationTrends: (connectionId, tableName, options = {}) => {
+    const {
+      days = 30,
+      forceFresh = false,
+      requestId = `validations.trends.${connectionId}.${tableName}`
+    } = options;
+
+    return enhancedRequest({
+      url: `/connections/${connectionId}/validations/${tableName}/trends`,
+      params: { days },
+      cacheKey: `validations.trends.${connectionId}.${tableName}.days${days}`,
+      cacheTTL: 10 * 60 * 1000, // 10 minutes
+      requestId,
+      forceFresh
+    });
+  },
+
   // New method for getting latest validation results
   getLatestValidationResults: (connectionId, tableName, options = {}) => {
     const {

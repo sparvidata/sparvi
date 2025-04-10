@@ -263,9 +263,9 @@ const ValidationPage = () => {
                     isLoading={validationData.loading} // Pass loading state
                   />
                   <ValidationResultsTrend
-                    trendData={validationData.trends}
-                    isLoading={validationData.loadingHistory}
+                    connectionId={connectionId}
                     tableName={selectedTable}
+                    days={30}
                   />
                 </div>
               )}

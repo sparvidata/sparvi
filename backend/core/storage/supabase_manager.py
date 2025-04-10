@@ -275,15 +275,21 @@ class SupabaseManager:
             logger.error(f"Error adding validation rule: {str(e)}")
             return None
 
-    def delete_validation_rule(self, organization_id: str, table_name: str, rule_name: str) -> bool:
+    def delete_validation_rule(self, organization_id: str, table_name: str, rule_name: str,
+                               connection_id: str = None) -> bool:
         """Delete a validation rule"""
         try:
-            response = self.supabase.table("validation_rules") \
+            query = self.supabase.table("validation_rules") \
                 .delete() \
                 .eq("organization_id", organization_id) \
                 .eq("table_name", table_name) \
-                .eq("rule_name", rule_name) \
-                .execute()
+                .eq("rule_name", rule_name)
+
+            # Add connection filter if provided
+            if connection_id:
+                query = query.eq("connection_id", connection_id)
+
+            response = query.execute()
 
             return bool(response.data)  # True if any records were deleted
 
@@ -377,10 +383,10 @@ class SupabaseManager:
             return None
 
     def get_validation_history(self, organization_id: str, table_name: str, connection_id: str = None,
-                               limit: int = 30) -> List[Dict]:
+                               limit: int = 30) -> List[Dict[str, Any]]:
         """Get the most recent validation results for a table"""
         try:
-            # First, get the rule IDs for this table
+            # First, get the rule IDs for this table with connection ID
             query = self.supabase.table("validation_rules") \
                 .select("id, rule_name, description, operator, expected_value") \
                 .eq("organization_id", organization_id) \
@@ -399,14 +405,18 @@ class SupabaseManager:
             rule_ids = list(rule_map.keys())
 
             # Get validation results for these rules
-            results_response = self.supabase.table("validation_results") \
+            results_query = self.supabase.table("validation_results") \
                 .select("*") \
                 .eq("organization_id", organization_id) \
-                .in_("rule_id", rule_ids) \
-                .order("run_at", desc=True) \
-                .limit(limit) \
-                .execute()
+                .in_("rule_id", rule_ids)
 
+            # Add connection filter to results query too if provided
+            if connection_id:
+                results_query = results_query.eq("connection_id", connection_id)
+
+            results_response = results_query.order("run_at", desc=True).limit(limit).execute()
+
+            # Process the results
             results = []
             for result in results_response.data:
                 rule = rule_map.get(result["rule_id"], {})
@@ -430,7 +440,8 @@ class SupabaseManager:
                     "expected_value": expected_value,
                     "actual_value": actual_value,
                     "is_valid": result["is_valid"],
-                    "run_at": result["run_at"]
+                    "run_at": result["run_at"],
+                    "connection_id": result.get("connection_id")  # Include connection_id in result
                 })
 
             return results
@@ -452,7 +463,7 @@ class SupabaseManager:
 
         return sanitized
 
-    def update_validation_rule(self, organization_id: str, rule_id: str, rule: Dict) -> bool:
+    def update_validation_rule(self, organization_id: str, rule_id: str, rule: Dict, connection_id: str = None) -> bool:
         """Update an existing validation rule without deleting and recreating it"""
         try:
             # Ensure expected_value is stored as a JSON string
@@ -463,14 +474,24 @@ class SupabaseManager:
                 "description": rule.get("description", ""),
                 "query": rule.get("query", ""),
                 "operator": rule.get("operator", "equals"),
-                "expected_value": expected_value
+                "expected_value": expected_value,
+                # Include connection_id in update if it's provided in rule data
+                "connection_id": rule.get("connection_id", connection_id)
             }
 
-            response = self.supabase.table("validation_rules") \
+            # Remove None values from data
+            data = {k: v for k, v in data.items() if v is not None}
+
+            query = self.supabase.table("validation_rules") \
                 .update(data) \
                 .eq("id", rule_id) \
-                .eq("organization_id", organization_id) \
-                .execute()
+                .eq("organization_id", organization_id)
+
+            # Add connection filter if provided
+            if connection_id:
+                query = query.eq("connection_id", connection_id)
+
+            response = query.execute()
 
             return bool(response.data)  # True if any records were updated
 
