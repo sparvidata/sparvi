@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import validationService from '../services/validationService';
-import {validationsAPI} from "../api/enhancedApiService";
+import { validationsAPI } from "../api/enhancedApiService";
+import { useQueryClient } from '@tanstack/react-query';
 
 export default function useValidations(connectionId, tableName) {
   const [validations, setValidations] = useState([]);
@@ -11,6 +12,7 @@ export default function useValidations(connectionId, tableName) {
   const [runningValidation, setRunningValidation] = useState(false);
   const [runningRuleId, setRunningRuleId] = useState(null);
   const [error, setError] = useState(null);
+  const queryClient = useQueryClient(); // Add query client for cache invalidation
 
   // Load validation rules and results
   const loadValidations = useCallback(async (force = false) => {
@@ -21,6 +23,7 @@ export default function useValidations(connectionId, tableName) {
       setError(null);
 
       const data = await validationService.getValidations(connectionId, tableName);
+      console.log('Loaded validations:', data);
       setValidations(data);
 
       // Calculate metrics
@@ -65,16 +68,23 @@ export default function useValidations(connectionId, tableName) {
     }
   }, [connectionId, tableName]);
 
-  // Run all validations
+  // Run all validations with improved state management
   const runAllValidations = useCallback(async () => {
     if (!connectionId || !tableName) return;
 
     try {
       setRunningValidation(true);
+      setError(null);
 
+      console.log(`Running all validations for ${tableName}...`);
       const results = await validationService.runValidations(connectionId, tableName);
+      console.log('Validation results:', results);
 
-      // Reload validations to get updated data
+      // Invalidate related queries to ensure fresh data
+      queryClient.invalidateQueries(['table-validations', tableName]);
+      queryClient.invalidateQueries(['validations-summary', connectionId]);
+
+      // Force refresh the validation data
       await loadValidations(true);
       await loadHistory();
 
@@ -86,9 +96,9 @@ export default function useValidations(connectionId, tableName) {
     } finally {
       setRunningValidation(false);
     }
-  }, [connectionId, tableName, loadValidations, loadHistory]);
+  }, [connectionId, tableName, loadValidations, loadHistory, queryClient]);
 
-  // Run a single validation
+  // Run a single validation with improved refreshing
   const runSingleValidation = useCallback(async (validationRule) => {
     if (!connectionId || !tableName || !validationRule) return;
 
@@ -101,7 +111,7 @@ export default function useValidations(connectionId, tableName) {
         validationRule
       );
 
-      // Update the validation in the list
+      // If we have a result, update the validation in the list immediately
       if (result) {
         setValidations(prev => prev.map(v => {
           if (v.rule_name === validationRule.rule_name) {
@@ -118,22 +128,28 @@ export default function useValidations(connectionId, tableName) {
         }));
 
         // Update metrics
-        const updatedMetrics = validationService.calculateMetrics(
-          validations.map(v => {
-            if (v.rule_name === validationRule.rule_name) {
-              return {
-                ...v,
-                last_result: result.error ? null : result.is_valid,
-                actual_value: result.actual_value,
-                error: result.error,
-                last_run_at: new Date().toISOString()
-              };
-            }
-            return v;
-          })
-        );
+        const updatedValidations = validations.map(v => {
+          if (v.rule_name === validationRule.rule_name) {
+            return {
+              ...v,
+              last_result: result.error ? null : result.is_valid,
+              actual_value: result.actual_value,
+              error: result.error,
+              last_run_at: new Date().toISOString()
+            };
+          }
+          return v;
+        });
+
+        const updatedMetrics = validationService.calculateMetrics(updatedValidations);
         setMetrics(updatedMetrics);
+
+        // Also refresh history data
+        loadHistory();
       }
+
+      // Invalidate related queries
+      queryClient.invalidateQueries(['table-validations', tableName]);
 
       return result;
     } catch (err) {
@@ -142,11 +158,16 @@ export default function useValidations(connectionId, tableName) {
     } finally {
       setRunningRuleId(null);
     }
-  }, [connectionId, tableName, validations]);
+  }, [connectionId, tableName, validations, loadHistory, queryClient]);
 
   // Load data when dependencies change
   useEffect(() => {
     if (connectionId && tableName) {
+      // Set loading immediately when table or connection changes
+      setLoading(true);
+      setLoadingHistory(true);
+
+      // Load data
       loadValidations();
       loadHistory();
     }

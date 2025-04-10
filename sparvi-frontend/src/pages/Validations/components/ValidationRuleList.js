@@ -78,9 +78,19 @@ const ValidationRuleList = ({
   };
 
   // Handle running a single validation
-  const handleRunSingle = (validation) => {
-    if (onRunSingle) {
-      onRunSingle(validation);
+  const handleRunSingle = async (validation) => {
+    try {
+      if (onRunSingle) {
+        await onRunSingle(validation);
+
+        // Force refresh the list after running
+        if (onRefreshList) {
+          onRefreshList();
+        }
+      }
+    } catch (error) {
+      console.error('Error running validation:', error);
+      showNotification(`Error running validation: ${error.message}`, 'error');
     }
   };
 
@@ -90,12 +100,57 @@ const ValidationRuleList = ({
     return formatDate(timestamp, true);
   };
 
-  // If loading rules but nothing loaded yet, show loading state
-  if (isLoading && !validations.length) {
+  // If loading, show loading state with the spinner overlay
+  if (isLoading) {
     return (
-      <div className="px-4 py-10 flex flex-col items-center justify-center">
-        <LoadingSpinner size="lg" />
-        <p className="mt-4 text-secondary-500">Loading validation rules...</p>
+      <div className="bg-white shadow rounded-lg relative min-h-[200px]">
+        {/* Keep the filter UI */}
+        <div className="p-2 bg-secondary-50 border-b border-secondary-200">
+          <div className="flex items-center text-sm">
+            <span className="mr-2 text-secondary-700">Filter:</span>
+            <div className="flex space-x-1">
+              <button
+                onClick={() => setFilterStatus('all')}
+                className="px-2 py-1 rounded bg-secondary-200 text-secondary-800"
+              >
+                All
+              </button>
+              <button
+                onClick={() => setFilterStatus('passed')}
+                className="px-2 py-1 rounded hover:bg-secondary-100"
+              >
+                <CheckCircleIcon className="inline h-4 w-4 mr-1" />
+                Passed
+              </button>
+              <button
+                onClick={() => setFilterStatus('failed')}
+                className="px-2 py-1 rounded hover:bg-secondary-100"
+              >
+                <XCircleIcon className="inline h-4 w-4 mr-1" />
+                Failed
+              </button>
+              <button
+                onClick={() => setFilterStatus('error')}
+                className="px-2 py-1 rounded hover:bg-secondary-100"
+              >
+                <ExclamationCircleIcon className="inline h-4 w-4 mr-1" />
+                Errors
+              </button>
+              <button
+                onClick={() => setFilterStatus('notrun')}
+                className="px-2 py-1 rounded hover:bg-secondary-100"
+              >
+                Not Run
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* Loading overlay with spinner */}
+        <div className="px-4 py-10 flex flex-col items-center justify-center">
+          <LoadingSpinner size="lg" />
+          <p className="mt-4 text-secondary-500">Loading validation rules for {tableName}...</p>
+        </div>
       </div>
     );
   }

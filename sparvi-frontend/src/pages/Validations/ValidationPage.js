@@ -94,6 +94,24 @@ const ValidationPage = () => {
     setEditingRule(null);
   };
 
+  // Handle running all validations
+  const handleRunAll = async () => {
+    try {
+      showNotification('Running validations...', 'info');
+
+      // Run all validations
+      await validationData.runAllValidations();
+
+      // Force refresh validations data
+      await validationData.loadValidations(true);
+
+      // Show success notification
+      showNotification('Validations completed successfully', 'success');
+    } catch (err) {
+      showNotification(`Failed to run validations: ${err.message}`, 'error');
+    }
+  };
+
   // If no connections, show empty state
   if (!activeConnection) {
     return (
@@ -194,6 +212,7 @@ const ValidationPage = () => {
                     tableName={selectedTable}
                     onRunAll={validationData.runAllValidations}
                     isRunning={validationData.runningValidation}
+                    isLoading={validationData.loading} // Pass loading state
                   />
                   <ValidationResultsTrend
                     trendData={validationData.trends}
@@ -245,7 +264,7 @@ const ValidationPage = () => {
                 {/* Enhanced Validation rule list */}
                 <ValidationRuleList
                   validations={validationData.validations}
-                  isLoading={validationData.loading}
+                  isLoading={validationData.loading} // This was already passed but make sure it's used
                   onEdit={(rule) => {
                     setEditingRule(rule);
                     setShowEditor(true);

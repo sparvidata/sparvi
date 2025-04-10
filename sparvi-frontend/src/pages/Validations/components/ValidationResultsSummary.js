@@ -15,9 +15,11 @@ const ValidationResultsSummary = ({
   onRunAll,
   isRunning = false,
   connectionId,
-  tableName
+  tableName,
+  isLoading = false
 }) => {
-  if (!metrics) {
+  // Show loading state if loading or if metrics aren't available yet
+  if (isLoading || !metrics) {
     return (
       <div className="bg-white p-4 rounded-lg shadow flex justify-center items-center h-24">
         <LoadingSpinner size="md" />

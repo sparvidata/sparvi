@@ -46,18 +46,22 @@ class ValidationService {
   // Get latest validation results
   async getLatestResults(connectionId, tableName) {
     try {
+      console.log(`Getting latest validation results for ${tableName}...`);
       const response = await validationsAPI.getLatestValidationResults(
-        connectionId, 
-        tableName
+        connectionId,
+        tableName,
+        { forceFresh: true } // Add forceFresh option to bypass cache
       );
-      
+
       // Handle different API response formats
       if (response?.results) {
         return response.results;
       } else if (Array.isArray(response)) {
         return response;
+      } else if (response?.data?.results) {
+        return response.data.results;
       }
-      
+
       return [];
     } catch (error) {
       console.error('Error getting latest validation results:', error);
@@ -66,22 +70,39 @@ class ValidationService {
   }
 
   // Run all validations
-  async runValidations(connectionId, tableName) {
+  async runValidations(connectionId, tableName, connectionString = null) {
     try {
+      console.log(`Running validations for connection ${connectionId}, table ${tableName}`);
       const response = await validationsAPI.runValidations(
         connectionId,
-        tableName
+        tableName,
+        connectionString  // Pass the connectionString parameter
       );
-      
-      // Extract results based on response format
+
+      // Extract results based on response format and normalize
       let results = [];
       if (response?.results) {
         results = response.results;
       } else if (Array.isArray(response)) {
         results = response;
+      } else if (response?.data?.results) {
+        results = response.data.results;
       }
-      
-      return results;
+
+      console.log(`Received ${results.length} validation results`);
+
+      // Process the results to ensure they have consistent format
+      const processedResults = results.map(result => ({
+        rule_name: result.rule_name,
+        is_valid: result.is_valid,
+        actual_value: result.actual_value,
+        expected_value: result.expected_value,
+        error: result.error,
+        run_at: result.run_at || new Date().toISOString(),
+        execution_time_ms: result.execution_time_ms
+      }));
+
+      return processedResults;
     } catch (error) {
       console.error('Error running validations:', error);
       throw error;
