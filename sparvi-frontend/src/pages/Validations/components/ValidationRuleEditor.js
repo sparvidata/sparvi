@@ -1,5 +1,3 @@
-// Updated ValidationRuleEditor.js with working Simple Builder functionality
-
 import React, { useState, useEffect } from 'react';
 import {
   XMarkIcon,
@@ -328,9 +326,10 @@ const ValidationRuleEditor = ({
         showNotification('Validation rule created successfully', 'success');
       }
 
-      // Wait for onSave to complete before proceeding
+      // Call onSave immediately without awaiting
       if (onSave) {
-        await onSave();
+        // Don't await here, just trigger the function
+        onSave();
       }
 
     } catch (error) {

@@ -129,10 +129,16 @@ const ValidationPage = () => {
   };
 
   // Handle saving a validation rule
-  const handleSaveValidation = async () => {
-    await validationData.loadValidations(true);
+  const handleSaveValidation = () => {
+    // First close the editor immediately
     setShowEditor(false);
     setEditingRule(null);
+
+    // Then load validations in the background
+    validationData.loadValidations(true).catch(err => {
+      console.error('Error reloading validations:', err);
+      showNotification('Rule was saved, but there was an error refreshing the list', 'warning');
+    });
   };
 
   // Handle running all validations
