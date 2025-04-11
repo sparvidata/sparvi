@@ -29,6 +29,7 @@ const ValidationPage = () => {
   const [selectedValidationForDebug, setSelectedValidationForDebug] = useState(null);
   const [validationErrors, setValidationErrors] = useState(null);
   const [columnsCache, setColumnsCache] = useState({});
+  const [forceRender, setForceRender] = useState(false); // Used to force re-renders
 
   // Set breadcrumbs
   useEffect(() => {
@@ -99,7 +100,7 @@ const ValidationPage = () => {
   const errorValidations = useMemo(() => {
     if (!validationData.validations) return [];
     return validationData.validations.filter(v => v.error);
-  }, [validationData.validations]);
+  }, [validationData.validations, forceRender]); // Add forceRender to dependencies
 
   // Set validation errors when they occur
   useEffect(() => {
@@ -158,6 +159,23 @@ const ValidationPage = () => {
       showNotification(`Failed to run validations: ${err.message}`, 'error');
     }
   };
+
+  // Handle optimistic UI updates to validation list
+  const handleUpdateValidations = useCallback((updatedValidations) => {
+    if (!validationData) return;
+
+    // Update the validations in the hook's data
+    validationData.validations = updatedValidations;
+
+    // Force a re-render
+    setForceRender(prev => !prev);
+
+    // Update metrics
+    if (validationData.metrics) {
+      const updatedMetrics = validationService.calculateMetrics(updatedValidations);
+      validationData.metrics = updatedMetrics;
+    }
+  }, [validationData]);
 
   // If no connections, show empty state
   if (!activeConnection) {
@@ -309,10 +327,10 @@ const ValidationPage = () => {
                   </div>
                 )}
 
-                {/* Enhanced Validation rule list */}
+                {/* Enhanced Validation rule list with optimistic updates */}
                 <ValidationRuleList
                   validations={validationData.validations}
-                  isLoading={validationData.loading} // This was already passed but make sure it's used
+                  isLoading={validationData.loading}
                   onEdit={(rule) => {
                     setEditingRule(rule);
                     setShowEditor(true);
@@ -322,6 +340,7 @@ const ValidationPage = () => {
                     setShowDebugHelper(true);
                   }}
                   onRefreshList={() => validationData.loadValidations(true)}
+                  onUpdateValidations={handleUpdateValidations} // New prop for optimistic updates
                   tableName={selectedTable}
                   connectionId={connectionId}
                   onRunSingle={validationData.runSingleValidation}
