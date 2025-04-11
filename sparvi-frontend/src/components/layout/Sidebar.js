@@ -21,12 +21,12 @@ const Sidebar = () => {
   const navigation = [
     { name: 'Dashboard', icon: HomeIcon, href: '/dashboard', exact: true },
     { name: 'Connections', icon: ServerIcon, href: '/connections' },
-    { name: 'Data Explorer', icon: TableCellsIcon, href: '/explorer' },
+    // { name: 'Data Explorer', icon: TableCellsIcon, href: '/explorer' },
     { name: 'Validations', icon: ClipboardDocumentCheckIcon, href: '/validations' },
     { name: 'Metadata', icon: CommandLineIcon, href: '/metadata' },
-    { name: 'Analytics', icon: ChartBarIcon, href: '/analytics' },
-    { name: 'Admin', icon: ShieldCheckIcon, href: '/admin' },
-    { name: 'Settings', icon: Cog6ToothIcon, href: '/settings' },
+    // { name: 'Analytics', icon: ChartBarIcon, href: '/analytics' },
+    // { name: 'Admin', icon: ShieldCheckIcon, href: '/admin' },
+    // { name: 'Settings', icon: Cog6ToothIcon, href: '/settings' },
   ];
 
   // Function to check if a nav item is active

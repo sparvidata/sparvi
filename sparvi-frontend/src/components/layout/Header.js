@@ -160,17 +160,17 @@ const Header = () => {
 
         {/* Right section with notifications and user menu */}
         <div className="flex items-center">
-          {/* Theme toggle */}
-          <button
-            onClick={toggleTheme}
-            className="p-1 rounded-full text-secondary-400 hover:text-secondary-500 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500"
-          >
-            {theme === 'dark' ? (
-              <SunIcon className="h-6 w-6" aria-hidden="true" />
-            ) : (
-              <MoonIcon className="h-6 w-6" aria-hidden="true" />
-            )}
-          </button>
+          {/*/!* Theme toggle *!/*/}
+          {/*<button*/}
+          {/*  onClick={toggleTheme}*/}
+          {/*  className="p-1 rounded-full text-secondary-400 hover:text-secondary-500 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500"*/}
+          {/*>*/}
+          {/*  {theme === 'dark' ? (*/}
+          {/*    <SunIcon className="h-6 w-6" aria-hidden="true" />*/}
+          {/*  ) : (*/}
+          {/*    <MoonIcon className="h-6 w-6" aria-hidden="true" />*/}
+          {/*  )}*/}
+          {/*</button>*/}
 
           {/* Notifications */}
           <button

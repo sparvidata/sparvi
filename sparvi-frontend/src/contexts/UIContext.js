@@ -13,7 +13,8 @@ export const UIProvider = ({ children }) => {
   const [isMobile, setIsMobile] = useState(false);
 
   // Theme state
-  const [theme, setTheme] = useState(localStorage.getItem('sparvi-theme') || 'sparvi');
+  // const [theme, setTheme] = useState(localStorage.getItem('sparvi-theme') || 'sparvi');
+  const [theme, setTheme] = useState('sparvi'); // Always use light theme
 
   // Toast notifications
   const [notifications, setNotifications] = useState([]);
