@@ -50,48 +50,41 @@ const ValidationRuleList = ({
     setIsDeleting(true);
   };
 
-  // Deactivate Validation with optimistic UI update
+  // Deactivate Validation with simplified implementation
   const handleDeactivateValidation = async () => {
-    if (!validationToDelete || !tableName) return;
+    if (!validationToDelete || !tableName) {
+      console.error("Missing validation to delete or table name");
+      return;
+    }
 
     try {
       // Store rule info for later use
       const ruleToDeactivate = { ...validationToDelete };
 
-      // Close the modal immediately
+      // Close the modal immediately to improve UX
       setIsDeleting(false);
       setValidationToDelete(null);
 
-      // Optimistically remove the rule from the list by updating the parent's state
-      if (typeof onUpdateValidations === 'function') {
-        // Filter out the deactivated rule
-        const updatedValidations = validations.filter(
-          rule => (rule.id !== ruleToDeactivate.id) &&
-                 (rule.rule_name !== ruleToDeactivate.rule_name)
-        );
+      console.log("Deactivating rule:", ruleToDeactivate.rule_name);
 
-        // Update parent component's state
-        onUpdateValidations(updatedValidations);
-      }
-
-      // Now make the actual API call
+      // Make the API call
       await validationService.deactivateRule(
         connectionId,
         tableName,
         ruleToDeactivate.rule_name
       );
 
+      // Show success notification
       showNotification(`Validation "${ruleToDeactivate.rule_name}" deactivated successfully`, 'success');
 
-      // No need to refresh the list for successful case since we've already updated it optimistically
+      // Refresh the list to get the updated state
+      if (onRefreshList) {
+        console.log("Refreshing validation list after deactivation");
+        onRefreshList();
+      }
     } catch (error) {
       console.error('Error in deactivation operation:', error);
       showNotification(`Error deactivating rule: ${error.message}`, 'error');
-
-      // Since optimistic update failed, refresh the list to get the correct state
-      if (onRefreshList) {
-        onRefreshList();
-      }
     }
   };
 

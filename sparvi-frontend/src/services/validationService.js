@@ -129,12 +129,21 @@ class ValidationService {
 
   // Deactivate a validation rule
   async deactivateRule(connectionId, tableName, ruleName) {
+    if (!connectionId || !tableName || !ruleName) {
+      throw new Error('Missing required parameters for deactivating rule');
+    }
+
+    console.log(`Attempting to deactivate rule "${ruleName}" for table "${tableName}"`);
+
     try {
-      return await validationsAPI.deactivateRule(
+      const response = await validationsAPI.deactivateRule(
         tableName,
         ruleName,
         connectionId
       );
+
+      console.log("Deactivation API response:", response);
+      return response;
     } catch (error) {
       console.error('Error deactivating rule:', error);
       throw error;

@@ -752,15 +752,17 @@ export const validationsAPI = {
     });
   },
 
-  // Add a new method for deactivating a rule
   deactivateRule: (tableName, ruleName, connectionId) => {
     if (!connectionId) {
       console.warn('connectionId is required for deactivateRule');
+      return Promise.reject(new Error('connectionId is required'));
     }
 
+    console.log(`Calling API to deactivate rule "${ruleName}" for table "${tableName}"`);
+
     return enhancedRequest({
-      method: 'PUT', // Use PUT instead of DELETE
-      url: '/validations/deactivate', // New endpoint for deactivation
+      method: 'PUT', // Changed from POST to PUT
+      url: '/validations/deactivate',
       params: {
         table: tableName,
         rule_name: ruleName,
@@ -770,7 +772,11 @@ export const validationsAPI = {
     }).then(response => {
       // Invalidate rules cache for this table
       clearCacheItem(`validations.rules.${tableName}`);
+      console.log("Deactivation API call successful");
       return response;
+    }).catch(error => {
+      console.error(`API error deactivating rule "${ruleName}":`, error);
+      throw error;
     });
   },
 
