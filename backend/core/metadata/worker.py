@@ -28,7 +28,7 @@ class MetadataTask:
         self.connection_id = connection_id
         self.params = params or {}
         self.priority = priority
-        self.created_at = datetime.now()
+        self.created_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
         self.status = "pending"
         self.result = None
         self.error = None
@@ -246,7 +246,7 @@ class MetadataWorker:
                 return
 
             self.active = True
-            self.stats["start_time"] = datetime.now()
+            self.stats["start_time"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
 
             # Start worker threads
             for i in range(self.max_workers):
@@ -497,7 +497,7 @@ class MetadataWorker:
                 # Add new table statistics
                 stats_by_table[table_name] = {
                     "column_statistics": statistics,
-                    "collected_at": datetime.now().isoformat()
+                    "collected_at": datetime.datetime.now(datetime.timezone.utc).isoformat()
                 }
 
             # Store updated statistics
@@ -507,7 +507,7 @@ class MetadataWorker:
             stats_by_table = {
                 table_name: {
                     "column_statistics": statistics,
-                    "collected_at": datetime.now().isoformat()
+                    "collected_at": datetime.datetime.now(datetime.timezone.utc).isoformat()
                 }
             }
 
@@ -528,7 +528,7 @@ class MetadataWorker:
                 "task": task.to_dict(),
                 "result": task.result,
                 "error": task.error,
-                "completed_at": datetime.now().isoformat()
+                "completed_at": datetime.datetime.now(datetime.timezone.utc).isoformat()
             }
 
             # Trim history if needed
@@ -565,7 +565,7 @@ class MetadataWorker:
 
             # Calculate uptime
             if stats["start_time"]:
-                uptime = datetime.now() - stats["start_time"]
+                uptime = datetime.datetime.now(datetime.timezone.utc).isoformat() - stats["start_time"]
                 stats["uptime_seconds"] = uptime.total_seconds()
 
             # Add active workers

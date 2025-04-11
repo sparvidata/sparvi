@@ -546,7 +546,7 @@ class SupabaseManager:
                 return False
 
             # Add updated_at timestamp
-            update_dict['updated_at'] = datetime.datetime.now().isoformat()
+            update_dict['updated_at'] = datetime.datetime.now(datetime.timezone.utc).isoformat()
 
             response = self.supabase.table("profiles") \
                 .update(update_dict) \
@@ -564,7 +564,7 @@ class SupabaseManager:
         try:
             # Generate a secure invite token
             invite_token = secrets.token_urlsafe(32)
-            expires_at = (datetime.datetime.now() + datetime.timedelta(days=7)).isoformat()
+            expires_at = (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=7)).isoformat()
 
             invite_data = {
                 "organization_id": organization_id,
@@ -574,7 +574,7 @@ class SupabaseManager:
                 "last_name": last_name,
                 "invite_token": invite_token,
                 "expires_at": expires_at,
-                "created_at": datetime.datetime.now().isoformat()
+                "created_at": datetime.datetime.now(datetime.timezone.utc).isoformat()
             }
 
             response = self.supabase.table("user_invites").insert(invite_data).execute()
@@ -633,7 +633,7 @@ class SupabaseManager:
                 return False
 
             # Add updated_at timestamp
-            update_dict['updated_at'] = datetime.datetime.now().isoformat()
+            update_dict['updated_at'] = datetime.datetime.now(datetime.timezone.utc).isoformat()
 
             response = self.supabase.table("organizations") \
                 .update(update_dict) \
@@ -654,7 +654,7 @@ class SupabaseManager:
                 "organization_id": organization_id,
                 "table_name": table_name,
                 "connection_string": connection_string,  # Already sanitized
-                "timestamp": datetime.datetime.now().isoformat()
+                "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat()
             }
 
             # Insert access log
@@ -730,7 +730,7 @@ class SupabaseManager:
             # Build the update data
             update_data = {
                 "is_active": False,
-                "updated_at": datetime.datetime.now().isoformat()
+                "updated_at": datetime.datetime.now(datetime.timezone.utc).isoformat()
             }
 
             # Start the query builder

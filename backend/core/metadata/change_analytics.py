@@ -57,7 +57,7 @@ class MetadataChangeAnalytics:
                 "object_type": object_type,
                 "object_name": object_name,
                 "change_detected": change_detected,
-                "check_timestamp": datetime.now().isoformat(),
+                "check_timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
                 "refresh_interval_hours": refresh_interval_hours,
                 "organization_id": organization_id,
                 "details": json.dumps(details) if details else json.dumps({})
@@ -102,7 +102,7 @@ class MetadataChangeAnalytics:
                 return {"frequency": "unknown", "error": "No Supabase manager"}
 
             # Calculate start date
-            start_date = (datetime.now() - timedelta(days=time_period_days)).isoformat()
+            start_date = (datetime.datetime.now(datetime.timezone.utc)- timedelta(days=time_period_days)).isoformat()
 
             # Query change records
             response = self.supabase_manager.supabase.table("metadata_change_analytics") \

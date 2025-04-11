@@ -40,7 +40,7 @@ class MetadataStorageService:
                     "connection_id": connection_id,
                     "metadata_type": "tables",
                     "metadata": metadata,
-                    "collected_at": datetime.datetime.now().isoformat(),
+                    "collected_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
                     "refresh_frequency": "1 day"
                 }).execute()
             except Exception as conflict_error:
@@ -50,7 +50,7 @@ class MetadataStorageService:
                     response = self.supabase.table("connection_metadata") \
                         .update({
                         "metadata": metadata,
-                        "collected_at": datetime.datetime.now().isoformat()
+                        "collected_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
                     }) \
                         .eq("connection_id", connection_id) \
                         .eq("metadata_type", "tables") \
@@ -96,7 +96,7 @@ class MetadataStorageService:
                     response = self.supabase.table("connection_metadata") \
                         .update({
                         "metadata": metadata,
-                        "collected_at": datetime.datetime.now().isoformat()
+                        "collected_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
                     }) \
                         .eq("connection_id", connection_id) \
                         .eq("metadata_type", "columns") \
@@ -107,7 +107,7 @@ class MetadataStorageService:
                         "connection_id": connection_id,
                         "metadata_type": "columns",
                         "metadata": metadata,
-                        "collected_at": datetime.datetime.now().isoformat(),
+                        "collected_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
                         "refresh_frequency": "1 day"
                     }).execute()
             except Exception as e:
@@ -166,7 +166,7 @@ class MetadataStorageService:
                     response = self.supabase.table("connection_metadata") \
                         .update({
                         "metadata": metadata,
-                        "collected_at": datetime.datetime.now().isoformat()
+                        "collected_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
                     }) \
                         .eq("connection_id", connection_id) \
                         .eq("metadata_type", "statistics") \
@@ -177,7 +177,7 @@ class MetadataStorageService:
                         "connection_id": connection_id,
                         "metadata_type": "statistics",
                         "metadata": metadata,
-                        "collected_at": datetime.datetime.now().isoformat(),
+                        "collected_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
                         "refresh_frequency": "1 day"
                     }).execute()
             except Exception as e:

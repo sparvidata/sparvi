@@ -76,7 +76,7 @@ class SupabaseProfileHistoryManager:
                 "profile_id": user_id,
                 "table_name": table_name,
                 "connection_id": connection_id,
-                "collected_at": datetime.now().isoformat(),
+                "collected_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
                 "data": profile_data_parsed  # Use 'data' column instead of 'profile_data'
             }
 
@@ -222,7 +222,7 @@ class SupabaseProfileHistoryManager:
             logger.info(f"Getting trend data for table {table_name} over {days} days")
 
             # Calculate the date range
-            start_date = (datetime.now() - timedelta(days=days)).isoformat()
+            start_date = (datetime.datetime.now(datetime.timezone.utc) - timedelta(days=days)).isoformat()
 
             # Query Supabase for trend data - only select collected_at and data
             query = self.supabase.table("profiling_history") \

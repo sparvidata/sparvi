@@ -56,7 +56,7 @@ class SchemaChangeDetector:
             changes.append({
                 "type": "table_added",
                 "table": table_name,
-                "timestamp": datetime.now().isoformat()
+                "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat()
             })
 
         # Find removed tables
@@ -64,7 +64,7 @@ class SchemaChangeDetector:
             changes.append({
                 "type": "table_removed",
                 "table": table_name,
-                "timestamp": datetime.now().isoformat()
+                "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat()
             })
 
         # Check column changes in tables that exist in both schemas
@@ -137,7 +137,7 @@ class SchemaChangeDetector:
                     "type": col_info.get("type", "unknown"),
                     "nullable": col_info.get("nullable", None)
                 },
-                "timestamp": datetime.now().isoformat()
+                "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat()
             })
 
         # Find removed columns
@@ -150,7 +150,7 @@ class SchemaChangeDetector:
                 "details": {
                     "type": col_info.get("type", "unknown")
                 },
-                "timestamp": datetime.now().isoformat()
+                "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat()
             })
 
         # Check for column type or property changes
@@ -168,7 +168,7 @@ class SchemaChangeDetector:
                         "previous_type": previous_col.get("type", "unknown"),
                         "new_type": current_col.get("type", "unknown")
                     },
-                    "timestamp": datetime.now().isoformat()
+                    "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat()
                 })
 
             # Check nullability changes
@@ -181,7 +181,7 @@ class SchemaChangeDetector:
                         "previous_nullable": previous_col.get("nullable", None),
                         "new_nullable": current_col.get("nullable", None)
                     },
-                    "timestamp": datetime.now().isoformat()
+                    "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat()
                 })
 
         return changes

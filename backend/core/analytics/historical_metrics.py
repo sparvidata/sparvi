@@ -66,7 +66,7 @@ class HistoricalMetricsTracker:
 
             # Format timestamp
             if timestamp is None:
-                timestamp = datetime.now().isoformat()
+                timestamp = datetime.datetime.now(datetime.timezone.utc).isoformat()
 
             # Create record data
             record = {
@@ -120,7 +120,7 @@ class HistoricalMetricsTracker:
             # Prepare records for batch insertion
             records = []
 
-            timestamp = datetime.now().isoformat()
+            timestamp = datetime.datetime.now(datetime.timezone.utc).isoformat()
 
             for metric in metrics:
                 # Determine value storage
@@ -190,7 +190,7 @@ class HistoricalMetricsTracker:
         try:
             # Calculate date range
             from datetime import datetime, timedelta
-            start_date = (datetime.now() - timedelta(days=days)).isoformat()
+            start_date = (datetime.datetime.now(datetime.timezone.utc)- timedelta(days=days)).isoformat()
 
             # Start building query
             query = self.supabase.table("historical_metrics") \

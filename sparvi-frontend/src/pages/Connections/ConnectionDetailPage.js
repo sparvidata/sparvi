@@ -60,12 +60,16 @@ const ConnectionDetailPage = () => {
     setTestResult(null);
   };
 
-  // Test connection
+  // Test connection with better validation
   const handleTestConnection = async () => {
+    // Clear previous test result
+    setTestResult(null);
+
     // Validate form
     const formErrors = validateForm();
     if (Object.keys(formErrors).length > 0) {
       setErrors(formErrors);
+      showNotification('Please fix the form errors before testing', 'warning');
       return;
     }
 
@@ -73,19 +77,36 @@ const ConnectionDetailPage = () => {
       setTestLoading(true);
 
       const testData = {
-        connection_type: connection.connection_type,
+        connection_type: connection.connection_type, // or connection.connection_type for edit page
         connection_details: connectionDetails
       };
 
+      console.log('Testing connection with:', JSON.stringify(testData, null, 2));
       const result = await testConnection(testData);
 
-      setTestResult({
-        success: true,
-        message: 'Connection successful!',
-        details: result
-      });
+      // Check for specific success indicators in the result
+      const isSuccess = result.success === true ||
+                        result.message?.toLowerCase().includes('success') ||
+                        result.status === 'success';
 
-      showNotification('Connection test successful!', 'success');
+      if (isSuccess) {
+        setTestResult({
+          success: true,
+          message: 'Connection successful!',
+          details: result
+        });
+
+        showNotification('Connection test successful!', 'success');
+      } else {
+        // If we got a response but no clear success indicator, treat as failure
+        setTestResult({
+          success: false,
+          message: 'Connection failed - unexpected response',
+          details: result
+        });
+
+        showNotification('Connection test failed with an unexpected response', 'error');
+      }
     } catch (error) {
       console.error('Connection test failed:', error);
 
@@ -289,30 +310,30 @@ const ConnectionDetailPage = () => {
                 </div>
               </div>
 
-              <div className="mt-8 flex justify-end">
+              <div className="mt-8 flex justify-end space-x-4">
                 <button
-                  type="button"
-                  onClick={handleTestConnection}
-                  disabled={testLoading}
-                  className="mr-3 inline-flex items-center px-4 py-2 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-secondary-600 hover:bg-secondary-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-secondary-500 disabled:opacity-50"
+                    type="button"
+                    onClick={handleTestConnection}
+                    disabled={testLoading}
+                    className="inline-flex items-center px-4 py-2 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50"
                 >
                   {testLoading ? (
-                    <>
-                      <ServerIcon className="animate-pulse -ml-1 mr-2 h-5 w-5" aria-hidden="true" />
-                      Testing...
-                    </>
+                      <>
+                        <ServerIcon className="animate-pulse -ml-1 mr-2 h-5 w-5" aria-hidden="true"/>
+                        Testing...
+                      </>
                   ) : (
-                    <>
-                      <ServerIcon className="-ml-1 mr-2 h-5 w-5" aria-hidden="true" />
-                      Test Connection
-                    </>
+                      <>
+                        <ServerIcon className="-ml-1 mr-2 h-5 w-5" aria-hidden="true"/>
+                        Test Connection
+                      </>
                   )}
                 </button>
 
                 <button
-                  type="submit"
-                  disabled={isSubmitting}
-                  className="inline-flex items-center px-4 py-2 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-primary-600 hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 disabled:opacity-50"
+                    type="submit"
+                    disabled={isSubmitting}
+                    className="inline-flex items-center px-4 py-2 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50"
                 >
                   {isSubmitting ? 'Updating...' : 'Update Connection'}
                 </button>

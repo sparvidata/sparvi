@@ -1,4 +1,3 @@
-// src/hooks/useSchemaChanges.js
 import { useState, useEffect, useCallback } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { schemaAPI } from '../api/enhancedApiService';
@@ -9,6 +8,13 @@ export const useSchemaChanges = (connectionId, options = {}) => {
   const queryClient = useQueryClient();
   const { days = 30, enabled = !!connectionId } = options;
 
+  // Format the date to ISO string (what the API expects)
+  const getFormattedDate = (daysAgo) => {
+    const date = new Date();
+    date.setDate(date.getDate() - daysAgo);
+    return date.toISOString();
+  };
+
   // Fetch schema changes
   const {
     data: changes,
@@ -17,7 +23,11 @@ export const useSchemaChanges = (connectionId, options = {}) => {
     refetch
   } = useQuery({
     queryKey: ['schema-changes', connectionId, days],
-    queryFn: () => schemaAPI.getChanges(connectionId, days),
+    queryFn: () => {
+      // Calculate the date from X days ago in the format the API expects
+      const sinceDate = getFormattedDate(days);
+      return schemaAPI.getChanges(connectionId, sinceDate);
+    },
     enabled: enabled,
     select: (data) => {
       // Normalize the data format

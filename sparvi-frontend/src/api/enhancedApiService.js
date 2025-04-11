@@ -425,11 +425,27 @@ export const connectionsAPI = {
   },
 
   test: (data) => {
+    // Make sure we're actually trying to connect to the database
+    console.log('Testing connection with data:', JSON.stringify(data, null, 2));
+
     return enhancedRequest({
       method: 'POST',
       url: '/connections/test',
       data,
       requestId: 'connections.test'
+    }).then(response => {
+      // Log the response to help diagnose issues
+      console.log('Test connection response:', response);
+
+      // Ensure the response contains proper success/failure indicators
+      if (!response.message && !response.success) {
+        console.warn('Test connection response missing expected fields');
+      }
+
+      return response;
+    }).catch(error => {
+      console.error('Test connection failed:', error);
+      throw error;
     });
   },
 
@@ -576,9 +592,10 @@ export const schemaAPI = {
   getChanges: (connectionId, since) => {
     return enhancedRequest({
       url: `/connections/${connectionId}/changes`,
-      params: { since },
-      requestId: `schema.changes.${connectionId}`
+      params: { since }, // This will now be an ISO date string
+      requestId: `schema.changes.${connectionId}`,
       // Don't cache changes - they should always be fresh
+      cacheKey: null
     });
   },
 

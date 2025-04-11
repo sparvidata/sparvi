@@ -1,4 +1,4 @@
-// src/pages/Metadata/components/SchemaChangesPanel.js
+// src/pages/Metadata/components/SchemaChangesPanel.js - UPDATED
 import React, { useState } from 'react';
 import { ChartBarIcon, CheckCircleIcon, ClockIcon, ExclamationCircleIcon } from '@heroicons/react/24/outline';
 import { formatDate } from '../../../utils/formatting';
@@ -29,10 +29,67 @@ const SchemaChangesPanel = ({ connectionId, schemaChanges, isLoading, onAcknowle
     );
   }
 
+  // Normalize change object format
+  const normalizeChange = (change) => {
+    // Handle the different backend change types to map to our UI display format
+    const getChangeType = (type) => {
+      if (type.includes('added')) return 'added';
+      if (type.includes('removed')) return 'removed';
+      if (type.includes('changed')) return 'modified';
+      return 'modified';
+    };
+
+    const tableName = change.table || '';
+    const columnName = change.column || '';
+    const changeType = getChangeType(change.type || '');
+
+    let details = '';
+    let oldValue = '';
+    let newValue = '';
+
+    // Build details based on change type
+    if (change.type === 'column_type_changed') {
+      details = `Column data type changed`;
+      oldValue = change.details?.previous_type || '';
+      newValue = change.details?.new_type || '';
+    } else if (change.type === 'column_nullability_changed') {
+      details = `Column nullability changed`;
+      oldValue = change.details?.previous_nullable ? 'NULLABLE' : 'NOT NULL';
+      newValue = change.details?.new_nullable ? 'NULLABLE' : 'NOT NULL';
+    } else if (change.type === 'column_added') {
+      details = `New column added`;
+      newValue = change.details?.type || '';
+    } else if (change.type === 'column_removed') {
+      details = `Column removed`;
+      oldValue = change.details?.type || '';
+    } else if (change.type === 'table_added') {
+      details = `New table added`;
+    } else if (change.type === 'table_removed') {
+      details = `Table removed`;
+    }
+
+    return {
+      id: change.id || `${change.type}-${tableName}-${columnName}-${Date.now()}`,
+      table_name: tableName,
+      column_name: columnName,
+      change_type: changeType,
+      object_type: change.type?.includes('column') ? 'column' : 'table',
+      object_name: change.type?.includes('column') ? columnName : tableName,
+      details: details,
+      old_value: oldValue,
+      new_value: newValue,
+      detected_at: change.timestamp || new Date().toISOString(),
+      acknowledged: change.acknowledged || false
+    };
+  };
+
+  // Normalize all changes
+  const normalizedChanges = schemaChanges.map(normalizeChange);
+
   // Filter changes based on selected filter
   const filteredChanges = filter === 'all'
-    ? schemaChanges
-    : schemaChanges.filter(change => change.change_type === filter);
+    ? normalizedChanges
+    : normalizedChanges.filter(change => change.change_type === filter);
 
   // Group changes by table
   const changesByTable = {};
@@ -122,7 +179,7 @@ const SchemaChangesPanel = ({ connectionId, schemaChanges, isLoading, onAcknowle
                 </div>
                 <ul className="mt-2 space-y-2">
                   {changes.map((change, index) => (
-                    <li key={index} className="text-sm">
+                    <li key={change.id || index} className="text-sm">
                       <div className="flex items-start">
                         <div className="flex-shrink-0 mr-2 mt-0.5">
                           {getChangeTypeIcon(change.change_type)}
@@ -151,6 +208,11 @@ const SchemaChangesPanel = ({ connectionId, schemaChanges, isLoading, onAcknowle
                               <span className="text-accent-500">
                                 {change.new_value}
                               </span>
+                            </div>
+                          )}
+                          {change.detected_at && (
+                            <div className="mt-1 text-xs text-secondary-400">
+                              Detected: {formatDate(change.detected_at, true)}
                             </div>
                           )}
                         </div>

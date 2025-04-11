@@ -658,7 +658,7 @@ class MetadataTaskManager:
         if last_refreshed:
             try:
                 refresh_date = datetime.fromisoformat(last_refreshed.replace('Z', '+00:00'))
-                now = datetime.now()
+                now = datetime.datetime.now(datetime.timezone.utc).isoformat()
 
                 # If refreshed very recently, lower priority
                 age_hours = (now - refresh_date).total_seconds() / 3600

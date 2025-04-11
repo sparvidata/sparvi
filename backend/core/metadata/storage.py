@@ -71,7 +71,7 @@ class MetadataStorage:
                 "value_text": value_text,
                 "value_numeric": value_numeric,
                 "value_json": json.dumps(value_json) if value_json else None,
-                "collected_at": datetime.now().isoformat()
+                "collected_at": datetime.datetime.now(datetime.timezone.utc).isoformat()
             }
 
             # Insert or update (using upsert)
@@ -169,8 +169,8 @@ class MetadataStorage:
                 "object_schema": object_schema,
                 "parent_id": parent_id,
                 "is_system": is_system,
-                "created_at": datetime.now().isoformat(),
-                "updated_at": datetime.now().isoformat()
+                "created_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                "updated_at": datetime.datetime.now(datetime.timezone.utc).isoformat()
             }
 
             response = self.supabase.table("metadata_objects").insert(data).execute()
