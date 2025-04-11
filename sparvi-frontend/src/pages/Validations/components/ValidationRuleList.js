@@ -31,15 +31,17 @@ const ValidationRuleList = ({
   const [validationToDelete, setValidationToDelete] = useState(null);
   const [filterStatus, setFilterStatus] = useState('all');
 
-  // Filter validations based on status
-  const filteredValidations = validations.filter(validation => {
-    if (filterStatus === 'all') return true;
-    if (filterStatus === 'passed') return validation.last_result === true;
-    if (filterStatus === 'failed') return validation.last_result === false;
-    if (filterStatus === 'error') return !!validation.error;
-    if (filterStatus === 'notrun') return validation.last_result === undefined || validation.last_result === null;
-    return true;
-  });
+  // Filter out inactive rules and then apply status filter
+  const filteredValidations = validations
+    .filter(validation => validation.is_active !== false) // Always filter out inactive rules
+    .filter(validation => {
+      if (filterStatus === 'all') return true;
+      if (filterStatus === 'passed') return validation.last_result === true;
+      if (filterStatus === 'failed') return validation.last_result === false;
+      if (filterStatus === 'error') return !!validation.error;
+      if (filterStatus === 'notrun') return validation.last_result === undefined || validation.last_result === null;
+      return true;
+    });
 
   // Confirm deletion
   const confirmDelete = (validation) => {
@@ -156,7 +158,7 @@ const ValidationRuleList = ({
   }
 
   // If no validations, show empty state
-  if (!validations.length) {
+  if (!filteredValidations.length) {
     return (
       <div className="text-center py-10">
         <TableCellsIcon className="mx-auto h-12 w-12 text-secondary-400" />
@@ -257,7 +259,9 @@ const ValidationRuleList = ({
             {filteredValidations.map((validation) => (
               <tr key={validation.id || validation.rule_name} className="hover:bg-secondary-50">
                 <td className="py-4 pl-4 pr-3 text-sm sm:pl-6">
-                  <div className="font-medium text-secondary-900">{validation.rule_name}</div>
+                  <div className="font-medium text-secondary-900">
+                    {validation.rule_name}
+                  </div>
                   {validation.description && (
                     <div className="text-xs text-secondary-500">{validation.description}</div>
                   )}

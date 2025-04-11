@@ -655,7 +655,12 @@ export const profilingAPI = {
 // Enhanced Validations API
 export const validationsAPI = {
   getRules: (tableName, options = {}) => {
-    const { forceFresh = false, requestId = `validations.rules.${tableName}`, connectionId } = options;
+    const {
+      forceFresh = false,
+      requestId = `validations.rules.${tableName}`,
+      connectionId,
+      includeInactive = false // New parameter
+    } = options;
 
     if (!connectionId) {
       console.warn('connectionId is required for getRules');
@@ -664,8 +669,12 @@ export const validationsAPI = {
 
     return enhancedRequest({
       url: '/validations',
-      params: { table: tableName, connection_id: connectionId },
-      cacheKey: `validations.rules.${tableName}`,
+      params: {
+        table: tableName,
+        connection_id: connectionId,
+        include_inactive: includeInactive // Pass to API
+      },
+      cacheKey: `validations.rules.${tableName}${includeInactive ? '.all' : ''}`,
       cacheTTL: 10 * 60 * 1000, // 10 minutes
       requestId,
       forceFresh

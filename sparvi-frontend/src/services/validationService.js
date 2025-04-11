@@ -8,12 +8,12 @@ class ValidationService {
     }
 
     try {
-      // Get validation rules first
+      // Get validation rules
       const rules = await this.getRules(connectionId, tableName);
-      
+
       // Then get the latest results for these rules
       const results = await this.getLatestResults(connectionId, tableName);
-      
+
       // Merge rules with results
       return this.mergeRulesWithResults(rules, results);
     } catch (error) {
@@ -26,17 +26,21 @@ class ValidationService {
   async getRules(connectionId, tableName) {
     try {
       const response = await validationsAPI.getRules(tableName, { connectionId });
-      
+
       // Handle different API response formats
+      let rules = [];
       if (Array.isArray(response)) {
-        return response;
+        rules = response;
       } else if (response?.rules) {
-        return response.rules;
+        rules = response.rules;
       } else if (response?.data?.rules) {
-        return response.data.rules;
+        rules = response.data.rules;
       }
-      
-      return [];
+
+      // Always filter out inactive rules
+      rules = rules.filter(rule => rule.is_active !== false);
+
+      return rules;
     } catch (error) {
       console.error('Error getting validation rules:', error);
       throw error;

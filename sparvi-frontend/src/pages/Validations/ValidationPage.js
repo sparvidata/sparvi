@@ -258,7 +258,7 @@ const ValidationPage = () => {
                     metrics={validationData.metrics}
                     connectionId={connectionId}
                     tableName={selectedTable}
-                    onRunAll={validationData.runAllValidations}
+                    onRunAll={handleRunAll}
                     isRunning={validationData.runningValidation}
                     isLoading={validationData.loading} // Pass loading state
                   />
