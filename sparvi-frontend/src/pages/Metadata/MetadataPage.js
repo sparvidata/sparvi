@@ -231,9 +231,10 @@ const MetadataPage = () => {
               ) : (
                 <SchemaChangesPanel
                   connectionId={connectionId}
-                  schemaChanges={schemaChanges}
+                  schemaChanges={schemaChanges}  // Use schemaChanges instead of changes
                   isLoading={isLoadingChanges}
                   onAcknowledge={acknowledgeChanges}
+                  onRefresh={handleDetectChanges}
                 />
               )}
             </div>

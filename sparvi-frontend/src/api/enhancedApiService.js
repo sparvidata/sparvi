@@ -581,7 +581,7 @@ export const schemaAPI = {
       url: `/connections/${connectionId}/schema/detect-changes`,
       requestId: `schema.detectChanges.${connectionId}`
     }).then(response => {
-      // If changes were detected, invalidate schema caches
+      // Clear schema cache if changes were detected
       if (response.changes_detected > 0) {
         clearCacheItem(`schema.tables.${connectionId}`);
       }
@@ -589,13 +589,28 @@ export const schemaAPI = {
     });
   },
 
-  getChanges: (connectionId, since) => {
+  getChanges: (connectionId, options = {}) => {
+    const { acknowledged = false, since = null } = options;
+
+    const params = {};
+    if (acknowledged !== undefined) params.acknowledged = acknowledged;
+    if (since) params.since = since;
+
     return enhancedRequest({
       url: `/connections/${connectionId}/changes`,
-      params: { since }, // This will now be an ISO date string
+      params,
       requestId: `schema.changes.${connectionId}`,
       // Don't cache changes - they should always be fresh
       cacheKey: null
+    });
+  },
+
+  acknowledgeChanges: (connectionId, tableName) => {
+    return enhancedRequest({
+      method: 'POST',
+      url: `/connections/${connectionId}/changes/acknowledge`,
+      data: { table_name: tableName },
+      requestId: `schema.acknowledge.${connectionId}.${tableName}`
     });
   },
 

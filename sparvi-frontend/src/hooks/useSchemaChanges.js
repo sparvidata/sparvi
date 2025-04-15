@@ -6,28 +6,17 @@ import { useUI } from '../contexts/UIContext';
 export const useSchemaChanges = (connectionId, options = {}) => {
   const { showNotification } = useUI();
   const queryClient = useQueryClient();
-  const { days = 30, enabled = !!connectionId } = options;
+  const { enabled = !!connectionId } = options;
 
-  // Format the date to ISO string (what the API expects)
-  const getFormattedDate = (daysAgo) => {
-    const date = new Date();
-    date.setDate(date.getDate() - daysAgo);
-    return date.toISOString();
-  };
-
-  // Fetch schema changes
+  // Fetch schema changes from the database
   const {
     data: changes,
     isLoading,
     error,
     refetch
   } = useQuery({
-    queryKey: ['schema-changes', connectionId, days],
-    queryFn: () => {
-      // Calculate the date from X days ago in the format the API expects
-      const sinceDate = getFormattedDate(days);
-      return schemaAPI.getChanges(connectionId, sinceDate);
-    },
+    queryKey: ['schema-changes', connectionId],
+    queryFn: () => schemaAPI.getChanges(connectionId),
     enabled: enabled,
     select: (data) => {
       // Normalize the data format
@@ -66,21 +55,19 @@ export const useSchemaChanges = (connectionId, options = {}) => {
 
   // Acknowledge changes
   const acknowledgeChanges = useMutation({
-    mutationFn: (tableNames) => {
-      // In a real implementation, this would call an API
-      // For MVP, we'll just simulate acknowledging changes
-      return Promise.resolve({ success: true, acknowledged: tableNames });
-    },
+    mutationFn: (tableName) => schemaAPI.acknowledgeChanges(connectionId, tableName),
     onSuccess: (data) => {
       queryClient.invalidateQueries(['schema-changes', connectionId]);
-      showNotification('Changes acknowledged successfully', 'success');
+      showNotification(
+        `Acknowledged ${data.acknowledged_count} schema ${data.acknowledged_count === 1 ? 'change' : 'changes'}`,
+        'success'
+      );
+    },
+    onError: (error) => {
+      console.error('Error acknowledging schema changes:', error);
+      showNotification('Failed to acknowledge changes', 'error');
     }
   });
-
-  // Helper to handle acknowledgement
-  const handleAcknowledge = useCallback((tableName) => {
-    acknowledgeChanges.mutate(tableName);
-  }, [acknowledgeChanges]);
 
   return {
     changes: changes || [],
@@ -88,7 +75,7 @@ export const useSchemaChanges = (connectionId, options = {}) => {
     error,
     detectChanges: detectChanges.mutate,
     isDetecting: detectChanges.isPending,
-    acknowledgeChanges: handleAcknowledge,
+    acknowledgeChanges: (tableName) => acknowledgeChanges.mutate(tableName),
     isAcknowledging: acknowledgeChanges.isPending,
     refetch
   };
