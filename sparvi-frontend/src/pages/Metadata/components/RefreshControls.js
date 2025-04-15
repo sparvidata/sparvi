@@ -15,7 +15,8 @@ const RefreshControls = ({
   isRefreshing,
   metadataStatus,
   onMetadataTypeSelect,
-  selectedMetadataType
+  selectedMetadataType,
+  onViewSchemaChanges
 }) => {
   const { showNotification } = useUI();
 
@@ -190,8 +191,23 @@ const RefreshControls = ({
                 <h3 className="text-sm font-medium text-warning-800">Schema Changes Detected</h3>
                 <div className="mt-2 text-sm text-warning-700">
                   <p>
-                    {metadataStatus.changes_detected} schema {metadataStatus.changes_detected === 1 ? 'change has' : 'changes have'} been detected. You should refresh your metadata.
+                    {metadataStatus.changes_detected} schema {metadataStatus.changes_detected === 1 ? 'change has' : 'changes have'} been detected.
                   </p>
+
+                  {/* Add more actionable info */}
+                  <div className="mt-3">
+                    <button
+                      onClick={() => {
+                        // Use the callback prop to switch tabs
+                        if (onViewSchemaChanges) {
+                          onViewSchemaChanges();
+                        }
+                      }}
+                      className="text-sm font-medium text-warning-800 hover:text-warning-900"
+                    >
+                      View and acknowledge changes <span aria-hidden="true">→</span>
+                    </button>
+                  </div>
                 </div>
               </div>
             </div>

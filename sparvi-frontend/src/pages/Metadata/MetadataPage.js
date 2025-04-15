@@ -1,14 +1,13 @@
-// src/pages/Metadata/MetadataPage.js - UPDATED VERSION
 import React, { useEffect, useState } from 'react';
 import { useConnection } from '../../contexts/EnhancedConnectionContext';
 import { useUI } from '../../contexts/UIContext';
 import { useMetadataStatus, useRefreshMetadata } from '../../hooks/useMetadataStatus';
-import { useSchemaChanges } from '../../hooks/useSchemaChanges'; // Import the new hook
+import { useSchemaChanges } from '../../hooks/useSchemaChanges';
 import LoadingSpinner from '../../components/common/LoadingSpinner';
 import MetadataStatusPanel from './components/MetadataStatusPanel';
 import MetadataTasksList from './components/MetadataTasksList';
 import MetadataExplorer from './components/MetadataExplorer';
-import SchemaChangesPanel from './components/SchemaChangesPanel'; // Import the new component
+import SchemaChangesPanel from './components/SchemaChangesPanel';
 import RefreshControls from './components/RefreshControls';
 import EmptyState from '../../components/common/EmptyState';
 import { ServerIcon, TableCellsIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline';
@@ -51,8 +50,8 @@ const MetadataPage = () => {
     isDetecting,
     acknowledgeChanges,
     refetch: refetchChanges,
-    setAcknowledgedFilter,  // Get this from the hook
-    acknowledgedFilter      // Get this from the hook
+    setAcknowledgedFilter,
+    acknowledgedFilter
   } = useSchemaChanges(connectionId);
 
   // Use the refresh metadata mutation
@@ -121,6 +120,7 @@ const MetadataPage = () => {
             Metadata Explorer
           </button>
           <button
+            aria-label="Schema Changes"
             className={`
               ${activeTab === 'schema-changes' 
                 ? 'border-primary-500 text-primary-600' 
@@ -139,6 +139,32 @@ const MetadataPage = () => {
         </nav>
       </div>
 
+      {/* Add persistent banner for unacknowledged changes */}
+      {hasUnacknowledgedChanges && (
+        <div className="mt-4 mb-6">
+          <div className="rounded-md bg-warning-50 p-4">
+            <div className="flex">
+              <div className="flex-shrink-0">
+                <ExclamationTriangleIcon className="h-5 w-5 text-warning-400" aria-hidden="true" />
+              </div>
+              <div className="ml-3 flex-1 md:flex md:justify-between">
+                <p className="text-sm text-warning-700">
+                  There are {schemaChanges.filter(change => !change.acknowledged).length} unacknowledged schema changes that require your attention.
+                </p>
+                <p className="mt-3 text-sm md:mt-0 md:ml-6">
+                  <button
+                    onClick={() => setActiveTab('schema-changes')}
+                    className="whitespace-nowrap font-medium text-warning-700 hover:text-warning-600"
+                  >
+                    View changes <span aria-hidden="true">&rarr;</span>
+                  </button>
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-12">
         {/* Side panel */}
         <div className="lg:col-span-3">
@@ -155,6 +181,7 @@ const MetadataPage = () => {
                   metadataStatus={metadataStatus}
                   onMetadataTypeSelect={setSelectedMetadataType}
                   selectedMetadataType={selectedMetadataType}
+                  onViewSchemaChanges={() => setActiveTab('schema-changes')}
                 />
               ) : (
                 <div className="space-y-4">
