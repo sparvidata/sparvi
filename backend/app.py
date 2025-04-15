@@ -32,6 +32,7 @@ from core.validations.supabase_validation_manager import SupabaseValidationManag
 from core.history.supabase_profile_history import SupabaseProfileHistoryManager
 from core.metadata.manager import MetadataTaskManager
 from core.metadata.events import MetadataEventType, publish_metadata_event
+from core.utils.performance_optimizations import apply_performance_optimizations
 
 import concurrent.futures
 from sqlalchemy.pool import QueuePool
@@ -110,6 +111,37 @@ def connection_access_check(connection_id, organization_id):
 
     return connection_check.data[0]
 
+
+def cache_with_timeout(timeout_seconds=300):
+    """
+    Cache function results with a timeout
+
+    Args:
+        timeout_seconds: Cache timeout in seconds
+    """
+    cache = {}
+
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            # Create a cache key from function name and arguments
+            key = f"{func.__name__}:{str(args)}:{str(kwargs)}"
+
+            # Check if result is in cache and not expired
+            if key in cache:
+                result, timestamp = cache[key]
+                if time.time() - timestamp < timeout_seconds:
+                    return result
+
+            # Call the function and cache the result
+            result = func(*args, **kwargs)
+            cache[key] = (result, time.time())
+
+            return result
+
+        return wrapper
+
+    return decorator
 
 # Cached version of the metadata getter
 @request_cache
@@ -1282,6 +1314,9 @@ metadata_storage = MetadataStorage()
 task_executor = ThreadPoolExecutor(max_workers=5)
 metadata_task_queue = queue.Queue()
 threading.Timer(5.0, init_metadata_task_manager).start()  # 5-second delay to ensure other services are ready
+
+optimized_classes = apply_performance_optimizations()
+
 
 # Decorator to require a valid token for protected routes
 import os
@@ -4815,9 +4850,10 @@ def acknowledge_schema_changes(current_user, organization_id, connection_id):
         data = request.json
         table_name = data.get("table_name")
         change_ids = data.get("change_ids", [])
+        change_types = data.get("change_types", [])
 
-        if not table_name and not change_ids:
-            return jsonify({"error": "table_name or change_ids must be provided"}), 400
+        if not (table_name or change_ids or change_types):
+            return jsonify({"error": "table_name, change_ids, or change_types must be provided"}), 400
 
         # Get supabase client
         import os
@@ -4838,46 +4874,54 @@ def acknowledge_schema_changes(current_user, organization_id, connection_id):
         elif isinstance(current_user, str):
             user_id = current_user
 
+        # Create update data
+        update_data = {
+            "acknowledged": True,
+            "acknowledged_at": current_time
+        }
+
+        # Only add user ID if available
+        if user_id:
+            update_data["acknowledged_by"] = user_id
+
+        # Case 1: Acknowledge by table name
         if table_name:
-            # Acknowledge all changes for a table
-            update_data = {
-                "acknowledged": True,
-                "acknowledged_at": current_time
-            }
-
-            # Only add user ID if available
-            if user_id:
-                update_data["acknowledged_by"] = user_id
-
             result = direct_client.table("schema_changes") \
                 .update(update_data) \
                 .eq("connection_id", connection_id) \
+                .eq("organization_id", organization_id) \
                 .eq("table_name", table_name) \
                 .eq("acknowledged", False) \
                 .execute()
 
             acknowledged_count = len(result.data) if result.data else 0
 
+        # Case 2: Acknowledge by specific change IDs
         elif change_ids:
-            # Acknowledge specific changes
             for change_id in change_ids:
-                update_data = {
-                    "acknowledged": True,
-                    "acknowledged_at": current_time
-                }
-
-                # Only add user ID if available
-                if user_id:
-                    update_data["acknowledged_by"] = user_id
-
                 result = direct_client.table("schema_changes") \
                     .update(update_data) \
                     .eq("id", change_id) \
                     .eq("connection_id", connection_id) \
+                    .eq("organization_id", organization_id) \
                     .execute()
 
                 if result.data:
                     acknowledged_count += 1
+
+        # Case 3: Acknowledge by change types
+        elif change_types:
+            for change_type in change_types:
+                result = direct_client.table("schema_changes") \
+                    .update(update_data) \
+                    .eq("connection_id", connection_id) \
+                    .eq("organization_id", organization_id) \
+                    .eq("change_type", change_type) \
+                    .eq("acknowledged", False) \
+                    .execute()
+
+                if result.data:
+                    acknowledged_count += len(result.data)
 
         return jsonify({
             "success": True,
@@ -4893,12 +4937,16 @@ def acknowledge_schema_changes(current_user, organization_id, connection_id):
 
 @app.route("/api/connections/<connection_id>/changes", methods=["GET"])
 @token_required
+@cache_with_timeout(timeout_seconds=30)
 def get_schema_changes(current_user, organization_id, connection_id):
     """Get saved schema changes from the database"""
     try:
         # Parse query parameters
         since_timestamp = request.args.get("since")
         acknowledged = request.args.get("acknowledged")
+        change_type = request.args.get("change_type")  # Filter by change type
+        table_name = request.args.get("table_name")  # Filter by table name
+        limit = request.args.get("limit", 100, type=int)
 
         # Check access to connection
         supabase_mgr = SupabaseManager()
@@ -4925,18 +4973,23 @@ def get_schema_changes(current_user, organization_id, connection_id):
             .select("*") \
             .eq("connection_id", connection_id)
 
-        # Add filter for acknowledged status if specified
+        # Add filters
         if acknowledged is not None:
             # Convert string 'true'/'false' to Python boolean
             acknowledged_bool = acknowledged.lower() == 'true'
             query = query.eq("acknowledged", acknowledged_bool)
 
-        # Add filter for timestamp if provided
         if since_timestamp:
             query = query.gte("detected_at", since_timestamp)
 
-        # Execute query
-        response = query.order("detected_at", desc=True).execute()
+        if change_type:
+            query = query.eq("change_type", change_type)
+
+        if table_name:
+            query = query.eq("table_name", table_name)
+
+        # Execute query with pagination
+        response = query.order("detected_at", desc=True).limit(limit).execute()
 
         if not response.data:
             return jsonify({
@@ -4968,9 +5021,20 @@ def get_schema_changes(current_user, organization_id, connection_id):
             }
             changes.append(change)
 
+        # Prepare metadata about changes
+        change_types = {}
+        for change in changes:
+            change_type = change.get("type")
+            if change_type not in change_types:
+                change_types[change_type] = 0
+            change_types[change_type] += 1
+
         return jsonify({
             "changes": changes,
             "count": len(changes),
+            "change_types": change_types,
+            "acknowledged_count": sum(1 for c in changes if c.get("acknowledged", False)),
+            "unacknowledged_count": sum(1 for c in changes if not c.get("acknowledged", False)),
             "message": "Schema changes retrieved successfully"
         })
 
@@ -5898,170 +5962,46 @@ def detect_schema_changes(current_user, organization_id, connection_id):
         collector = MetadataCollector(connection_id, connector)
         storage_service = MetadataStorageService()
 
-        # Collect current schema
-        current_schema = {
-            "tables": []
-        }
+        # Create schema change detector
+        from core.metadata.schema_change_detector import SchemaChangeDetector
+        detector = SchemaChangeDetector(storage_service)
 
-        # Get table list (limited to 50 tables for performance)
-        tables = collector.collect_table_list()[:50]
+        # Detect schema changes
+        changes, important_changes = detector.detect_changes_for_connection(
+            connection_id,
+            connector_factory,
+            supabase_mgr
+        )
 
-        # Collect column metadata for each table
-        for table_name in tables:
-            try:
-                columns = collector.collect_columns(table_name)
-                table_data = {
-                    "name": table_name,
-                    "columns": columns,
-                    "column_count": len(columns)
-                }
-                current_schema["tables"].append(table_data)
-            except Exception as e:
-                logger.warning(f"Error collecting columns for {table_name}: {str(e)}")
+        # Group changes by type for better reporting
+        change_types = {}
+        for change in changes:
+            change_type = change.get("type")
+            if change_type not in change_types:
+                change_types[change_type] = 0
+            change_types[change_type] += 1
 
-        # Get previous schema from storage
-        previous_schema = None
-        stored_metadata = storage_service.get_metadata(connection_id, "tables")
+        # Create tasks for handling important changes if needed
+        tasks_created = 0
+        if important_changes and changes:
+            # Publish events
+            task_ids = detector.publish_changes_as_events(
+                connection_id,
+                changes,
+                organization_id,
+                current_user
+            )
 
-        if stored_metadata and "metadata" in stored_metadata:
-            previous_schema = stored_metadata["metadata"]
+            tasks_created = len(task_ids)
 
-            # Compare schemas to find changes
-            changes = []
-
-            # Extract table names from both schemas
-            current_tables = {table["name"]: table for table in current_schema["tables"]}
-            previous_tables = {}
-
-            if "tables" in previous_schema:
-                previous_tables = {table["name"]: table for table in previous_schema["tables"]}
-
-            # Find added tables
-            for table_name in set(current_tables.keys()) - set(previous_tables.keys()):
-                changes.append({
-                    "type": "table_added",
-                    "table": table_name,
-                    "timestamp": datetime.datetime.now().isoformat()
-                })
-
-            # Find removed tables
-            for table_name in set(previous_tables.keys()) - set(current_tables.keys()):
-                changes.append({
-                    "type": "table_removed",
-                    "table": table_name,
-                    "timestamp": datetime.datetime.now().isoformat()
-                })
-
-            # Check for column changes in common tables
-            for table_name in set(current_tables.keys()) & set(previous_tables.keys()):
-                # Get columns for this table in both schemas
-                current_columns = {col["name"]: col for col in current_tables[table_name].get("columns", [])}
-                previous_columns = {col["name"]: col for col in previous_tables[table_name].get("columns", [])}
-
-                # Find added columns
-                for col_name in set(current_columns.keys()) - set(previous_columns.keys()):
-                    col_info = current_columns[col_name]
-                    changes.append({
-                        "type": "column_added",
-                        "table": table_name,
-                        "column": col_name,
-                        "details": {
-                            "type": col_info.get("type", "unknown"),
-                            "nullable": col_info.get("nullable", None)
-                        },
-                        "timestamp": datetime.datetime.now().isoformat()
-                    })
-
-                # Find removed columns
-                for col_name in set(previous_columns.keys()) - set(current_columns.keys()):
-                    col_info = previous_columns[col_name]
-                    changes.append({
-                        "type": "column_removed",
-                        "table": table_name,
-                        "column": col_name,
-                        "details": {
-                            "type": col_info.get("type", "unknown")
-                        },
-                        "timestamp": datetime.datetime.now().isoformat()
-                    })
-
-                # Find column type or property changes
-                for col_name in set(current_columns.keys()) & set(previous_columns.keys()):
-                    current_col = current_columns[col_name]
-                    previous_col = previous_columns[col_name]
-
-                    # Check for type changes
-                    if str(current_col.get("type", "")) != str(previous_col.get("type", "")):
-                        changes.append({
-                            "type": "column_type_changed",
-                            "table": table_name,
-                            "column": col_name,
-                            "details": {
-                                "previous_type": previous_col.get("type", "unknown"),
-                                "new_type": current_col.get("type", "unknown")
-                            },
-                            "timestamp": datetime.datetime.now().isoformat()
-                        })
-
-            # If changes were detected, store the new schema
-            if changes:
-                storage_service.store_tables_metadata(connection_id, current_schema["tables"])
-
-                # After changes are detected, save them to a schema_changes table
-                # Get supabase client
-                supabase_url = os.getenv("SUPABASE_URL")
-                supabase_key = os.getenv("SUPABASE_SERVICE_KEY")
-                direct_client = create_client(supabase_url, supabase_key)
-
-                # Save each change
-                tasks_created = 0
-                for change in changes:
-                    # Create record in schema_changes table
-                    try:
-                        # Use milliseconds precision for timestamp
-                        current_time = datetime.datetime.now().isoformat()
-
-                        change_record = {
-                            "connection_id": connection_id,
-                            "organization_id": organization_id,
-                            "table_name": change.get("table"),
-                            "column_name": change.get("column"),
-                            "change_type": change.get("type"),
-                            "details": json.dumps(change.get("details", {})),
-                            "detected_at": current_time,
-                            "acknowledged": False
-                        }
-
-                        # Insert into schema_changes table
-                        insert_result = direct_client.table("schema_changes").insert(change_record).execute()
-
-                        if insert_result.data:
-                            tasks_created += 1
-                    except Exception as e:
-                        logger.error(f"Error saving schema change: {str(e)}")
-                        continue
-
-                return jsonify({
-                    "changes": changes,
-                    "changes_detected": len(changes),
-                    "tasks_created": tasks_created,
-                    "message": f"Detected {len(changes)} schema changes and saved {tasks_created} to database"
-                })
-
-            return jsonify({
-                "changes": [],
-                "changes_detected": 0,
-                "tasks_created": 0,
-                "message": "No schema changes detected"
-            })
-        else:
-            # No previous schema to compare, just store current schema
-            storage_service.store_tables_metadata(connection_id, current_schema["tables"])
-
-            return jsonify({
-                "changes_detected": 0,
-                "message": "Initial schema collected, no changes to detect"
-            })
+        return jsonify({
+            "changes": changes,
+            "changes_detected": len(changes),
+            "important_changes": important_changes,
+            "change_types": change_types,
+            "tasks_created": tasks_created,
+            "message": f"Detected {len(changes)} schema changes"
+        })
 
     except Exception as e:
         logger.error(f"Error in schema change detection: {str(e)}")

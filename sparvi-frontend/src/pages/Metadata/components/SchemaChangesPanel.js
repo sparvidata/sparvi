@@ -91,6 +91,7 @@ const SchemaChangesPanel = ({
       } else if (localTypeFilter === 'changed') {
         return change.type.includes('changed');
       } else {
+        // For specific change types
         return change.type === localTypeFilter;
       }
     });
@@ -160,23 +161,86 @@ const SchemaChangesPanel = ({
   // Get badge for change type
   const getChangeTypeBadge = (type) => {
     if (type.includes('added')) {
-      return (
-        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-accent-100 text-accent-800">
-          Added
-        </span>
-      );
+      // Special handling for different object types
+      if (type.includes('foreign_key')) {
+        return (
+          <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
+            FK Added
+          </span>
+        );
+      } else if (type.includes('primary_key')) {
+        return (
+          <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-800">
+            PK Added
+          </span>
+        );
+      } else if (type.includes('index')) {
+        return (
+          <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
+            Index Added
+          </span>
+        );
+      } else {
+        return (
+          <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-accent-100 text-accent-800">
+            Added
+          </span>
+        );
+      }
     } else if (type.includes('removed')) {
-      return (
-        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-danger-100 text-danger-800">
-          Removed
-        </span>
-      );
+      // Special handling for different object types
+      if (type.includes('foreign_key')) {
+        return (
+          <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
+            FK Removed
+          </span>
+        );
+      } else if (type.includes('primary_key')) {
+        return (
+          <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-800">
+            PK Removed
+          </span>
+        );
+      } else if (type.includes('index')) {
+        return (
+          <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
+            Index Removed
+          </span>
+        );
+      } else {
+        return (
+          <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-danger-100 text-danger-800">
+            Removed
+          </span>
+        );
+      }
     } else if (type.includes('changed')) {
-      return (
-        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-warning-100 text-warning-800">
-          Modified
-        </span>
-      );
+      // Special handling for different object types
+      if (type.includes('foreign_key')) {
+        return (
+          <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
+            FK Modified
+          </span>
+        );
+      } else if (type.includes('primary_key')) {
+        return (
+          <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-800">
+            PK Modified
+          </span>
+        );
+      } else if (type.includes('index')) {
+        return (
+          <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
+            Index Modified
+          </span>
+        );
+      } else {
+        return (
+          <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-warning-100 text-warning-800">
+            Modified
+          </span>
+        );
+      }
     } else {
       return (
         <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-secondary-100 text-secondary-800">
@@ -222,10 +286,25 @@ const SchemaChangesPanel = ({
         return 'Primary key was removed';
       case 'primary_key_changed':
         return 'Primary key columns were modified';
+      // Add foreign key change descriptions
+      case 'foreign_key_added':
+        return `Foreign key was added ${change.details?.referenced_table ? `(references ${change.details.referenced_table})` : ''}`;
+      case 'foreign_key_removed':
+        return `Foreign key was removed ${change.details?.referenced_table ? `(referenced ${change.details.referenced_table})` : ''}`;
+      case 'foreign_key_changed':
+        return 'Foreign key relationship was modified';
+      // Add index change descriptions
+      case 'index_added':
+        return `Index was added ${change.details?.index_name ? `(${change.details.index_name})` : ''}`;
+      case 'index_removed':
+        return `Index was removed ${change.details?.index_name ? `(${change.details.index_name})` : ''}`;
+      case 'index_changed':
+        return `Index definition was changed ${change.details?.index_name ? `(${change.details.index_name})` : ''}`;
       default:
         return 'Schema changed';
     }
   };
+
 
   return (
     <div>
@@ -248,11 +327,11 @@ const SchemaChangesPanel = ({
           </select>
 
           <select
-            id="filter"
-            name="filter"
-            className="block pl-3 pr-10 py-2 text-base border-secondary-300 focus:outline-none focus:ring-primary-500 focus:border-primary-500 sm:text-sm rounded-md"
-            value={localTypeFilter}
-            onChange={handleTypeFilterChange}
+              id="filter"
+              name="filter"
+              className="block pl-3 pr-10 py-2 text-base border-secondary-300 focus:outline-none focus:ring-primary-500 focus:border-primary-500 sm:text-sm rounded-md"
+              value={localTypeFilter}
+              onChange={handleTypeFilterChange}
           >
             <option value="all">All Types</option>
             <option value="added">Added</option>
@@ -267,22 +346,29 @@ const SchemaChangesPanel = ({
             <option value="primary_key_added">Added Primary Keys</option>
             <option value="primary_key_removed">Removed Primary Keys</option>
             <option value="primary_key_changed">Modified Primary Keys</option>
+            {/* Add foreign key options */}
+            <option value="foreign_key_added">Added Foreign Keys</option>
+            <option value="foreign_key_removed">Removed Foreign Keys</option>
+            <option value="foreign_key_changed">Modified Foreign Keys</option>
+            {/* Add index options */}
+            <option value="index_added">Added Indexes</option>
+            <option value="index_removed">Removed Indexes</option>
+            <option value="index_changed">Modified Indexes</option>
           </select>
-
           {onRefresh && (
-            <button
-              onClick={() => {
-                // When explicitly refreshing, sync local and server filters
-                setAcknowledgedFilter(localAcknowledgedFilter);
-                onRefresh();
-              }}
-              className="inline-flex items-center px-3 py-2 border border-secondary-300
+              <button
+                  onClick={() => {
+                    // When explicitly refreshing, sync local and server filters
+                    setAcknowledgedFilter(localAcknowledgedFilter);
+                    onRefresh();
+                  }}
+                  className="inline-flex items-center px-3 py-2 border border-secondary-300
                        shadow-sm text-sm leading-4 font-medium rounded-md text-secondary-700
                        bg-white hover:bg-secondary-50 focus:outline-none"
-            >
-              <ArrowPathIcon className="-ml-0.5 mr-2 h-4 w-4" aria-hidden="true" />
-              Refresh
-            </button>
+              >
+                <ArrowPathIcon className="-ml-0.5 mr-2 h-4 w-4" aria-hidden="true"/>
+                Refresh
+              </button>
           )}
         </div>
       </div>
@@ -290,16 +376,16 @@ const SchemaChangesPanel = ({
       <div className="bg-white shadow overflow-hidden sm:rounded-md">
         <ul className="divide-y divide-secondary-200">
           {Object.entries(changesByTable).map(([tableName, tableChanges]) => (
-            <li key={tableName} className="px-4 py-4">
-              <div className="flex items-center justify-between">
-                <h4 className="text-sm font-medium text-secondary-900">{tableName}</h4>
-                <span className="text-xs text-secondary-500">
+              <li key={tableName} className="px-4 py-4">
+                <div className="flex items-center justify-between">
+                  <h4 className="text-sm font-medium text-secondary-900">{tableName}</h4>
+                  <span className="text-xs text-secondary-500">
                   {tableChanges.length} {tableChanges.length === 1 ? 'change' : 'changes'}
                 </span>
-              </div>
+                </div>
 
-              <ul className="mt-2 space-y-2">
-                {tableChanges.slice(0, 5).map((change, index) => (
+                <ul className="mt-2 space-y-2">
+                  {tableChanges.slice(0, 5).map((change, index) => (
                   <li key={`${change.type}-${change.table}-${change.column || ''}-${index}`}
                       className={`text-sm rounded-md p-2 ${change.acknowledged ? 'bg-secondary-50' : 'bg-yellow-50'}`}>
                     <div className="flex items-start">

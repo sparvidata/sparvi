@@ -3,6 +3,7 @@ import os
 import sys
 import threading
 import time
+import traceback
 import uuid
 from datetime import datetime, timedelta
 from typing import Dict, List, Any, Optional
@@ -495,6 +496,28 @@ class MetadataTaskManager:
                                         organization_id = None
                                         if hasattr(connection, "organization_id"):
                                             organization_id = connection.organization_id
+                                        else:
+                                            # Try to get organization ID from connection object directly
+                                            organization_id = connection.get("organization_id")
+
+                                        # Log detected changes for visibility
+                                        change_types = {}
+                                        for change in changes:
+                                            change_type = change.get("type")
+                                            if change_type not in change_types:
+                                                change_types[change_type] = 0
+                                            change_types[change_type] += 1
+
+                                        logger.info(f"Change types detected: {change_types}")
+
+                                        # Store changes in the database
+                                        if hasattr(schema_detector, '_store_schema_changes'):
+                                            schema_detector._store_schema_changes(
+                                                connection_id,
+                                                changes,
+                                                self.supabase_manager
+                                            )
+                                            logger.info(f"Stored {len(changes)} schema changes in database")
 
                                         # Publish events
                                         task_ids = schema_detector.publish_changes_as_events(
@@ -505,17 +528,65 @@ class MetadataTaskManager:
 
                                         logger.info(f"Published {len(task_ids)} schema change events")
 
+                                        # Process specific high-priority change types immediately
+                                        high_priority_changes = [
+                                            c for c in changes
+                                            if
+                                            c.get("type") in ["table_removed", "column_removed", "column_type_changed"]
+                                        ]
+
+                                        for change in high_priority_changes:
+                                            table_name = change.get("table")
+                                            change_type = change.get("type")
+
+                                            # For table-level changes
+                                            if change_type == "table_removed":
+                                                logger.info(
+                                                    f"Processing high-priority change: Table {table_name} removed")
+                                                # Handle table removal (e.g., mark dependent objects as affected)
+                                                pass
+
+                                            # For column-level changes
+                                            elif change_type in ["column_removed", "column_type_changed"]:
+                                                column_name = change.get("column")
+                                                logger.info(
+                                                    f"Processing high-priority change: Column {column_name} in table {table_name} {change_type}")
+                                                # Handle column change (e.g., check for dependent validations)
+
+                                                # Check for validations that might be affected
+                                                if self.supabase_manager:
+                                                    # Try to find affected validations
+                                                    affected_validations = self.supabase_manager.get_validations_by_column(
+                                                        organization_id,
+                                                        table_name,
+                                                        column_name,
+                                                        connection_id
+                                                    )
+
+                                                    if affected_validations:
+                                                        logger.info(
+                                                            f"Found {len(affected_validations)} validations potentially affected by schema change")
+                                                        # Mark these validations for recheck or notify users
+
                                 except Exception as e:
                                     logger.error(f"Error in schema change detection for {connection_id}: {str(e)}")
+                                    logger.error(traceback.format_exc())
+
+                            # Check for other types of metadata that might need refreshing
+                            # For example, usage statistics
+                            if hasattr(self, 'schedule_usage_refresh_if_needed'):
+                                self.schedule_usage_refresh_if_needed(connection_id, 168)  # Weekly
 
                         except Exception as e:
                             logger.error(f"Error checking connection {connection_id}: {str(e)}")
+                            logger.error(traceback.format_exc())
 
                 # Sleep for a while before next check (1 hour)
                 time.sleep(3600)
 
             except Exception as e:
                 logger.error(f"Error in scheduled refresh loop: {str(e)}")
+                logger.error(traceback.format_exc())
                 time.sleep(300)  # Sleep for 5 minutes after error
 
     def _get_all_connections(self):
