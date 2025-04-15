@@ -1,4 +1,3 @@
-// src/pages/Metadata/components/SchemaChangesPanel.js
 import React, { useState, useEffect } from 'react';
 import { CheckCircleIcon, ExclamationTriangleIcon, ArrowPathIcon } from '@heroicons/react/24/outline';
 import { formatDate } from '../../../utils/formatting';
@@ -10,12 +9,17 @@ const SchemaChangesPanel = ({
   isLoading,
   onAcknowledge,
   onRefresh,
-  acknowledgedFilter, // Keep this for API-level filtering on initial load
-  setAcknowledgedFilter  // Keep this for API-level filtering on initial load
+  acknowledgedFilter,
+  setAcknowledgedFilter
 }) => {
   // Local filter states for client-side filtering
   const [localTypeFilter, setLocalTypeFilter] = useState('all');
   const [localAcknowledgedFilter, setLocalAcknowledgedFilter] = useState('all');
+
+  // Track optimistically acknowledged tables
+  const [optimisticAcknowledgements, setOptimisticAcknowledgements] = useState({});
+  // Track which acknowledgment requests are in progress
+  const [acknowledging, setAcknowledging] = useState({});
 
   // Initialize local filter to match server filter on component mount
   useEffect(() => {
@@ -31,17 +35,44 @@ const SchemaChangesPanel = ({
   const handleAcknowledgedFilterChange = (e) => {
     const newValue = e.target.value;
     setLocalAcknowledgedFilter(newValue);
-
-    // Only update the server filter when explicitly refreshing
-    // This prevents making a new API call just for filtering
-    // setAcknowledgedFilter(newValue);
   };
 
-  // Apply client-side filters to schema changes
+  // Handler for acknowledging changes with optimistic update
+  const handleAcknowledge = async (tableName) => {
+    // Mark this table as being acknowledged
+    setAcknowledging(prev => ({ ...prev, [tableName]: true }));
+
+    // Optimistically mark the table's changes as acknowledged
+    setOptimisticAcknowledgements(prev => ({ ...prev, [tableName]: true }));
+
+    try {
+      // Call the actual API
+      await onAcknowledge(tableName);
+      // On success, we don't need to do anything as the API will refresh the data
+    } catch (error) {
+      // On failure, revert the optimistic update
+      console.error('Failed to acknowledge changes:', error);
+      setOptimisticAcknowledgements(prev => ({ ...prev, [tableName]: false }));
+    } finally {
+      // Clear the acknowledging state
+      setAcknowledging(prev => ({ ...prev, [tableName]: false }));
+    }
+  };
+
+  // Apply client-side filters and optimistic updates to schema changes
   const filteredSchemaChanges = React.useMemo(() => {
     if (!schemaChanges) return [];
 
-    return schemaChanges.filter(change => {
+    // Create a modified list with optimistic acknowledgements applied
+    const changesWithOptimisticUpdates = schemaChanges.map(change => {
+      // If this change's table is being optimistically acknowledged, mark it as acknowledged
+      if (optimisticAcknowledgements[change.table] && !change.acknowledged) {
+        return { ...change, acknowledged: true, optimisticallyAcknowledged: true };
+      }
+      return change;
+    });
+
+    return changesWithOptimisticUpdates.filter(change => {
       // Filter by acknowledgement status
       if (localAcknowledgedFilter !== 'all') {
         const isAcknowledged = change.acknowledged ? 'true' : 'false';
@@ -63,7 +94,7 @@ const SchemaChangesPanel = ({
         return change.type === localTypeFilter;
       }
     });
-  }, [schemaChanges, localAcknowledgedFilter, localTypeFilter]);
+  }, [schemaChanges, localAcknowledgedFilter, localTypeFilter, optimisticAcknowledgements]);
 
   if (isLoading) {
     return (
@@ -156,12 +187,14 @@ const SchemaChangesPanel = ({
   };
 
   // Get badge for acknowledged status
-  const getAcknowledgedBadge = (acknowledged) => {
+  const getAcknowledgedBadge = (acknowledged, optimisticallyAcknowledged) => {
     if (acknowledged) {
       return (
-        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-secondary-100 text-secondary-600">
+        <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
+          optimisticallyAcknowledged ? 'bg-accent-50 text-accent-600' : 'bg-secondary-100 text-secondary-600'
+        }`}>
           <CheckCircleIcon className="mr-1 h-3 w-3" />
-          Acknowledged
+          {optimisticallyAcknowledged ? 'Acknowledging...' : 'Acknowledged'}
         </span>
       );
     }
@@ -203,11 +236,11 @@ const SchemaChangesPanel = ({
         <div className="flex space-x-2">
           {/* Add acknowledged filter - now using local state */}
           <select
-              id="acknowledged-filter"
-              name="acknowledged-filter"
-              className="block pl-3 pr-10 py-2 text-base border-secondary-300 focus:outline-none focus:ring-primary-500 focus:border-primary-500 sm:text-sm rounded-md"
-              value={localAcknowledgedFilter}
-              onChange={handleAcknowledgedFilterChange}
+            id="acknowledged-filter"
+            name="acknowledged-filter"
+            className="block pl-3 pr-10 py-2 text-base border-secondary-300 focus:outline-none focus:ring-primary-500 focus:border-primary-500 sm:text-sm rounded-md"
+            value={localAcknowledgedFilter}
+            onChange={handleAcknowledgedFilterChange}
           >
             <option value="all">All Changes</option>
             <option value="false">Unacknowledged Only</option>
@@ -215,11 +248,11 @@ const SchemaChangesPanel = ({
           </select>
 
           <select
-              id="filter"
-              name="filter"
-              className="block pl-3 pr-10 py-2 text-base border-secondary-300 focus:outline-none focus:ring-primary-500 focus:border-primary-500 sm:text-sm rounded-md"
-              value={localTypeFilter}
-              onChange={handleTypeFilterChange}
+            id="filter"
+            name="filter"
+            className="block pl-3 pr-10 py-2 text-base border-secondary-300 focus:outline-none focus:ring-primary-500 focus:border-primary-500 sm:text-sm rounded-md"
+            value={localTypeFilter}
+            onChange={handleTypeFilterChange}
           >
             <option value="all">All Types</option>
             <option value="added">Added</option>
@@ -237,19 +270,19 @@ const SchemaChangesPanel = ({
           </select>
 
           {onRefresh && (
-              <button
-                  onClick={() => {
-                    // When explicitly refreshing, sync local and server filters
-                    setAcknowledgedFilter(localAcknowledgedFilter);
-                    onRefresh();
-                  }}
-                  className="inline-flex items-center px-3 py-2 border border-secondary-300
+            <button
+              onClick={() => {
+                // When explicitly refreshing, sync local and server filters
+                setAcknowledgedFilter(localAcknowledgedFilter);
+                onRefresh();
+              }}
+              className="inline-flex items-center px-3 py-2 border border-secondary-300
                        shadow-sm text-sm leading-4 font-medium rounded-md text-secondary-700
                        bg-white hover:bg-secondary-50 focus:outline-none"
-              >
-                <ArrowPathIcon className="-ml-0.5 mr-2 h-4 w-4" aria-hidden="true"/>
-                Refresh
-              </button>
+            >
+              <ArrowPathIcon className="-ml-0.5 mr-2 h-4 w-4" aria-hidden="true" />
+              Refresh
+            </button>
           )}
         </div>
       </div>
@@ -257,19 +290,19 @@ const SchemaChangesPanel = ({
       <div className="bg-white shadow overflow-hidden sm:rounded-md">
         <ul className="divide-y divide-secondary-200">
           {Object.entries(changesByTable).map(([tableName, tableChanges]) => (
-              <li key={tableName} className="px-4 py-4">
-                <div className="flex items-center justify-between">
-                  <h4 className="text-sm font-medium text-secondary-900">{tableName}</h4>
-                  <span className="text-xs text-secondary-500">
+            <li key={tableName} className="px-4 py-4">
+              <div className="flex items-center justify-between">
+                <h4 className="text-sm font-medium text-secondary-900">{tableName}</h4>
+                <span className="text-xs text-secondary-500">
                   {tableChanges.length} {tableChanges.length === 1 ? 'change' : 'changes'}
                 </span>
-                </div>
+              </div>
 
-                <ul className="mt-2 space-y-2">
-                  {tableChanges.slice(0, 5).map((change, index) => (
-                      <li key={`${change.type}-${change.table}-${change.column || ''}-${index}`}
-                          className={`text-sm rounded-md p-2 ${change.acknowledged ? 'bg-secondary-50' : 'bg-yellow-50'}`}>
-                        <div className="flex items-start">
+              <ul className="mt-2 space-y-2">
+                {tableChanges.slice(0, 5).map((change, index) => (
+                  <li key={`${change.type}-${change.table}-${change.column || ''}-${index}`}
+                      className={`text-sm rounded-md p-2 ${change.acknowledged ? 'bg-secondary-50' : 'bg-yellow-50'}`}>
+                    <div className="flex items-start">
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center justify-between">
                           <p className="font-medium text-secondary-800">
@@ -281,7 +314,7 @@ const SchemaChangesPanel = ({
                           </p>
                           <div className="flex space-x-2">
                             {getChangeTypeBadge(change.type)}
-                            {getAcknowledgedBadge(change.acknowledged)}
+                            {getAcknowledgedBadge(change.acknowledged, change.optimisticallyAcknowledged)}
                           </div>
                         </div>
 
@@ -295,9 +328,14 @@ const SchemaChangesPanel = ({
                               Detected: {formatDate(change.timestamp, true)}
                             </div>
                           )}
-                          {change.acknowledged_at && (
+                          {change.acknowledged_at && !change.optimisticallyAcknowledged && (
                             <div>
                               Acknowledged: {formatDate(change.acknowledged_at, true)}
+                            </div>
+                          )}
+                          {change.optimisticallyAcknowledged && (
+                            <div>
+                              Acknowledged: Just now
                             </div>
                           )}
                         </div>
@@ -315,12 +353,20 @@ const SchemaChangesPanel = ({
               {onAcknowledge && tableChanges.some(change => !change.acknowledged) && (
                 <div className="mt-4 flex justify-end">
                   <button
-                    onClick={() => onAcknowledge(tableName)}
+                    onClick={() => handleAcknowledge(tableName)}
+                    disabled={acknowledging[tableName]}
                     className="inline-flex items-center px-3 py-1.5 border border-transparent
                               text-xs font-medium rounded-md shadow-sm text-white
-                              bg-primary-600 hover:bg-primary-700 focus:outline-none"
+                              bg-primary-600 hover:bg-primary-700 focus:outline-none disabled:opacity-50"
                   >
-                    Acknowledge Changes
+                    {acknowledging[tableName] ? (
+                      <>
+                        <LoadingSpinner size="xs" className="mr-1" />
+                        Acknowledging...
+                      </>
+                    ) : (
+                      'Acknowledge Changes'
+                    )}
                   </button>
                 </div>
               )}
