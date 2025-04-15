@@ -50,7 +50,9 @@ const MetadataPage = () => {
     detectChanges,
     isDetecting,
     acknowledgeChanges,
-    refetch: refetchChanges
+    refetch: refetchChanges,
+    setAcknowledgedFilter,  // Get this from the hook
+    acknowledgedFilter      // Get this from the hook
   } = useSchemaChanges(connectionId);
 
   // Use the refresh metadata mutation
@@ -231,10 +233,12 @@ const MetadataPage = () => {
               ) : (
                 <SchemaChangesPanel
                   connectionId={connectionId}
-                  schemaChanges={schemaChanges}  // Use schemaChanges instead of changes
+                  schemaChanges={schemaChanges}
                   isLoading={isLoadingChanges}
                   onAcknowledge={acknowledgeChanges}
                   onRefresh={handleDetectChanges}
+                  setAcknowledgedFilter={setAcknowledgedFilter}
+                  acknowledgedFilter={acknowledgedFilter}
                 />
               )}
             </div>

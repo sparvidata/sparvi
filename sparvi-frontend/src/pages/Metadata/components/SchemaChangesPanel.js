@@ -1,10 +1,25 @@
+// src/pages/Metadata/components/SchemaChangesPanel.js
+// Add a filter for acknowledged/unacknowledged changes
 import React, { useState } from 'react';
 import { CheckCircleIcon, ExclamationTriangleIcon, ArrowPathIcon } from '@heroicons/react/24/outline';
 import { formatDate } from '../../../utils/formatting';
 import LoadingSpinner from '../../../components/common/LoadingSpinner';
 
-const SchemaChangesPanel = ({ connectionId, schemaChanges, isLoading, onAcknowledge, onRefresh }) => {
+const SchemaChangesPanel = ({
+  connectionId,
+  schemaChanges,
+  isLoading,
+  onAcknowledge,
+  onRefresh,
+  acknowledgedFilter,
+  setAcknowledgedFilter
+}) => {
   const [filter, setFilter] = useState('all');
+
+  // Add handler for acknowledged filter change
+  const handleAcknowledgedFilterChange = (e) => {
+    setAcknowledgedFilter(e.target.value);
+  };
 
   if (isLoading) {
     return (
@@ -22,7 +37,9 @@ const SchemaChangesPanel = ({ connectionId, schemaChanges, isLoading, onAcknowle
         <CheckCircleIcon className="mx-auto h-12 w-12 text-accent-400" />
         <h3 className="mt-2 text-sm font-medium text-secondary-900">No Schema Changes Detected</h3>
         <p className="mt-1 text-sm text-secondary-500">
-          Your database schema is currently in sync with the metadata.
+          {acknowledgedFilter === 'false'
+            ? 'There are no unacknowledged schema changes.'
+            : 'Your database schema is currently in sync with the metadata.'}
         </p>
         {onRefresh && (
           <button
@@ -34,6 +51,16 @@ const SchemaChangesPanel = ({ connectionId, schemaChanges, isLoading, onAcknowle
             <ArrowPathIcon className="-ml-0.5 mr-2 h-4 w-4" aria-hidden="true" />
             Detect Changes
           </button>
+        )}
+        {acknowledgedFilter !== 'all' && (
+          <div className="mt-2">
+            <button
+              onClick={() => setAcknowledgedFilter('all')}
+              className="text-sm text-primary-600 hover:text-primary-800"
+            >
+              Show all changes
+            </button>
+          </div>
         )}
       </div>
     );
@@ -93,6 +120,19 @@ const SchemaChangesPanel = ({ connectionId, schemaChanges, isLoading, onAcknowle
     }
   };
 
+  // Get badge for acknowledged status
+  const getAcknowledgedBadge = (acknowledged) => {
+    if (acknowledged) {
+      return (
+        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-secondary-100 text-secondary-600">
+          <CheckCircleIcon className="mr-1 h-3 w-3" />
+          Acknowledged
+        </span>
+      );
+    }
+    return null;
+  };
+
   // Get descriptive text for change
   const getChangeDescription = (change) => {
     switch (change.type) {
@@ -133,6 +173,19 @@ const SchemaChangesPanel = ({ connectionId, schemaChanges, isLoading, onAcknowle
           Schema Changes ({schemaChanges.length})
         </h3>
         <div className="flex space-x-2">
+          {/* Add acknowledged filter */}
+          <select
+            id="acknowledged-filter"
+            name="acknowledged-filter"
+            className="block pl-3 pr-10 py-2 text-base border-secondary-300 focus:outline-none focus:ring-primary-500 focus:border-primary-500 sm:text-sm rounded-md"
+            value={acknowledgedFilter}
+            onChange={handleAcknowledgedFilterChange}
+          >
+            <option value="all">All Changes</option>
+            <option value="false">Unacknowledged Only</option>
+            <option value="true">Acknowledged Only</option>
+          </select>
+
           <select
             id="filter"
             name="filter"
@@ -140,7 +193,7 @@ const SchemaChangesPanel = ({ connectionId, schemaChanges, isLoading, onAcknowle
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
           >
-            <option value="all">All Changes</option>
+            <option value="all">All Types</option>
             <option value="added">Added</option>
             <option value="removed">Removed</option>
             <option value="changed">Modified</option>
@@ -180,7 +233,7 @@ const SchemaChangesPanel = ({ connectionId, schemaChanges, isLoading, onAcknowle
               <ul className="mt-2 space-y-2">
                 {tableChanges.slice(0, 5).map((change, index) => (
                   <li key={`${change.type}-${change.table}-${change.column || ''}-${index}`}
-                      className="text-sm bg-secondary-50 rounded-md p-2">
+                      className={`text-sm rounded-md p-2 ${change.acknowledged ? 'bg-secondary-50' : 'bg-yellow-50'}`}>
                     <div className="flex items-start">
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center justify-between">
@@ -191,18 +244,28 @@ const SchemaChangesPanel = ({ connectionId, schemaChanges, isLoading, onAcknowle
                               <span>Table: <span className="font-mono text-xs">{change.table}</span></span>
                             )}
                           </p>
-                          {getChangeTypeBadge(change.type)}
+                          <div className="flex space-x-2">
+                            {getChangeTypeBadge(change.type)}
+                            {getAcknowledgedBadge(change.acknowledged)}
+                          </div>
                         </div>
 
                         <p className="text-secondary-500 mt-1">
                           {getChangeDescription(change)}
                         </p>
 
-                        {change.timestamp && (
-                          <div className="mt-1 text-xs text-secondary-400">
-                            Detected: {formatDate(change.timestamp, true)}
-                          </div>
-                        )}
+                        <div className="mt-1 flex flex-wrap text-xs text-secondary-400 space-x-2">
+                          {change.timestamp && (
+                            <div>
+                              Detected: {formatDate(change.timestamp, true)}
+                            </div>
+                          )}
+                          {change.acknowledged_at && (
+                            <div>
+                              Acknowledged: {formatDate(change.acknowledged_at, true)}
+                            </div>
+                          )}
+                        </div>
                       </div>
                     </div>
                   </li>
@@ -214,7 +277,7 @@ const SchemaChangesPanel = ({ connectionId, schemaChanges, isLoading, onAcknowle
                 )}
               </ul>
 
-              {onAcknowledge && !tableChanges[0].acknowledged && (
+              {onAcknowledge && tableChanges.some(change => !change.acknowledged) && (
                 <div className="mt-4 flex justify-end">
                   <button
                     onClick={() => onAcknowledge(tableName)}

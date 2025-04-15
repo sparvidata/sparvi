@@ -4898,7 +4898,7 @@ def get_schema_changes(current_user, organization_id, connection_id):
     try:
         # Parse query parameters
         since_timestamp = request.args.get("since")
-        acknowledged = request.args.get("acknowledged", "false").lower() == "true"
+        acknowledged = request.args.get("acknowledged")
 
         # Check access to connection
         supabase_mgr = SupabaseManager()
@@ -4925,9 +4925,11 @@ def get_schema_changes(current_user, organization_id, connection_id):
             .select("*") \
             .eq("connection_id", connection_id)
 
-        # Add filter for acknowledged status
-        if not acknowledged:
-            query = query.eq("acknowledged", False)
+        # Add filter for acknowledged status if specified
+        if acknowledged is not None:
+            # Convert string 'true'/'false' to Python boolean
+            acknowledged_bool = acknowledged.lower() == 'true'
+            query = query.eq("acknowledged", acknowledged_bool)
 
         # Add filter for timestamp if provided
         if since_timestamp:

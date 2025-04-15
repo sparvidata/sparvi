@@ -6,17 +6,18 @@ import { useUI } from '../contexts/UIContext';
 export const useSchemaChanges = (connectionId, options = {}) => {
   const { showNotification } = useUI();
   const queryClient = useQueryClient();
+  const [acknowledgedFilter, setAcknowledgedFilter] = useState('all'); // Default to 'all' instead of false
   const { enabled = !!connectionId } = options;
 
-  // Fetch schema changes from the database
+  // Fetch schema changes from the database - now includes acknowledged changes by default
   const {
     data: changes,
     isLoading,
     error,
     refetch
   } = useQuery({
-    queryKey: ['schema-changes', connectionId],
-    queryFn: () => schemaAPI.getChanges(connectionId),
+    queryKey: ['schema-changes', connectionId, acknowledgedFilter], // Add filter to queryKey
+    queryFn: () => schemaAPI.getChanges(connectionId, { acknowledged: acknowledgedFilter }),
     enabled: enabled,
     select: (data) => {
       // Normalize the data format
@@ -77,6 +78,8 @@ export const useSchemaChanges = (connectionId, options = {}) => {
     isDetecting: detectChanges.isPending,
     acknowledgeChanges: (tableName) => acknowledgeChanges.mutate(tableName),
     isAcknowledging: acknowledgeChanges.isPending,
-    refetch
+    refetch,
+    setAcknowledgedFilter, // Export this function to control the filter
+    acknowledgedFilter     // Export current filter state
   };
 };

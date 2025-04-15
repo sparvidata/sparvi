@@ -590,10 +590,14 @@ export const schemaAPI = {
   },
 
   getChanges: (connectionId, options = {}) => {
-    const { acknowledged = false, since = null } = options;
+    // Change default to include acknowledged changes
+    const { acknowledged = 'all', since = null } = options;
 
     const params = {};
-    if (acknowledged !== undefined) params.acknowledged = acknowledged;
+    // Only add acknowledged param if it's not 'all'
+    if (acknowledged !== 'all') {
+      params.acknowledged = acknowledged;
+    }
     if (since) params.since = since;
 
     return enhancedRequest({
