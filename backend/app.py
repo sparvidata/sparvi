@@ -323,9 +323,21 @@ class ImprovedTaskManager:
             self.storage_service.store_columns_metadata(connection_id, columns_by_table)
             logger.info(f"Stored column metadata for {len(columns_by_table)} tables")
 
-        if statistics_by_table and depth in ["medium", "deep"]:
-            self.storage_service.store_statistics_metadata(connection_id, statistics_by_table)
-            logger.info(f"Stored statistics for {len(statistics_by_table)} tables")
+        # Aggregate and store statistics ONCE after processing all tables
+        if statistics_by_table: # Check if any statistics were collected
+            # Ensure we only store if depth required it (medium/deep)
+            # The collection logic inside _process_table already handles depth, but double-check here.
+            if depth in ["medium", "deep"]:
+                try:
+                    self.storage_service.store_statistics_metadata(connection_id, statistics_by_table)
+                    logger.info(f"Stored aggregated statistics for {len(statistics_by_table)} tables")
+                except Exception as e:
+                    logger.error(f"Failed to store aggregated statistics: {str(e)}")
+            else:
+                 logger.info(f"Skipping statistics storage for depth '{depth}'")
+        else:
+             logger.info("No statistics collected to store.")
+
 
         return {
             "status": "success",
@@ -859,10 +871,11 @@ class ImprovedTaskManager:
         duration_ms = (end_time - start_time).total_seconds() * 1000
         table_stats["collection_metadata"]["collection_duration_ms"] = duration_ms
 
-        # Store statistics in metadata storage
-        statistics_by_table = {table_name: table_stats}
-        self.storage_service.store_statistics_metadata(connection_id, statistics_by_table)
+        # REMOVED: Store statistics in metadata storage here. Aggregation happens in the calling function (_execute_full_collection).
+        # statistics_by_table = {table_name: table_stats}
+        # self.storage_service.store_statistics_metadata(connection_id, statistics_by_table)
 
+        # Track historical metrics (still useful to do here per table)
         try:
             from core.analytics.historical_metrics import HistoricalMetricsTracker
             tracker = HistoricalMetricsTracker(self.supabase_mgr)

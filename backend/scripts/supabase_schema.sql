@@ -53,11 +53,60 @@ CREATE TABLE validation_results (
   run_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
+create table public.connection_metadata (
+  id uuid not null default extensions.uuid_generate_v4 (),
+  connection_id uuid not null,
+  metadata_type character varying(50) not null,
+  metadata jsonb not null default '{}'::jsonb,
+  collected_at timestamp with time zone null default now(),
+  refresh_frequency interval null default '1 day'::interval,
+  constraint connection_metadata_pkey primary key (id),
+  constraint connection_metadata_connection_id_metadata_type_key unique (connection_id, metadata_type),
+  constraint connection_metadata_connection_id_fkey foreign KEY (connection_id) references database_connections (id)
+) TABLESPACE pg_default;
+
+create table public.schema_changes (
+  id uuid not null default extensions.uuid_generate_v4 (),
+  connection_id uuid not null,
+  organization_id uuid not null,
+  table_name text not null,
+  column_name text null,
+  change_type text not null,
+  details jsonb null,
+  detected_at timestamp with time zone null default now(),
+  acknowledged boolean null default false,
+  acknowledged_at timestamp with time zone null,
+  acknowledged_by uuid null,
+  baseline_metadata_id uuid null,
+  constraint schema_changes_pkey primary key (id),
+  constraint schema_changes_acknowledged_by_fkey foreign KEY (acknowledged_by) references profiles (id) on delete set null,
+  constraint schema_changes_baseline_metadata_id_fkey foreign KEY (baseline_metadata_id) references connection_metadata (id) on delete set null,
+  constraint schema_changes_connection_id_fkey foreign KEY (connection_id) references database_connections (id)
+) TABLESPACE pg_default;
+
+
 -- Add indexes for performance
 CREATE INDEX idx_profiling_history_org ON profiling_history(organization_id);
 CREATE INDEX idx_profiling_history_collected_at ON profiling_history(collected_at);
 CREATE INDEX idx_validation_rules_org_table ON validation_rules(organization_id, table_name);
 CREATE INDEX idx_validation_results_rule ON validation_results(rule_id);
+create index IF not exists idx_connection_metadata_collected_at on public.connection_metadata using btree (collected_at desc) TABLESPACE pg_default;
+create index IF not exists idx_connection_metadata_conn_type on public.connection_metadata using btree (connection_id, metadata_type) TABLESPACE pg_default;
+create index IF not exists idx_schema_changes_connection_id on public.schema_changes using btree (connection_id) TABLESPACE pg_default;
+create index IF not exists idx_schema_changes_baseline_metadata_id on public.schema_changes using btree (baseline_metadata_id) TABLESPACE pg_default;
+create index IF not exists idx_schema_changes_duplicate_check on public.schema_changes using btree (
+  connection_id,
+  organization_id,
+  baseline_metadata_id,
+  table_name,
+  column_name,
+  change_type
+) TABLESPACE pg_default;
+create index IF not exists idx_schema_changes_organization_id on public.schema_changes using btree (organization_id) TABLESPACE pg_default;
+create index IF not exists idx_schema_changes_acknowledged on public.schema_changes using btree (acknowledged) TABLESPACE pg_default;
+create index IF not exists idx_schema_changes_detected_at on public.schema_changes using btree (detected_at) TABLESPACE pg_default;
+create index IF not exists idx_schema_changes_table_name on public.schema_changes using btree (table_name) TABLESPACE pg_default;
+create index IF not exists idx_schema_changes_change_type on public.schema_changes using btree (change_type) TABLESPACE pg_default;
 
 -- Set up Row Level Security (RLS)
 ALTER TABLE organizations ENABLE ROW LEVEL SECURITY;

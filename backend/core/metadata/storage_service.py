@@ -33,34 +33,16 @@ class MetadataStorageService:
                 "count": len(tables_metadata)
             }
 
-            # Upsert into connection_metadata - explicitly handle potential conflict
-            try:
-                # Try the upsert, which should handle updates automatically
-                response = self.supabase.table("connection_metadata").upsert({
-                    "connection_id": connection_id,
-                    "metadata_type": "tables",
-                    "metadata": metadata,
-                    "collected_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-                    "refresh_frequency": "1 day"
-                }).execute()
-            except Exception as conflict_error:
-                # If upsert fails, try an explicit update
-                if "duplicate key value" in str(conflict_error):
-                    logger.info(f"Entry exists, updating connection_metadata for {connection_id}")
-                    response = self.supabase.table("connection_metadata") \
-                        .update({
-                        "metadata": metadata,
-                        "collected_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-                    }) \
-                        .eq("connection_id", connection_id) \
-                        .eq("metadata_type", "tables") \
-                        .execute()
-                else:
-                    # Re-raise if it's not a duplicate key error
-                    raise
+            # Always insert a new record for each collection run
+            response = self.supabase.table("connection_metadata").insert({
+                "connection_id": connection_id,
+                "metadata_type": "tables",
+                "metadata": metadata,
+                "collected_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                "refresh_frequency": "1 day"  # Consider if this should be set differently or removed
+            }).execute()
 
-            # If response has data, it was successful
-            if hasattr(response, 'data') and response.data:
+            if response.data:
                 logger.info(f"Stored metadata for {len(tables_metadata)} tables")
                 return True
 
@@ -81,38 +63,14 @@ class MetadataStorageService:
                 "total_columns": sum(len(cols) for cols in columns_by_table.values())
             }
 
-            # Use check-then-update/insert pattern
-            try:
-                # Check if record exists first
-                check_response = self.supabase.table("connection_metadata") \
-                    .select("id") \
-                    .eq("connection_id", connection_id) \
-                    .eq("metadata_type", "columns") \
-                    .execute()
-
-                if check_response.data and len(check_response.data) > 0:
-                    # Record exists, update it
-                    logger.info(f"Entry exists, updating columns metadata for {connection_id}")
-                    response = self.supabase.table("connection_metadata") \
-                        .update({
-                        "metadata": metadata,
-                        "collected_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-                    }) \
-                        .eq("connection_id", connection_id) \
-                        .eq("metadata_type", "columns") \
-                        .execute()
-                else:
-                    # Record doesn't exist, insert it
-                    response = self.supabase.table("connection_metadata").insert({
-                        "connection_id": connection_id,
-                        "metadata_type": "columns",
-                        "metadata": metadata,
-                        "collected_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-                        "refresh_frequency": "1 day"
-                    }).execute()
-            except Exception as e:
-                logger.error(f"Error upserting columns metadata: {str(e)}")
-                return False
+            # Always insert a new record
+            response = self.supabase.table("connection_metadata").insert({
+                "connection_id": connection_id,
+                "metadata_type": "columns",
+                "metadata": metadata,
+                "collected_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                "refresh_frequency": "1 day" # Consider if this should be set differently or removed
+            }).execute()
 
             if not response.data:
                 logger.error("Failed to store columns metadata")
@@ -152,37 +110,14 @@ class MetadataStorageService:
             metadata_json = json.dumps(metadata, cls=CustomJSONEncoder)
             metadata = json.loads(metadata_json)
 
-            # Use upsert with ON CONFLICT DO UPDATE
-            try:
-                # Check if record exists first
-                check_response = self.supabase.table("connection_metadata") \
-                    .select("id") \
-                    .eq("connection_id", connection_id) \
-                    .eq("metadata_type", "statistics") \
-                    .execute()
-
-                if check_response.data and len(check_response.data) > 0:
-                    # Record exists, update it
-                    response = self.supabase.table("connection_metadata") \
-                        .update({
-                        "metadata": metadata,
-                        "collected_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-                    }) \
-                        .eq("connection_id", connection_id) \
-                        .eq("metadata_type", "statistics") \
-                        .execute()
-                else:
-                    # Record doesn't exist, insert it
-                    response = self.supabase.table("connection_metadata").insert({
-                        "connection_id": connection_id,
-                        "metadata_type": "statistics",
-                        "metadata": metadata,
-                        "collected_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-                        "refresh_frequency": "1 day"
-                    }).execute()
-            except Exception as e:
-                logger.error(f"Error upserting statistics metadata: {str(e)}")
-                return False
+            # Always insert a new record
+            response = self.supabase.table("connection_metadata").insert({
+                "connection_id": connection_id,
+                "metadata_type": "statistics",
+                "metadata": metadata,
+                "collected_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                "refresh_frequency": "1 day" # Consider if this should be set differently or removed
+            }).execute()
 
             if not response.data:
                 logger.error("Failed to store statistics metadata")
@@ -196,21 +131,27 @@ class MetadataStorageService:
             return False
 
     def get_metadata(self, connection_id: str, metadata_type: str) -> Optional[Dict]:
-        """Get metadata of a specific type for a connection"""
+        """Get the most recent metadata of a specific type for a connection"""
         try:
+            # Select id, metadata, and collected_at, order by collected_at descending, limit 1
             response = self.supabase.table("connection_metadata") \
-                .select("metadata, collected_at") \
+                .select("id, metadata, collected_at") \
                 .eq("connection_id", connection_id) \
                 .eq("metadata_type", metadata_type) \
-                .single() \
+                .order("collected_at", desc=True) \
+                .limit(1) \
+                .maybe_single() \
                 .execute()
 
+            # maybe_single() returns None if no rows found, or the single row dict
             if not response.data:
                 logger.info(f"No {metadata_type} metadata found for connection {connection_id}")
                 return None
 
+            # Result includes id, metadata, collected_at
             result = response.data
-            result["freshness"] = self._calculate_freshness(response.data.get("collected_at"))
+            result["freshness"] = self._calculate_freshness(result.get("collected_at"))
+            # The 'id' is already included in the result dict from the select statement
             return result
 
         except Exception as e:
