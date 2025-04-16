@@ -173,6 +173,14 @@ class Task:
     result: Any = None
     error: Optional[str] = None
 
+class CustomJSONEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if hasattr(obj, 'isoformat'):
+            return obj.isoformat()
+        # Handle specific SQL/database types from SQLAlchemy or similar
+        if hasattr(obj, 'VARCHAR') or hasattr(obj, '__visit_name__'):
+            return str(obj)
+        return super().default(obj)
 
 class ImprovedTaskManager:
     """A more robust task manager with priority queue and worker pool"""
@@ -1149,6 +1157,9 @@ connection_pool_manager = ConnectionPoolManager.get_instance()
 
 # Initialize global task manager
 metadata_task_manager = None
+
+json_encoder = CustomJSONEncoder
+
 
 def init_metadata_task_manager():
     global metadata_task_manager
@@ -5961,22 +5972,25 @@ def detect_schema_changes(current_user, organization_id, connection_id):
 
         connection = connection_check.data[0]
 
-        # Create connector for this connection
+        # Safely handle data extraction with proper error handling
+        try:
+            data = request.get_json(silent=True) or {}
+        except Exception as e:
+            logger.warning(f"Error parsing JSON data: {str(e)}")
+            data = {}
+
+        force_refresh = data.get("force_refresh", True)
+        include_details = data.get("include_details", True)
+
+        # Create connector factory
         from core.metadata.connector_factory import ConnectorFactory
         connector_factory = ConnectorFactory(supabase_mgr)
 
-        # Create collector and storage service
-        connector = connector_factory.create_connector(connection)
-        connector.connect()
-
-        from core.metadata.collector import MetadataCollector
-        from core.metadata.storage_service import MetadataStorageService
-
-        collector = MetadataCollector(connection_id, connector)
-        storage_service = MetadataStorageService()
-
         # Create schema change detector
         from core.metadata.schema_change_detector import SchemaChangeDetector
+        from core.metadata.storage_service import MetadataStorageService
+
+        storage_service = MetadataStorageService()
         detector = SchemaChangeDetector(storage_service)
 
         # Detect schema changes
@@ -5986,7 +6000,24 @@ def detect_schema_changes(current_user, organization_id, connection_id):
             supabase_mgr
         )
 
-        # Group changes by type for better reporting
+        # Convert any non-serializable types to strings
+        def make_json_serializable(item):
+            if isinstance(item, dict):
+                return {k: make_json_serializable(v) for k, v in item.items()}
+            elif isinstance(item, list):
+                return [make_json_serializable(i) for i in item]
+            elif hasattr(item, 'isoformat'):  # Handle datetime objects
+                return item.isoformat()
+            elif not isinstance(item, (str, int, float, bool, type(None))):
+                # Convert any other non-serializable type to string
+                return str(item)
+            else:
+                return item
+
+        # Make changes JSON-serializable
+        changes = make_json_serializable(changes)
+
+        # Group changes by type
         change_types = {}
         for change in changes:
             change_type = change.get("type")
@@ -5997,24 +6028,29 @@ def detect_schema_changes(current_user, organization_id, connection_id):
         # Create tasks for handling important changes if needed
         tasks_created = 0
         if important_changes and changes:
-            # Publish events
-            task_ids = detector.publish_changes_as_events(
-                connection_id,
-                changes,
-                organization_id,
-                current_user
-            )
+            try:
+                # Publish events
+                task_ids = detector.publish_changes_as_events(
+                    connection_id,
+                    changes,
+                    organization_id,
+                    current_user
+                )
+                tasks_created = len(task_ids)
+            except Exception as e:
+                logger.error(f"Error publishing events: {str(e)}")
 
-            tasks_created = len(task_ids)
-
-        return jsonify({
-            "changes": changes,
+        # Prepare response
+        response_data = {
+            "changes": changes if include_details else [],
             "changes_detected": len(changes),
             "important_changes": important_changes,
             "change_types": change_types,
             "tasks_created": tasks_created,
             "message": f"Detected {len(changes)} schema changes"
-        })
+        }
+
+        return jsonify(response_data)
 
     except Exception as e:
         logger.error(f"Error in schema change detection: {str(e)}")

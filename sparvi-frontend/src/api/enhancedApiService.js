@@ -575,11 +575,15 @@ export const schemaAPI = {
     });
   },
 
-  detectChanges: (connectionId) => {
+  detectChanges: (connectionId, options = {}) => {
     return enhancedRequest({
       method: 'POST',
       url: `/connections/${connectionId}/schema/detect-changes`,
-      requestId: `schema.detectChanges.${connectionId}`
+      requestId: `schema.detectChanges.${connectionId}`,
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      data: options || {}  // Make sure we send an empty object if no options
     }).then(response => {
       // Clear schema cache if changes were detected
       if (response.changes_detected > 0) {

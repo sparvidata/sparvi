@@ -1,7 +1,8 @@
 import logging
+import traceback
 from typing import Dict, List, Any, Optional, Set, Tuple
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -136,20 +137,26 @@ class SchemaChangeDetector:
                                previous_columns: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """
         Compare columns between current and previous versions of a table
-
-        Args:
-            table_name: Name of the table
-            current_columns: List of current columns
-            previous_columns: List of previous columns
-
-        Returns:
-            List of detected column changes
         """
         changes = []
 
-        # Extract column names and metadata
-        current_cols = {col["name"]: col for col in current_columns if "name" in col}
-        previous_cols = {col["name"]: col for col in previous_columns if "name" in col}
+        # Convert column types to strings to ensure proper comparison
+        def prepare_column(col):
+            result = {}
+            for key, value in col.items():
+                if key == "type":
+                    # Ensure type is converted to string
+                    result[key] = str(value)
+                else:
+                    result[key] = value
+            return result
+
+        # Prepare columns for comparison
+        current_cols = {col["name"].lower(): prepare_column(col) for col in current_columns if "name" in col}
+        previous_cols = {col["name"].lower(): prepare_column(col) for col in previous_columns if "name" in col}
+
+        logger.debug(f"Current column names: {list(current_cols.keys())}")
+        logger.debug(f"Previous column names: {list(previous_cols.keys())}")
 
         # Find added columns
         for col_name in set(current_cols.keys()) - set(previous_cols.keys()):
@@ -157,13 +164,14 @@ class SchemaChangeDetector:
             changes.append({
                 "type": "column_added",
                 "table": table_name,
-                "column": col_name,
+                "column": col_info.get("name"),  # Use original case from column info
                 "details": {
                     "type": col_info.get("type", "unknown"),
                     "nullable": col_info.get("nullable", None)
                 },
                 "timestamp": datetime.now().isoformat()
             })
+            logger.debug(f"Detected column_added: {col_info.get('name')}")
 
         # Find removed columns
         for col_name in set(previous_cols.keys()) - set(current_cols.keys()):
@@ -171,12 +179,13 @@ class SchemaChangeDetector:
             changes.append({
                 "type": "column_removed",
                 "table": table_name,
-                "column": col_name,
+                "column": col_info.get("name"),  # Use original case from column info
                 "details": {
                     "type": col_info.get("type", "unknown")
                 },
                 "timestamp": datetime.now().isoformat()
             })
+            logger.debug(f"Detected column_removed: {col_info.get('name')}")
 
         # Check for column type or property changes
         for col_name in set(current_cols.keys()) & set(previous_cols.keys()):
@@ -184,31 +193,35 @@ class SchemaChangeDetector:
             previous_col = previous_cols[col_name]
 
             # Check type changes
-            if str(current_col.get("type", "")) != str(previous_col.get("type", "")):
+            if str(current_col.get("type", "")).lower() != str(previous_col.get("type", "")).lower():
                 changes.append({
                     "type": "column_type_changed",
                     "table": table_name,
-                    "column": col_name,
+                    "column": current_col.get("name"),  # Use original case
                     "details": {
                         "previous_type": previous_col.get("type", "unknown"),
                         "new_type": current_col.get("type", "unknown")
                     },
                     "timestamp": datetime.now().isoformat()
                 })
+                logger.debug(f"Detected column_type_changed: {current_col.get('name')}")
 
             # Check nullability changes
             if current_col.get("nullable") != previous_col.get("nullable"):
                 changes.append({
                     "type": "column_nullability_changed",
                     "table": table_name,
-                    "column": col_name,
+                    "column": current_col.get("name"),  # Use original case
                     "details": {
                         "previous_nullable": previous_col.get("nullable", None),
                         "new_nullable": current_col.get("nullable", None)
                     },
                     "timestamp": datetime.now().isoformat()
                 })
+                logger.debug(f"Detected column_nullability_changed: {current_col.get('name')}")
 
+        # Log detected changes
+        logger.debug(f"Total changes detected for table {table_name}: {len(changes)}")
         return changes
 
     def _compare_primary_keys(self,
@@ -469,7 +482,12 @@ class SchemaChangeDetector:
             connector = connector_factory.create_connector(connection)
             connector.connect()
 
-            # Get current schema
+            # First, explicitly invalidate any cached metadata to ensure fresh collection
+            if hasattr(connector, 'invalidate_connector_cache'):
+                connector.invalidate_connector_cache()
+                logger.info("Invalidated connector cache before collecting schema")
+
+            # Create metadata collector
             from .collector import MetadataCollector
             collector = MetadataCollector(connection_id, connector)
 
@@ -480,18 +498,25 @@ class SchemaChangeDetector:
 
             # Get table list
             tables = collector.collect_table_list()
+            logger.info(f"Found {len(tables)} tables in current schema")
 
             # Limit to a reasonable number of tables to avoid performance issues
-            tables_to_check = tables[:50]  # First 50 tables
+            tables_to_check = tables[:100]  # Increased from 50 to 100 for better coverage
+
+            # Log which tables we'll be processing
+            logger.info(f"Processing {len(tables_to_check)} tables for schema change detection")
+            logger.debug(f"Tables to check: {tables_to_check}")
 
             # Collect comprehensive metadata for each table
             for table_name in tables_to_check:
                 try:
-                    # Get column information
-                    columns = collector.collect_columns(table_name)
+                    # Get column information - force refresh by using connector directly
+                    columns = connector.get_columns(table_name)
+                    logger.debug(f"Retrieved {len(columns)} columns for table {table_name}")
 
                     # Get primary key information
                     primary_keys = connector.get_primary_keys(table_name)
+                    logger.debug(f"Retrieved primary keys for table {table_name}: {primary_keys}")
 
                     # Get foreign key information (if supported)
                     foreign_keys = []
@@ -521,58 +546,59 @@ class SchemaChangeDetector:
                     current_schema["tables"].append(table_data)
                 except Exception as e:
                     logger.error(f"Error collecting schema for table {table_name}: {str(e)}")
+                    logger.error(traceback.format_exc())
                     continue
 
-            # --- Refined Logic for Baseline Fetching and Comparison ---
+            logger.info(f"Collected current schema data for {len(current_schema['tables'])} tables")
 
-            # 1. Fetch Previous Metadata Snapshots (Typed)
-            previous_tables_result = None
-            previous_columns_result = None
-            # Add others like keys, indices if stored separately and needed for comparison
-
-            baseline_tables_id = None # Use tables baseline ID for linking changes
+            # Get previous schema from storage
+            previous_schema = None
 
             if self.storage_service:
+                # Get most recent metadata from storage
                 previous_tables_result = self.storage_service.get_metadata(connection_id, "tables")
                 previous_columns_result = self.storage_service.get_metadata(connection_id, "columns")
-                # Fetch others if needed
 
-            # If no previous 'tables' metadata exists, store current and exit
-            if not previous_tables_result or "metadata" not in previous_tables_result:
-                logger.info(f"No previous 'tables' metadata found for connection {connection_id}. Storing current schema as baseline.")
+                logger.debug(f"Previous tables metadata: {previous_tables_result is not None}")
+                logger.debug(f"Previous columns metadata: {previous_columns_result is not None}")
+
+                if previous_tables_result and "metadata" in previous_tables_result:
+                    previous_schema = {
+                        "tables": previous_tables_result["metadata"].get("tables", [])
+                    }
+
+                    # Inject columns data into the previous_schema structure
+                    if previous_columns_result and "metadata" in previous_columns_result:
+                        previous_columns_by_table = previous_columns_result["metadata"].get("columns_by_table", {})
+
+                        for table_meta in previous_schema["tables"]:
+                            table_name = table_meta.get("name")
+                            if table_name in previous_columns_by_table:
+                                table_meta["columns"] = previous_columns_by_table[table_name]
+                            else:
+                                table_meta["columns"] = []  # Ensure key exists even if no columns found
+
+            # If no previous schema, store current and exit
+            if not previous_schema or not previous_schema.get("tables"):
+                logger.info(
+                    f"No previous schema found for connection {connection_id}. Storing current schema as baseline.")
                 if self.storage_service and current_schema["tables"]:
                     # Store tables
                     self.storage_service.store_tables_metadata(connection_id, current_schema["tables"])
                     # Store columns
                     current_columns_by_table = {tbl['name']: tbl.get('columns', []) for tbl in current_schema["tables"]}
                     if current_columns_by_table:
-                         self.storage_service.store_columns_metadata(connection_id, current_columns_by_table)
-                    # TODO: Store keys, indices if collected and storage methods exist
-                    logger.info(f"Stored initial comprehensive schema for connection {connection_id}.")
+                        self.storage_service.store_columns_metadata(connection_id, current_columns_by_table)
+                    logger.info(f"Stored initial schema for connection {connection_id}")
                 return [], False
 
-            # Extract baseline ID from tables metadata
-            baseline_tables_id = previous_tables_result.get("id")
-            previous_tables_data = previous_tables_result["metadata"]
-
-            # 2. Construct Comprehensive `previous_schema` Dictionary
-            previous_schema = previous_tables_data # Start with tables data
-
-            # Inject columns data into the previous_schema structure
-            if previous_columns_result and "metadata" in previous_columns_result:
-                previous_columns_by_table = previous_columns_result["metadata"].get("columns_by_table", {})
-                if "tables" in previous_schema:
-                    for table_meta in previous_schema["tables"]:
-                        table_name = table_meta.get("name")
-                        if table_name in previous_columns_by_table:
-                            table_meta["columns"] = previous_columns_by_table[table_name]
-                        else:
-                            table_meta["columns"] = [] # Ensure key exists even if no columns found
-
-            # TODO: Inject keys, indices similarly if fetched and stored separately
-
-            # 3. Compare Comprehensive Schemas
+            # Compare schemas
             changes = self.compare_schemas(connection_id, current_schema, previous_schema)
+            logger.info(f"Schema comparison complete, found {len(changes)} changes")
+
+            # Log detailed changes for debugging
+            for change in changes:
+                logger.debug(f"Change detected: {change}")
 
             # Determine if there are important changes
             important_change_types = [
@@ -583,54 +609,47 @@ class SchemaChangeDetector:
                 "index_added", "index_removed", "index_changed"
             ]
 
-            important_changes = len([c for c in changes if c["type"] in important_change_types]) > 0
-
-            logger.info(f"Detected {len(changes)} schema changes, important: {important_changes}")
+            important_changes = any(c["type"] in important_change_types for c in changes)
+            logger.info(f"Important changes detected: {important_changes}")
 
             # If changes detected, store the new schema
-            if changes and self.storage_service:
-                # 5. Store Current Metadata (Typed)
-                # Store tables
-                self.storage_service.store_tables_metadata(connection_id, current_schema["tables"])
-                # Store columns
-                current_columns_by_table = {tbl['name']: tbl.get('columns', []) for tbl in current_schema["tables"]}
-                if current_columns_by_table:
-                    self.storage_service.store_columns_metadata(connection_id, current_columns_by_table)
-                # TODO: Store keys, indices if collected and storage methods exist
-                logger.info(f"Stored new comprehensive schema snapshot for connection {connection_id}")
+            if changes:
+                logger.info(f"Storing updated schema after detecting {len(changes)} changes")
+                if self.storage_service:
+                    # Store tables
+                    self.storage_service.store_tables_metadata(connection_id, current_schema["tables"])
+                    # Store columns
+                    current_columns_by_table = {tbl['name']: tbl.get('columns', []) for tbl in current_schema["tables"]}
+                    if current_columns_by_table:
+                        self.storage_service.store_columns_metadata(connection_id, current_columns_by_table)
+                    logger.info(f"Stored updated schema for connection {connection_id}")
 
-                # 6. Store Changes (linked to the tables baseline ID)
-                if baseline_tables_id:
-                    self._store_schema_changes(connection_id, changes, baseline_tables_id, supabase_manager)
-                else:
-                    # This case should ideally not happen if previous_tables_result existed
-                    logger.warning("Baseline tables ID not found, cannot store schema changes with baseline link.")
+                    # Store the actual changes in the database
+                    if supabase_manager:
+                        self._store_schema_changes(connection_id, changes, supabase_manager)
+                        logger.info(f"Stored {len(changes)} schema changes in database")
 
             return changes, important_changes
 
         except Exception as e:
             logger.error(f"Error detecting schema changes: {str(e)}")
+            logger.error(traceback.format_exc())
             return [], False
 
     def _store_schema_changes(self,
                               connection_id: str,
                               changes: List[Dict[str, Any]],
-                              baseline_metadata_id: str,
                               supabase_manager=None):
         """
-        Store detected schema changes in the database, avoiding duplicates for the same baseline.
+        Store detected schema changes in the database.
 
         Args:
             connection_id: Connection ID
             changes: List of detected changes
-            baseline_metadata_id: The ID of the connection_metadata record used as the baseline.
             supabase_manager: Supabase manager for database operations
         """
         if not supabase_manager:
             logger.warning("No Supabase manager provided, cannot store schema changes.")
-            return
-        if not baseline_metadata_id:
-            logger.warning("No baseline_metadata_id provided, cannot store schema changes with baseline link.")
             return
 
         try:
@@ -650,67 +669,167 @@ class SchemaChangeDetector:
 
             current_time = datetime.now().isoformat()
             stored_count = 0
-            skipped_count = 0 # Ensure initialization is before the loop
+            skipped_count = 0
 
-            # Store each change, checking for duplicates against the specific baseline
+            # Store each change
             for change in changes:
-                # Removed inner try block for simplicity; outer try block handles overall errors.
-                table_name = change.get("table")
-                column_name = change.get("column") # Can be None
-                change_type = change.get("type")
+                try:
+                    table_name = change.get("table")
+                    column_name = change.get("column")  # Can be None
+                    change_type = change.get("type")
 
-                # Check if this exact change already exists for this baseline_metadata_id
-                query = supabase_manager.supabase.table("schema_changes") \
-                    .select("id", count="exact") \
-                    .eq("connection_id", connection_id) \
-                    .eq("organization_id", organization_id) \
-                    .eq("baseline_metadata_id", baseline_metadata_id) \
-                    .eq("table_name", table_name) \
-                    .eq("change_type", change_type)
+                    logger.debug(f"Storing change: {change_type} on {table_name}" +
+                                 (f".{column_name}" if column_name else ""))
 
-                # Handle nullable column_name in the query
-                if column_name is None:
-                    query = query.is_("column_name", "null")
-                else:
-                    query = query.eq("column_name", column_name)
+                    # Check if this exact change already exists (within the last day)
+                    yesterday = (datetime.now() - timedelta(days=1)).isoformat()
 
-                # Execute the check query
-                check_result = query.execute()
+                    query = supabase_manager.supabase.table("schema_changes") \
+                        .select("id", count="exact") \
+                        .eq("connection_id", connection_id) \
+                        .eq("organization_id", organization_id) \
+                        .eq("table_name", table_name) \
+                        .eq("change_type", change_type) \
+                        .gte("detected_at", yesterday)
 
-                # If count is > 0, this change already exists for this baseline, skip insertion
-                if check_result.count > 0:
-                    skipped_count += 1
-                    # logger.debug(f"Skipping duplicate schema change: {change_type} on {table_name}.{column_name} for baseline {baseline_metadata_id}")
-                    continue
+                    # Handle nullable column_name in the query
+                    if column_name is None:
+                        query = query.is_("column_name", "null")
+                    else:
+                        query = query.eq("column_name", column_name)
 
-                # Create a record for schema_changes table, including the baseline ID
-                change_record = {
-                    "connection_id": connection_id,
-                    "organization_id": organization_id,
-                    "baseline_metadata_id": baseline_metadata_id, # Link to the baseline snapshot
-                    "table_name": table_name,
-                    "column_name": column_name,
-                    "change_type": change_type,
-                    "details": json.dumps(change.get("details", {})),
-                    "detected_at": current_time,
-                    "acknowledged": False
-                }
+                    # Execute the check query
+                    check_result = query.execute()
 
-                # Insert into schema_changes table
-                insert_result = supabase_manager.supabase.table("schema_changes").insert(change_record).execute()
+                    # If count is > 0, this change already exists recently, skip insertion
+                    if check_result.count > 0:
+                        skipped_count += 1
+                        logger.debug(f"Skipping duplicate schema change: {change_type} on {table_name}" +
+                                     (f".{column_name}" if column_name else ""))
+                        continue
 
-                if insert_result.data:
-                    stored_count += 1
-                else:
-                    logger.warning(f"Failed to store schema change of type {change_type} for table {table_name}")
+                    # Create a record for schema_changes table
+                    change_record = {
+                        "connection_id": connection_id,
+                        "organization_id": organization_id,
+                        "table_name": table_name,
+                        "column_name": column_name,
+                        "change_type": change_type,
+                        "details": json.dumps(change.get("details", {})),
+                        "detected_at": current_time,
+                        "acknowledged": False
+                    }
 
-            # Removed inner except block. Outer except block will catch errors.
+                    # Insert into schema_changes table
+                    insert_result = supabase_manager.supabase.table("schema_changes").insert(change_record).execute()
 
-            logger.info(f"Schema changes processed: Stored {stored_count}, Skipped {skipped_count} duplicates for baseline {baseline_metadata_id}")
+                    if insert_result.data:
+                        stored_count += 1
+                        logger.debug(f"Stored schema change: {change_type} on {table_name}" +
+                                     (f".{column_name}" if column_name else ""))
+                    else:
+                        logger.warning(f"Failed to store schema change of type {change_type} for table {table_name}")
+
+                except Exception as e:
+                    logger.error(f"Error storing individual schema change: {str(e)}")
+                    logger.error(traceback.format_exc())
+                    # Continue with next change
+
+            logger.info(f"Schema changes processed: Stored {stored_count}, Skipped {skipped_count} duplicates")
 
         except Exception as e:
             logger.error(f"Error in schema change storage: {str(e)}")
+            logger.error(traceback.format_exc())
 
+    def force_schema_refresh(self, connection_id: str, connector_factory, supabase_manager=None) -> bool:
+        """
+        Force a schema refresh to ensure fresh metadata for change detection
+
+        Args:
+            connection_id: Connection ID
+            connector_factory: Factory to create database connectors
+            supabase_manager: Optional Supabase manager for querying connection details
+
+        Returns:
+            True if successful, False if error
+        """
+        try:
+            logger.info(f"Forcing schema refresh for connection {connection_id}")
+
+            # Get connection details if needed
+            connection = None
+            if supabase_manager:
+                connection = supabase_manager.get_connection(connection_id)
+
+            if not connection:
+                logger.error(f"Could not get connection details for {connection_id}")
+                return False
+
+            # Create connector
+            connector = connector_factory.create_connector(connection)
+            connector.connect()
+
+            # Invalidate connector cache if method exists
+            if hasattr(connector, 'invalidate_connector_cache'):
+                connector.invalidate_connector_cache()
+                logger.info("Invalidated connector cache")
+
+            # Create metadata collector
+            from .collector import MetadataCollector
+            collector = MetadataCollector(connection_id, connector)
+
+            # Get table list to refresh schema
+            tables = collector.collect_table_list()
+
+            # Limit to a reasonable number of tables
+            tables_to_refresh = tables[:50]
+
+            # Collect current comprehensive schema
+            schema = {
+                "tables": []
+            }
+
+            # Process each table
+            for table_name in tables_to_refresh:
+                try:
+                    # Get column information
+                    columns = connector.get_columns(table_name)
+
+                    # Get primary key information
+                    primary_keys = connector.get_primary_keys(table_name)
+
+                    # Add table to schema
+                    table_data = {
+                        "name": table_name,
+                        "columns": columns,
+                        "primary_key": primary_keys
+                    }
+
+                    schema["tables"].append(table_data)
+
+                except Exception as e:
+                    logger.error(f"Error collecting schema for table {table_name}: {str(e)}")
+                    continue
+
+            # Store the fresh schema
+            if schema["tables"] and self.storage_service:
+                # Store tables
+                self.storage_service.store_tables_metadata(connection_id, schema["tables"])
+
+                # Store columns
+                columns_by_table = {tbl['name']: tbl.get('columns', []) for tbl in schema["tables"]}
+                if columns_by_table:
+                    self.storage_service.store_columns_metadata(connection_id, columns_by_table)
+
+                logger.info(f"Stored fresh schema for {len(schema['tables'])} tables")
+                return True
+
+            return False
+
+        except Exception as e:
+            logger.error(f"Error in force schema refresh: {str(e)}")
+            logger.error(traceback.format_exc())
+            return False
 
     def publish_changes_as_events(self,
                                   connection_id: str,
