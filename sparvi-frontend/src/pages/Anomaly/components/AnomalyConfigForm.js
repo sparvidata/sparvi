@@ -1,4 +1,4 @@
-// src/pages/Anomaly/AnomalyConfigForm.js
+// src/pages/Anomaly/components/AnomalyConfigForm.js
 
 import React, { useState, useEffect } from 'react';
 import { useConnection } from '../../../contexts/EnhancedConnectionContext';
@@ -7,10 +7,12 @@ import { useParams, useNavigate, Link } from 'react-router-dom';
 import {
   ArrowLeftIcon,
   CheckIcon,
-  ExclamationTriangleIcon
+  ExclamationTriangleIcon,
+  ServerIcon
 } from '@heroicons/react/24/outline';
 import LoadingSpinner from '../../../components/common/LoadingSpinner';
 import BatchRequest from '../../../components/common/BatchRequest';
+import EmptyState from '../../../components/common/EmptyState';
 
 const AnomalyConfigForm = () => {
   const { activeConnection, loading: connectionLoading } = useConnection();
@@ -37,27 +39,11 @@ const AnomalyConfigForm = () => {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
 
-  // Debug connection state
+  // Handle redirect if connection ID is missing but we have activeConnection
   useEffect(() => {
-    console.log("AnomalyConfigForm - Connection state:", {
-      connectionId,
-      configId,
-      activeConnectionId: activeConnection?.id,
-      connectionLoading,
-      isEdit
-    });
-  }, [connectionId, configId, activeConnection, connectionLoading, isEdit]);
-
-  // Handle redirect if connection ID is missing
-  useEffect(() => {
-    if (!connectionLoading && (!connectionId || connectionId === 'undefined')) {
-      if (activeConnection) {
-        // Redirect to the page with a valid connection ID
-        navigate(`/anomalies/${activeConnection.id}/configs${isEdit ? `/${configId}` : '/new'}`, { replace: true });
-      } else {
-        // Redirect to anomalies page to select a connection
-        navigate('/anomalies', { replace: true });
-      }
+    if (!connectionLoading && !connectionId && activeConnection) {
+      // Redirect to the page with a valid connection ID
+      navigate(`/anomalies/${activeConnection.id}/configs${isEdit ? `/${configId}` : '/new'}`, { replace: true });
     }
   }, [connectionId, configId, activeConnection, connectionLoading, isEdit, navigate]);
 
@@ -84,7 +70,7 @@ const AnomalyConfigForm = () => {
             throw new Error('Failed to fetch configuration');
           }
 
-          const data = await response.json();
+const data = await response.json();
           setConfig(data.config);
         } catch (err) {
           console.error('Error fetching config:', err);
@@ -177,8 +163,10 @@ const AnomalyConfigForm = () => {
     }
   };
 
-  // Define requests with safeguards
+  // Check if we can fetch data safely
   const shouldFetchData = !connectionLoading && connectionId && connectionId !== 'undefined';
+
+  // Define requests with safeguards
   const requests = shouldFetchData ? [
     {
       id: 'tables',
@@ -186,12 +174,40 @@ const AnomalyConfigForm = () => {
     }
   ] : [];
 
+  // If no active connection is available
+  if (!connectionLoading && !activeConnection) {
+    return (
+      <EmptyState
+        icon={ServerIcon}
+        title="No connection selected"
+        description="Please select a database connection to manage anomaly configurations"
+        actionText="Manage Connections"
+        actionLink="/connections"
+      />
+    );
+  }
+
   // Show loading spinner while connection is loading or redirecting
-  if (connectionLoading || !connectionId || connectionId === 'undefined') {
+  if (connectionLoading) {
     return (
       <div className="flex justify-center py-12">
         <LoadingSpinner size="lg" />
         <p className="ml-4 text-gray-500">Loading connection data...</p>
+      </div>
+    );
+  }
+
+  // If no connection ID is available (and no active connection to redirect to)
+  if (!connectionId || connectionId === 'undefined') {
+    return (
+      <div className="text-center py-10">
+        <p className="text-red-500">No connection ID available. Please select a connection.</p>
+        <Link
+          to="/anomalies"
+          className="mt-4 inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-primary-600 hover:bg-primary-700"
+        >
+          Go to Anomaly Dashboard
+        </Link>
       </div>
     );
   }
@@ -238,7 +254,8 @@ const AnomalyConfigForm = () => {
       {shouldFetchData ? (
         <BatchRequest
           requests={requests}
-          skipAuthWait={false} // Ensure auth is ready
+          key={`config-form-${connectionId}`}
+          skipAuthWait={false}
         >
           {(data) => {
             const tables = data.tables?.tables || [];

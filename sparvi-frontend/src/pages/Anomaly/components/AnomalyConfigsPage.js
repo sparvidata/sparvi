@@ -10,7 +10,8 @@ import {
   PencilIcon,
   CheckCircleIcon,
   XCircleIcon,
-  AdjustmentsHorizontalIcon
+  AdjustmentsHorizontalIcon,
+  ServerIcon
 } from '@heroicons/react/24/outline';
 import LoadingSpinner from '../../../components/common/LoadingSpinner';
 import BatchRequest from '../../../components/common/BatchRequest';
@@ -27,19 +28,10 @@ const AnomalyConfigsPage = () => {
   const [filterTable, setFilterTable] = useState('');
   const [refreshTrigger, setRefreshTrigger] = useState(0);
 
-  // Debug connection state
-  useEffect(() => {
-    console.log("AnomalyConfigsPage - Connection state:", {
-      connectionId,
-      activeConnectionId: activeConnection?.id,
-      connectionLoading
-    });
-  }, [connectionId, activeConnection, connectionLoading]);
-
-  // Check for valid connection ID and redirect if needed
+  // Handle redirect if connection ID is missing but we have activeConnection
   useEffect(() => {
     if (!connectionLoading && !connectionId && activeConnection) {
-      console.log("No connectionId, redirecting to active connection:", activeConnection.id);
+      console.log("No connectionId in URL, redirecting to active connection:", activeConnection.id);
       navigate(`/anomalies/${activeConnection.id}/configs`, { replace: true });
     }
   }, [connectionId, connectionLoading, activeConnection, navigate]);
@@ -54,8 +46,10 @@ const AnomalyConfigsPage = () => {
     ]);
   }, [updateBreadcrumbs, connectionId, activeConnection]);
 
-  // Define requests with safeguards
+  // Check if we can fetch data safely
   const shouldFetchData = !connectionLoading && connectionId && connectionId !== 'undefined';
+
+  // Define the requests for batch loading - only when we have a valid connectionId
   const requests = shouldFetchData ? [
     {
       id: 'configs',
@@ -157,6 +151,19 @@ const AnomalyConfigsPage = () => {
     return <LoadingSpinner size="lg" className="mx-auto my-12" />;
   }
 
+  // If no active connection is available
+  if (!activeConnection) {
+    return (
+      <EmptyState
+        icon={ServerIcon}
+        title="No connection selected"
+        description="Please select a database connection to view anomaly configurations"
+        actionText="Manage Connections"
+        actionLink="/connections"
+      />
+    );
+  }
+
   if (!connectionId || connectionId === 'undefined') {
     return (
       <div className="text-center py-10">
@@ -188,7 +195,7 @@ const AnomalyConfigsPage = () => {
       {shouldFetchData ? (
         <BatchRequest
           requests={requests}
-          key={`configs-${refreshTrigger}`}
+          key={`configs-${refreshTrigger}-${connectionId}`}
           skipAuthWait={false} // Ensure auth is ready
         >
           {(data) => {
