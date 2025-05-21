@@ -8,7 +8,8 @@ import {
   ChartBarIcon,
   Cog6ToothIcon,
   ShieldCheckIcon,
-  CommandLineIcon
+  CommandLineIcon,
+  ExclamationTriangleIcon
 } from '@heroicons/react/24/outline';
 import { useUI } from '../../contexts/UIContext';
 import Logo from '../common/Logo';
@@ -24,6 +25,8 @@ const Sidebar = () => {
     // { name: 'Data Explorer', icon: TableCellsIcon, href: '/explorer' },
     { name: 'Validations', icon: ClipboardDocumentCheckIcon, href: '/validations' },
     { name: 'Metadata', icon: CommandLineIcon, href: '/metadata' },
+    { name: 'Anomalies', icon: ExclamationTriangleIcon, href: '/anomalies' },
+
     // { name: 'Analytics', icon: ChartBarIcon, href: '/analytics' },
     // { name: 'Admin', icon: ShieldCheckIcon, href: '/admin' },
     // { name: 'Settings', icon: Cog6ToothIcon, href: '/settings' },

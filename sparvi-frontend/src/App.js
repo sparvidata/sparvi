@@ -27,6 +27,7 @@ import DataExplorerPage from './pages/DataExplorer/DataExplorerPage';
 import TableDetailPage from './pages/DataExplorer/TableDetailPage';
 import ValidationPage from './pages/Validations/ValidationPage';
 import MetadataPage from './pages/Metadata/MetadataPage';
+import AnomalyDashboardPage from './pages/Anomaly/AnomalyDashboardPage'
 import AnalyticsPage from './pages/Analytics/AnalyticsPage';
 import TableAnalyticsPage from './pages/Analytics/TableAnalyticsPage';
 import SchemaChangesPage from './pages/Analytics/SchemaChangesPage';
@@ -73,6 +74,9 @@ function App() {
 
                   {/* Metadata */}
                   <Route path="/metadata" element={<MetadataPage />} />
+
+                  {/* Anomalies */}
+                  <Route path="/anomalies" element={<AnomalyDashboardPage />} />
 
                   {/* Analytics */}
                   <Route path="/analytics" element={<AnalyticsPage />} />

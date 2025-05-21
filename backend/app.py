@@ -33,6 +33,8 @@ from core.history.supabase_profile_history import SupabaseProfileHistoryManager
 from core.metadata.manager import MetadataTaskManager
 from core.metadata.events import MetadataEventType, publish_metadata_event
 from core.utils.performance_optimizations import apply_performance_optimizations
+from core.anomalies.routes import register_anomaly_routes
+from core.anomalies.scheduler_service import AnomalyDetectionSchedulerService
 
 import concurrent.futures
 from sqlalchemy.pool import QueuePool
@@ -1151,6 +1153,64 @@ class ImprovedTaskManager:
             "worker_status": "running" if self.running else "stopped"
         }
 
+import os
+
+
+def token_required(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        # Special case for testing
+        if os.environ.get('TESTING') == 'True' and request.headers.get('Authorization') == 'Bearer test-token':
+            logger.debug("Test token detected, bypassing authentication")
+            return f("test-user-id", "test-org-id", *args, **kwargs)
+
+        # Normal token check
+        token = None
+        auth_header = request.headers.get("Authorization", None)
+        if auth_header:
+            parts = auth_header.split()
+            if len(parts) == 2 and parts[0] == "Bearer":
+                token = parts[1]
+        if not token:
+            logger.warning("No token provided")
+            return jsonify({"error": "Token is missing!", "code": "token_missing"}), 401
+
+        try:
+            # Use the new validation utility
+            from core.utils.auth_utils import validate_token
+            decoded = validate_token(token)
+
+            if not decoded:
+                logger.warning("Token validation failed - expired or invalid")
+                return jsonify({
+                    "error": "Token is expired or invalid!",
+                    "code": "token_expired"
+                }), 401
+
+            current_user = decoded.get("sub")
+            if not current_user:
+                logger.error("User ID not found in token")
+                return jsonify({"error": "Invalid token format", "code": "token_invalid"}), 401
+
+            logger.info(f"Token valid for user: {current_user}")
+
+            # Get the user's organization ID
+            supabase_mgr = SupabaseManager()
+            organization_id = supabase_mgr.get_user_organization(current_user)
+
+            if not organization_id:
+                logger.error(f"No organization found for user: {current_user}")
+                return jsonify({"error": "User has no associated organization", "code": "org_missing"}), 403
+
+        except Exception as e:
+            logger.error(f"Token verification error: {str(e)}")
+            logger.error(traceback.format_exc())
+            return jsonify({"error": "Token validation failed!", "message": str(e), "code": "token_error"}), 401
+
+        # Pass both user_id and organization_id to the decorated function
+        return f(current_user, organization_id, *args, **kwargs)
+
+    return decorated
 
 # Initialize connection pool manager
 connection_pool_manager = ConnectionPoolManager.get_instance()
@@ -1159,6 +1219,22 @@ connection_pool_manager = ConnectionPoolManager.get_instance()
 metadata_task_manager = None
 
 json_encoder = CustomJSONEncoder
+
+anomaly_scheduler_service = None
+
+
+def initialize_anomaly_detection():
+    global anomaly_scheduler_service
+
+    # Register routes
+    register_anomaly_routes(app, token_required)
+
+    # Start scheduler service in production mode
+    if os.environ.get('FLASK_ENV') != 'development':
+        anomaly_scheduler_service = AnomalyDetectionSchedulerService()
+        anomaly_scheduler_service.start()
+        logger.info("Anomaly detection scheduler service started")
+
 
 
 def init_metadata_task_manager():
@@ -1265,32 +1341,25 @@ def setup_cors(app):
     """
     try:
         # Define allowed origins
-        allowed_origins = ["https://cloud.sparvi.io", "http://localhost:3000", "https://ambitious-wave-0fdea0310.6.azurestaticapps.net"]
-
-        # Create a CORS instance with specific settings
-        cors = CORS(app,
-             resources={
-                 r"/api/*": {
-                     "origins": allowed_origins,
-                     "supports_credentials": True,
-                     "allow_headers": ["Content-Type", "Authorization", "X-Requested-With"],
-                     "expose_headers": ["Content-Type", "Authorization"],
-                     "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"]
-                 },
-                 # Explicitly define the batch endpoint with its own settings
-                 r"/api/batch": {
-                     "origins": allowed_origins,
-                     "supports_credentials": True,
-                     "allow_headers": ["Content-Type", "Authorization", "X-Requested-With"],
-                     "expose_headers": ["Content-Type", "Authorization"],
-                     "methods": ["POST", "OPTIONS"]
-                 }
-             },
-             supports_credentials=True)
+        allowed_origins = ["https://cloud.sparvi.io", "http://localhost:3000",
+                           "https://ambitious-wave-0fdea0310.6.azurestaticapps.net"]
 
         # Log the CORS configuration for diagnostics
         logger.info(f"CORS configured with the following origins: {allowed_origins}")
-        logger.info(f"Special configuration for /api/batch endpoint: {cors.resources.get(r'/api/batch', {})}")
+
+        # Create a CORS instance with simplified settings
+        cors = CORS(app,
+                    resources={
+                        r"/api/*": {
+                            "origins": allowed_origins,
+                            "supports_credentials": True
+                        }
+                    },
+                    supports_credentials=True)
+
+        # Skip accessing cors.resources which is causing the error
+        logger.info(f"Special configuration added for /api endpoints")
+
     except Exception as e:
         logger.error(f"CORS configuration failed: {str(e)}")
         logger.error(traceback.format_exc())
@@ -1325,6 +1394,16 @@ app = Flask(__name__, template_folder="templates")
 setup_cors(app)
 create_error_handlers(app)
 
+
+initialize_anomaly_detection()
+
+@app.teardown_appcontext
+def shutdown_anomaly_detection(exception=None):
+    global anomaly_scheduler_service
+    if anomaly_scheduler_service:
+        anomaly_scheduler_service.stop()
+        logger.info("Anomaly detection scheduler service stopped")
+
 # Set the secret key from environment variables
 app.config["SECRET_KEY"] = os.getenv("SECRET_KEY", "default_secret_key")
 
@@ -1341,66 +1420,6 @@ threading.Timer(5.0, init_metadata_task_manager).start()  # 5-second delay to en
 
 optimized_classes = apply_performance_optimizations()
 
-
-# Decorator to require a valid token for protected routes
-import os
-
-
-def token_required(f):
-    @wraps(f)
-    def decorated(*args, **kwargs):
-        # Special case for testing
-        if os.environ.get('TESTING') == 'True' and request.headers.get('Authorization') == 'Bearer test-token':
-            logger.debug("Test token detected, bypassing authentication")
-            return f("test-user-id", "test-org-id", *args, **kwargs)
-
-        # Normal token check
-        token = None
-        auth_header = request.headers.get("Authorization", None)
-        if auth_header:
-            parts = auth_header.split()
-            if len(parts) == 2 and parts[0] == "Bearer":
-                token = parts[1]
-        if not token:
-            logger.warning("No token provided")
-            return jsonify({"error": "Token is missing!", "code": "token_missing"}), 401
-
-        try:
-            # Use the new validation utility
-            from core.utils.auth_utils import validate_token
-            decoded = validate_token(token)
-
-            if not decoded:
-                logger.warning("Token validation failed - expired or invalid")
-                return jsonify({
-                    "error": "Token is expired or invalid!",
-                    "code": "token_expired"
-                }), 401
-
-            current_user = decoded.get("sub")
-            if not current_user:
-                logger.error("User ID not found in token")
-                return jsonify({"error": "Invalid token format", "code": "token_invalid"}), 401
-
-            logger.info(f"Token valid for user: {current_user}")
-
-            # Get the user's organization ID
-            supabase_mgr = SupabaseManager()
-            organization_id = supabase_mgr.get_user_organization(current_user)
-
-            if not organization_id:
-                logger.error(f"No organization found for user: {current_user}")
-                return jsonify({"error": "User has no associated organization", "code": "org_missing"}), 403
-
-        except Exception as e:
-            logger.error(f"Token verification error: {str(e)}")
-            logger.error(traceback.format_exc())
-            return jsonify({"error": "Token validation failed!", "message": str(e), "code": "token_error"}), 401
-
-        # Pass both user_id and organization_id to the decorated function
-        return f(current_user, organization_id, *args, **kwargs)
-
-    return decorated
 
 
 def build_connection_string(connection_data):
@@ -6151,84 +6170,34 @@ def get_refresh_suggestion(current_user, organization_id, connection_id):
 
 @app.route("/api/connections/<connection_id>/analytics/high-impact", methods=["GET"])
 @token_required
-def get_high_impact_objects(
-        self,
-        connection_id: str,
-        limit: int = 10
-) -> List[Dict[str, Any]]:
-    """
-    Get a list of objects with highest change frequency
+def get_high_impact_objects(current_user, organization_id, connection_id):
+    """Get objects with high change frequency"""
+    # Get limit parameter from query string with default value
+    limit = request.args.get("limit", 10, type=int)
 
-    Args:
-        connection_id: Database connection ID
-        limit: Maximum number of objects to return
-
-    Returns:
-        List of high-impact objects with their change metrics
-    """
     try:
-        if not self.supabase_manager:
-            logger.error("Supabase manager is required to get high-impact objects")
-            return []
+        # Check access to connection
+        connection = connection_access_check(connection_id, organization_id)
+        if not connection:
+            return jsonify({"error": "Connection not found or access denied"}), 404
 
-        # Get analytics data for this connection
-        response = self.supabase_manager.supabase.table("metadata_change_analytics") \
-            .select("object_type,object_name,change_detected") \
-            .eq("connection_id", connection_id) \
-            .gte("check_timestamp", (datetime.now() - datetime.timedelta(days=30)).isoformat()) \
-            .execute()
+        # Create analytics service
+        from core.metadata.change_analytics import MetadataChangeAnalytics
+        supabase_mgr = SupabaseManager()
+        analytics = MetadataChangeAnalytics(supabase_mgr)
 
-        if not response.data:
-            return []
+        # Get high-impact objects
+        high_impact_objects = analytics.get_high_impact_objects(connection_id, limit=limit)
 
-        # Process the data manually since we can't use SQL aggregation
-        objects = {}
-
-        # Group by object and calculate metrics
-        for record in response.data:
-            object_type = record.get("object_type")
-            object_name = record.get("object_name")
-            change_detected = record.get("change_detected", False)
-
-            # Create a composite key for the object
-            key = f"{object_type}:{object_name}"
-
-            if key not in objects:
-                objects[key] = {
-                    "object_type": object_type,
-                    "object_name": object_name,
-                    "total_checks": 0,
-                    "changes_detected": 0
-                }
-
-            objects[key]["total_checks"] += 1
-            if change_detected:
-                objects[key]["changes_detected"] += 1
-
-        # Calculate change ratio and add frequency category
-        results = []
-        for obj in objects.values():
-            # Only include objects with at least 5 checks
-            if obj["total_checks"] >= 5:
-                obj["change_ratio"] = obj["changes_detected"] / obj["total_checks"] if obj["total_checks"] > 0 else 0
-
-                # Determine frequency category
-                if obj["change_ratio"] >= 0.5:
-                    obj["frequency"] = "high"
-                elif obj["change_ratio"] >= 0.1:
-                    obj["frequency"] = "medium"
-                else:
-                    obj["frequency"] = "low"
-
-                results.append(obj)
-
-        # Sort by change_ratio (descending) and limit results
-        results.sort(key=lambda x: x["change_ratio"], reverse=True)
-        return results[:limit]
+        return jsonify({
+            "objects": high_impact_objects,
+            "count": len(high_impact_objects)
+        })
 
     except Exception as e:
         logger.error(f"Error getting high-impact objects: {str(e)}")
-        return []
+        logger.error(traceback.format_exc())
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route("/api/connections/<connection_id>/analytics/dashboard", methods=["GET"])
