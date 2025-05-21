@@ -27,7 +27,14 @@ import DataExplorerPage from './pages/DataExplorer/DataExplorerPage';
 import TableDetailPage from './pages/DataExplorer/TableDetailPage';
 import ValidationPage from './pages/Validations/ValidationPage';
 import MetadataPage from './pages/Metadata/MetadataPage';
-import AnomalyDashboardPage from './pages/Anomaly/AnomalyDashboardPage'
+
+// Anomaly pages
+import AnomalyDashboardPage from './pages/Anomaly/AnomalyDashboardPage';
+import AnomalyExplorerPage from './pages/Anomaly/components/AnomalyExplorerPage';
+import AnomalyConfigsPage from './pages/Anomaly/components/AnomalyConfigsPage';
+import AnomalyConfigForm from './pages/Anomaly/components/AnomalyConfigForm';
+
+// Other pages
 import AnalyticsPage from './pages/Analytics/AnalyticsPage';
 import TableAnalyticsPage from './pages/Analytics/TableAnalyticsPage';
 import SchemaChangesPage from './pages/Analytics/SchemaChangesPage';
@@ -77,6 +84,10 @@ function App() {
 
                   {/* Anomalies */}
                   <Route path="/anomalies" element={<AnomalyDashboardPage />} />
+                  <Route path="/anomalies/:connectionId" element={<AnomalyDashboardPage />} />
+                  <Route path="/anomalies/:connectionId/explorer" element={<AnomalyExplorerPage />} />
+                  <Route path="/anomalies/:connectionId/configs" element={<AnomalyConfigsPage />} />
+                  <Route path="/anomalies/:connectionId/configs/:configId" element={<AnomalyConfigForm />} />
 
                   {/* Analytics */}
                   <Route path="/analytics" element={<AnalyticsPage />} />
