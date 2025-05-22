@@ -1304,5 +1304,180 @@ export const analyticsAPI = {
   }
 };
 
+
+// Enhanced Anomaly API
+export const anomalyAPI = {
+  // Get anomaly configurations for a connection
+  getConfigs: (connectionId, options = {}) => {
+    const { table_name, metric_name, forceFresh = false } = options;
+    const params = {};
+
+    if (table_name) params.table_name = table_name;
+    if (metric_name) params.metric_name = metric_name;
+
+    return enhancedRequest({
+      url: `/connections/${connectionId}/anomalies/configs`,
+      params,
+      cacheKey: `anomaly.configs.${connectionId}`,
+      cacheTTL: 5 * 60 * 1000, // 5 minutes
+      requestId: `anomaly.configs.${connectionId}`,
+      forceFresh
+    });
+  },
+
+  // Get a specific configuration
+  getConfig: (connectionId, configId, options = {}) => {
+    const { forceFresh = false } = options;
+    return enhancedRequest({
+      url: `/connections/${connectionId}/anomalies/configs/${configId}`,
+      cacheKey: `anomaly.config.${connectionId}.${configId}`,
+      cacheTTL: 5 * 60 * 1000, // 5 minutes
+      requestId: `anomaly.config.${connectionId}.${configId}`,
+      forceFresh
+    });
+  },
+
+  // Create a new configuration
+  createConfig: (connectionId, configData) => {
+    return enhancedRequest({
+      method: 'POST',
+      url: `/connections/${connectionId}/anomalies/configs`,
+      data: configData,
+      requestId: `anomaly.createConfig.${connectionId}`
+    }).then(response => {
+      // Invalidate configs cache
+      clearCacheItem(`anomaly.configs.${connectionId}`);
+      return response;
+    });
+  },
+
+  // Update a configuration
+  updateConfig: (connectionId, configId, configData) => {
+    return enhancedRequest({
+      method: 'PUT',
+      url: `/connections/${connectionId}/anomalies/configs/${configId}`,
+      data: configData,
+      requestId: `anomaly.updateConfig.${connectionId}.${configId}`
+    }).then(response => {
+      // Invalidate affected cache items
+      clearCacheItem(`anomaly.config.${connectionId}.${configId}`);
+      clearCacheItem(`anomaly.configs.${connectionId}`);
+      return response;
+    });
+  },
+
+  // Delete a configuration
+  deleteConfig: (connectionId, configId) => {
+    return enhancedRequest({
+      method: 'DELETE',
+      url: `/connections/${connectionId}/anomalies/configs/${configId}`,
+      requestId: `anomaly.deleteConfig.${connectionId}.${configId}`
+    }).then(response => {
+      // Invalidate affected cache items
+      clearCacheItem(`anomaly.config.${connectionId}.${configId}`);
+      clearCacheItem(`anomaly.configs.${connectionId}`);
+      return response;
+    });
+  },
+
+  // Get anomalies for a connection
+  getAnomalies: (connectionId, options = {}) => {
+    const {
+      table_name,
+      status,
+      days = 30,
+      limit = 100,
+      forceFresh = false
+    } = options;
+
+    const params = { days, limit };
+    if (table_name) params.table_name = table_name;
+    if (status) params.status = status;
+
+    return enhancedRequest({
+      url: `/connections/${connectionId}/anomalies`,
+      params,
+      cacheKey: `anomaly.list.${connectionId}.${JSON.stringify(params)}`,
+      cacheTTL: 2 * 60 * 1000, // 2 minutes (anomalies change frequently)
+      requestId: `anomaly.list.${connectionId}`,
+      forceFresh
+    });
+  },
+
+  // Get a specific anomaly
+  getAnomaly: (connectionId, anomalyId, options = {}) => {
+    const { forceFresh = false } = options;
+    return enhancedRequest({
+      url: `/connections/${connectionId}/anomalies/${anomalyId}`,
+      cacheKey: `anomaly.detail.${connectionId}.${anomalyId}`,
+      cacheTTL: 5 * 60 * 1000, // 5 minutes
+      requestId: `anomaly.detail.${connectionId}.${anomalyId}`,
+      forceFresh
+    });
+  },
+
+  // Update anomaly status
+  updateAnomalyStatus: (connectionId, anomalyId, status, resolutionNote = null) => {
+    return enhancedRequest({
+      method: 'PUT',
+      url: `/connections/${connectionId}/anomalies/${anomalyId}/status`,
+      data: {
+        status,
+        resolution_note: resolutionNote
+      },
+      requestId: `anomaly.updateStatus.${connectionId}.${anomalyId}`
+    }).then(response => {
+      // Invalidate affected cache items
+      clearCacheItem(`anomaly.detail.${connectionId}.${anomalyId}`);
+      clearCacheItem(`anomaly.list.${connectionId}`);
+      clearCacheItem(`anomaly.summary.${connectionId}`);
+      clearCacheItem(`anomaly.dashboard.${connectionId}`);
+      return response;
+    });
+  },
+
+  // Run anomaly detection manually
+  runDetection: (connectionId, options = {}) => {
+    return enhancedRequest({
+      method: 'POST',
+      url: `/connections/${connectionId}/anomalies/detect`,
+      data: options,
+      requestId: `anomaly.detect.${connectionId}`
+    }).then(response => {
+      // Invalidate anomaly-related caches after detection
+      clearCacheItem(`anomaly.list.${connectionId}`);
+      clearCacheItem(`anomaly.summary.${connectionId}`);
+      clearCacheItem(`anomaly.dashboard.${connectionId}`);
+      return response;
+    });
+  },
+
+  // Get anomaly summary
+  getSummary: (connectionId, options = {}) => {
+    const { days = 30, forceFresh = false } = options;
+    return enhancedRequest({
+      url: `/connections/${connectionId}/anomalies/summary`,
+      params: { days },
+      cacheKey: `anomaly.summary.${connectionId}.${days}`,
+      cacheTTL: 5 * 60 * 1000, // 5 minutes
+      requestId: `anomaly.summary.${connectionId}`,
+      forceFresh
+    });
+  },
+
+  // Get dashboard data
+  getDashboardData: (connectionId, options = {}) => {
+    const { days = 30, forceFresh = false } = options;
+    return enhancedRequest({
+      url: `/connections/${connectionId}/anomalies/dashboard`,
+      params: { days },
+      cacheKey: `anomaly.dashboard.${connectionId}.${days}`,
+      cacheTTL: 5 * 60 * 1000, // 5 minutes
+      requestId: `anomaly.dashboard.${connectionId}`,
+      forceFresh
+    });
+  }
+};
+
 // Export default enhancedRequest for custom API calls
 export default enhancedRequest;
