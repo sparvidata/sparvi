@@ -1,10 +1,13 @@
-# core/anomalies/routes.py
+# core/anomalies/routes.py - Improved version with better error handling
 
 from flask import request, jsonify
 from functools import wraps
 import uuid
+import logging
 
 from core.anomalies.api import AnomalyAPI
+
+logger = logging.getLogger(__name__)
 
 # Initialize API
 anomaly_api = AnomalyAPI()
@@ -24,6 +27,8 @@ def register_anomaly_routes(app, token_required):
     @token_required
     def get_anomaly_configs(current_user, organization_id, connection_id):
         try:
+            logger.info(f"Getting anomaly configs for connection {connection_id}, org {organization_id}")
+
             table_name = request.args.get("table_name")
             metric_name = request.args.get("metric_name")
 
@@ -34,9 +39,11 @@ def register_anomaly_routes(app, token_required):
                 metric_name=metric_name
             )
 
+            logger.info(f"Found {len(configs)} anomaly configs")
             return jsonify({"configs": configs})
+
         except Exception as e:
-            app.logger.error(f"Error getting anomaly configs: {str(e)}")
+            logger.error(f"Error getting anomaly configs: {str(e)}", exc_info=True)
             return jsonify({"error": str(e)}), 500
 
     # Create a new configuration
@@ -44,7 +51,11 @@ def register_anomaly_routes(app, token_required):
     @token_required
     def create_anomaly_config(current_user, organization_id, connection_id):
         try:
+            logger.info(f"Creating anomaly config for connection {connection_id}")
+
             config_data = request.json
+            if not config_data:
+                return jsonify({"error": "Request body is required"}), 400
 
             # Add connection ID to config data
             config_data["connection_id"] = connection_id
@@ -55,9 +66,11 @@ def register_anomaly_routes(app, token_required):
                 config_data=config_data
             )
 
+            logger.info(f"Created anomaly config with ID {config.get('id')}")
             return jsonify({"config": config})
+
         except Exception as e:
-            app.logger.error(f"Error creating anomaly config: {str(e)}")
+            logger.error(f"Error creating anomaly config: {str(e)}", exc_info=True)
             return jsonify({"error": str(e)}), 500
 
     # Get a specific configuration
@@ -65,6 +78,8 @@ def register_anomaly_routes(app, token_required):
     @token_required
     def get_anomaly_config(current_user, organization_id, connection_id, config_id):
         try:
+            logger.info(f"Getting anomaly config {config_id} for connection {connection_id}")
+
             config = anomaly_api.get_config(
                 organization_id=organization_id,
                 config_id=config_id
@@ -74,12 +89,13 @@ def register_anomaly_routes(app, token_required):
                 return jsonify({"error": "Configuration not found"}), 404
 
             # Check if config belongs to the specified connection
-            if config["connection_id"] != connection_id:
+            if config.get("connection_id") != connection_id:
                 return jsonify({"error": "Configuration does not belong to this connection"}), 403
 
             return jsonify({"config": config})
+
         except Exception as e:
-            app.logger.error(f"Error getting anomaly config: {str(e)}")
+            logger.error(f"Error getting anomaly config: {str(e)}", exc_info=True)
             return jsonify({"error": str(e)}), 500
 
     # Update a configuration
@@ -87,7 +103,11 @@ def register_anomaly_routes(app, token_required):
     @token_required
     def update_anomaly_config(current_user, organization_id, connection_id, config_id):
         try:
+            logger.info(f"Updating anomaly config {config_id} for connection {connection_id}")
+
             config_data = request.json
+            if not config_data:
+                return jsonify({"error": "Request body is required"}), 400
 
             # Add connection ID to config data
             config_data["connection_id"] = connection_id
@@ -102,7 +122,7 @@ def register_anomaly_routes(app, token_required):
                 return jsonify({"error": "Configuration not found"}), 404
 
             # Check if config belongs to the specified connection
-            if existing_config["connection_id"] != connection_id:
+            if existing_config.get("connection_id") != connection_id:
                 return jsonify({"error": "Configuration does not belong to this connection"}), 403
 
             # Update config
@@ -113,9 +133,11 @@ def register_anomaly_routes(app, token_required):
                 config_data=config_data
             )
 
+            logger.info(f"Updated anomaly config {config_id}")
             return jsonify({"config": config})
+
         except Exception as e:
-            app.logger.error(f"Error updating anomaly config: {str(e)}")
+            logger.error(f"Error updating anomaly config: {str(e)}", exc_info=True)
             return jsonify({"error": str(e)}), 500
 
     # Delete a configuration
@@ -123,6 +145,8 @@ def register_anomaly_routes(app, token_required):
     @token_required
     def delete_anomaly_config(current_user, organization_id, connection_id, config_id):
         try:
+            logger.info(f"Deleting anomaly config {config_id} for connection {connection_id}")
+
             # Get existing config to check ownership
             existing_config = anomaly_api.get_config(
                 organization_id=organization_id,
@@ -133,7 +157,7 @@ def register_anomaly_routes(app, token_required):
                 return jsonify({"error": "Configuration not found"}), 404
 
             # Check if config belongs to the specified connection
-            if existing_config["connection_id"] != connection_id:
+            if existing_config.get("connection_id") != connection_id:
                 return jsonify({"error": "Configuration does not belong to this connection"}), 403
 
             # Delete config
@@ -144,11 +168,13 @@ def register_anomaly_routes(app, token_required):
             )
 
             if success:
+                logger.info(f"Deleted anomaly config {config_id}")
                 return jsonify({"success": True})
             else:
                 return jsonify({"error": "Failed to delete configuration"}), 500
+
         except Exception as e:
-            app.logger.error(f"Error deleting anomaly config: {str(e)}")
+            logger.error(f"Error deleting anomaly config: {str(e)}", exc_info=True)
             return jsonify({"error": str(e)}), 500
 
     # Get anomalies for a connection
@@ -171,8 +197,9 @@ def register_anomaly_routes(app, token_required):
             )
 
             return jsonify({"anomalies": anomalies})
+
         except Exception as e:
-            app.logger.error(f"Error getting anomalies: {str(e)}")
+            logger.error(f"Error getting anomalies: {str(e)}", exc_info=True)
             return jsonify({"error": str(e)}), 500
 
     # Get a specific anomaly
@@ -189,12 +216,13 @@ def register_anomaly_routes(app, token_required):
                 return jsonify({"error": "Anomaly not found"}), 404
 
             # Check if anomaly belongs to the specified connection
-            if anomaly["connection_id"] != connection_id:
+            if anomaly.get("connection_id") != connection_id:
                 return jsonify({"error": "Anomaly does not belong to this connection"}), 403
 
             return jsonify({"anomaly": anomaly})
+
         except Exception as e:
-            app.logger.error(f"Error getting anomaly: {str(e)}")
+            logger.error(f"Error getting anomaly: {str(e)}", exc_info=True)
             return jsonify({"error": str(e)}), 500
 
     # Update anomaly status
@@ -217,7 +245,7 @@ def register_anomaly_routes(app, token_required):
                 return jsonify({"error": "Anomaly not found"}), 404
 
             # Check if anomaly belongs to the specified connection
-            if existing_anomaly["connection_id"] != connection_id:
+            if existing_anomaly.get("connection_id") != connection_id:
                 return jsonify({"error": "Anomaly does not belong to this connection"}), 403
 
             # Update status
@@ -230,8 +258,9 @@ def register_anomaly_routes(app, token_required):
             )
 
             return jsonify({"anomaly": updated_anomaly})
+
         except Exception as e:
-            app.logger.error(f"Error updating anomaly status: {str(e)}")
+            logger.error(f"Error updating anomaly status: {str(e)}", exc_info=True)
             return jsonify({"error": str(e)}), 500
 
     # Run anomaly detection manually
@@ -248,8 +277,9 @@ def register_anomaly_routes(app, token_required):
             )
 
             return jsonify(result)
+
         except Exception as e:
-            app.logger.error(f"Error running anomaly detection: {str(e)}")
+            logger.error(f"Error running anomaly detection: {str(e)}", exc_info=True)
             return jsonify({"error": str(e)}), 500
 
     # Get anomaly summary
@@ -266,8 +296,9 @@ def register_anomaly_routes(app, token_required):
             )
 
             return jsonify(summary)
+
         except Exception as e:
-            app.logger.error(f"Error getting anomaly summary: {str(e)}")
+            logger.error(f"Error getting anomaly summary: {str(e)}", exc_info=True)
             return jsonify({"error": str(e)}), 500
 
     # Get anomaly dashboard data
@@ -284,6 +315,7 @@ def register_anomaly_routes(app, token_required):
             )
 
             return jsonify(dashboard_data)
+
         except Exception as e:
-            app.logger.error(f"Error getting anomaly dashboard: {str(e)}")
+            logger.error(f"Error getting anomaly dashboard: {str(e)}", exc_info=True)
             return jsonify({"error": str(e)}), 500

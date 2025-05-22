@@ -1,4 +1,4 @@
-// Replace the BatchRequest section in your AnomalyConfigsPage.js with this approach
+// Fixed AnomalyConfigsPage.js - Removing BatchRequest and using direct API calls
 
 import React, { useState, useEffect } from 'react';
 import { useConnection } from '../../../contexts/EnhancedConnectionContext';
@@ -56,19 +56,36 @@ const AnomalyConfigsPage = () => {
     ]);
   }, [updateBreadcrumbs, connectionId, activeConnection]);
 
-  // Load configurations - direct API call
+  // Load configurations - direct API call with better auth handling
   useEffect(() => {
     const loadConfigs = async () => {
       if (!connectionId || connectionId === 'undefined') return;
 
       try {
         setLoadingConfigs(true);
+        setError(null);
         console.log(`Loading configs for connection ${connectionId}`);
 
-        const response = await fetch(`/api/connections/${connectionId}/anomalies/configs`);
+        // Get session and token properly
+        const { getSession } = await import('../../../api/supabase');
+        const session = await getSession();
+        const token = session?.access_token;
+
+        if (!token) {
+          throw new Error('Authentication required');
+        }
+
+        const response = await fetch(`/api/connections/${connectionId}/anomalies/configs`, {
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json'
+          }
+        });
 
         if (!response.ok) {
-          throw new Error('Failed to load configurations');
+          const errorText = await response.text();
+          console.error('Config API response:', response.status, errorText);
+          throw new Error(`Failed to load configurations: ${response.status} ${response.statusText}`);
         }
 
         const data = await response.json();
@@ -90,7 +107,7 @@ const AnomalyConfigsPage = () => {
     loadConfigs();
   }, [connectionId, showNotification, refreshTrigger]);
 
-  // Load tables - direct API call
+  // Load tables - using same pattern as ValidationRuleEditor
   useEffect(() => {
     const loadTables = async () => {
       if (!connectionId || connectionId === 'undefined') return;
@@ -102,21 +119,28 @@ const AnomalyConfigsPage = () => {
         const response = await schemaAPI.getTables(connectionId);
         console.log('Tables response:', response);
 
-        // Handle different possible response structures
+        // Handle different possible response structures (same as ValidationRuleEditor)
         let tablesData = [];
+
         if (response?.tables && Array.isArray(response.tables)) {
+          // Direct tables array in response
           tablesData = response.tables;
         } else if (response?.data?.tables && Array.isArray(response.data.tables)) {
+          // Nested in data property
           tablesData = response.data.tables;
         } else if (Array.isArray(response)) {
+          // Response is the array itself
           tablesData = response;
+        } else {
+          console.warn('Unexpected tables response format:', response);
         }
 
-        console.log(`Found ${tablesData.length} tables`);
+        console.log(`Found ${tablesData.length} tables for connection ${connectionId}`);
         setTables(tablesData);
       } catch (error) {
         console.error(`Error loading tables for connection ${connectionId}:`, error);
         showNotification(`Failed to load tables: ${error.message}`, 'error');
+        setError(`Failed to load tables: ${error.message}`);
       } finally {
         setLoadingTables(false);
       }
@@ -144,30 +168,35 @@ const AnomalyConfigsPage = () => {
     if (!connectionId || connectionId === 'undefined') return;
 
     try {
+      const { getSession } = await import('../../../api/supabase');
+      const session = await getSession();
+      const token = session?.access_token;
+
+      if (!token) {
+        throw new Error('Authentication required');
+      }
+
       const response = await fetch(`/api/connections/${connectionId}/anomalies/configs/${configId}`, {
         method: 'DELETE',
         headers: {
-          'Content-Type': 'application/json'
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
         }
       });
 
       if (!response.ok) {
-        throw new Error('Failed to delete configuration');
+        const errorText = await response.text();
+        console.error('Delete API response:', response.status, errorText);
+        throw new Error(`Failed to delete configuration: ${response.status} ${response.statusText}`);
       }
 
-      showNotification({
-        type: 'success',
-        message: 'Configuration deleted successfully'
-      });
+      showNotification('Configuration deleted successfully', 'success');
 
       // Trigger refresh
       setRefreshTrigger(prev => prev + 1);
     } catch (error) {
       console.error('Error deleting configuration:', error);
-      showNotification({
-        type: 'error',
-        message: 'Failed to delete configuration'
-      });
+      showNotification(`Failed to delete configuration: ${error.message}`, 'error');
     }
   };
 
@@ -181,31 +210,36 @@ const AnomalyConfigsPage = () => {
     }
 
     try {
+      const { getSession } = await import('../../../api/supabase');
+      const session = await getSession();
+      const token = session?.access_token;
+
+      if (!token) {
+        throw new Error('Authentication required');
+      }
+
       const response = await fetch(`/api/connections/${connectionId}/anomalies/configs/${configId}`, {
         method: 'PUT',
         headers: {
-          'Content-Type': 'application/json'
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
         },
         body: JSON.stringify({ is_active: !isActive })
       });
 
       if (!response.ok) {
-        throw new Error('Failed to update configuration');
+        const errorText = await response.text();
+        console.error('Toggle API response:', response.status, errorText);
+        throw new Error(`Failed to update configuration: ${response.status} ${response.statusText}`);
       }
 
-      showNotification({
-        type: 'success',
-        message: `Configuration ${!isActive ? 'activated' : 'deactivated'} successfully`
-      });
+      showNotification(`Configuration ${!isActive ? 'activated' : 'deactivated'} successfully`, 'success');
 
       // Trigger refresh
       setRefreshTrigger(prev => prev + 1);
     } catch (error) {
       console.error('Error updating configuration:', error);
-      showNotification({
-        type: 'error',
-        message: 'Failed to update configuration'
-      });
+      showNotification(`Failed to update configuration: ${error.message}`, 'error');
     }
   };
 
@@ -319,6 +353,12 @@ const AnomalyConfigsPage = () => {
                     </>
                   )}
                 </select>
+                {loadingTables && (
+                  <div className="mt-2 flex items-center text-sm text-gray-500">
+                    <LoadingSpinner size="xs" className="mr-2" />
+                    Loading tables...
+                  </div>
+                )}
               </div>
             </div>
           </div>

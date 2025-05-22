@@ -1,4 +1,4 @@
-// Replace the BatchRequest section in your AnomalyConfigForm.js with this direct loading approach
+// Fixed AnomalyConfigForm.js - Removing BatchRequest and using direct API calls like ValidationRuleEditor
 
 import React, { useState, useEffect } from 'react';
 import { useConnection } from '../../../contexts/EnhancedConnectionContext';
@@ -74,7 +74,7 @@ const AnomalyConfigForm = () => {
     ]);
   }, [updateBreadcrumbs, connectionId, activeConnection, isEdit]);
 
-  // Load tables - using direct API call like ValidationRuleEditor
+  // Load tables - using exact same pattern as ValidationRuleEditor
   useEffect(() => {
     const loadTables = async () => {
       if (!connectionId || connectionId === 'undefined') return;
@@ -86,7 +86,7 @@ const AnomalyConfigForm = () => {
         const response = await schemaAPI.getTables(connectionId);
         console.log('Tables response:', response);
 
-        // Handle different possible response structures (same as ValidationRuleEditor)
+        // Handle different possible response structures (exact same as ValidationRuleEditor)
         let tablesData = [];
 
         if (response?.tables && Array.isArray(response.tables)) {
@@ -122,7 +122,18 @@ const AnomalyConfigForm = () => {
       const fetchConfig = async () => {
         try {
           setLoading(true);
-          const response = await fetch(`/api/connections/${connectionId}/anomalies/configs/${configId}`);
+          const session = await (await import('../../../api/supabase')).getSession();
+          const token = session?.access_token;
+
+          if (!token) {
+            throw new Error('Authentication required');
+          }
+
+          const response = await fetch(`/api/connections/${connectionId}/anomalies/configs/${configId}`, {
+            headers: {
+              'Authorization': `Bearer ${token}`
+            }
+          });
 
           if (!response.ok) {
             throw new Error('Failed to fetch configuration');
@@ -179,6 +190,13 @@ const AnomalyConfigForm = () => {
       setSaving(true);
       setError(null);
 
+      const session = await (await import('../../../api/supabase')).getSession();
+      const token = session?.access_token;
+
+      if (!token) {
+        throw new Error('Authentication required');
+      }
+
       // Prepare the API endpoint and method
       const url = isEdit
         ? `/api/connections/${connectionId}/anomalies/configs/${configId}`
@@ -195,7 +213,8 @@ const AnomalyConfigForm = () => {
       const response = await fetch(url, {
         method,
         headers: {
-          'Content-Type': 'application/json'
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
         },
         body: JSON.stringify(configData)
       });
@@ -206,10 +225,7 @@ const AnomalyConfigForm = () => {
 
       const result = await response.json();
 
-      showNotification({
-        type: 'success',
-        message: `Configuration ${isEdit ? 'updated' : 'created'} successfully`
-      });
+      showNotification(`Configuration ${isEdit ? 'updated' : 'created'} successfully`, 'success');
 
       // Navigate back to configs list
       navigate(`/anomalies/${connectionId}/configs`);
