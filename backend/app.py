@@ -35,6 +35,7 @@ from core.metadata.events import MetadataEventType, publish_metadata_event
 from core.utils.performance_optimizations import apply_performance_optimizations
 from core.anomalies.routes import register_anomaly_routes
 from core.anomalies.scheduler_service import AnomalyDetectionSchedulerService
+from routes import notifications_bp
 
 import concurrent.futures
 from sqlalchemy.pool import QueuePool
@@ -1402,6 +1403,7 @@ def create_error_handlers(app):
 app = Flask(__name__, template_folder="templates")
 setup_cors(app)
 create_error_handlers(app)
+app.register_blueprint(notifications_bp, url_prefix='/api')
 
 
 initialize_anomaly_detection()

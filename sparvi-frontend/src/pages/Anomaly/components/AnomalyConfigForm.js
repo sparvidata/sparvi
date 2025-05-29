@@ -42,6 +42,8 @@ const AnomalyConfigForm = () => {
 
   // Data states
   const [tables, setTables] = useState([]);
+  const [columns, setColumns] = useState([]);
+  const [loadingColumns, setLoadingColumns] = useState(false);
 
   // Define available metrics
   const availableMetrics = [
@@ -73,7 +75,59 @@ const AnomalyConfigForm = () => {
     ]);
   }, [updateBreadcrumbs, connectionId, activeConnection, isEdit]);
 
-  // Load tables - using same pattern as ValidationRuleEditor
+  // Load columns when table is selected
+  useEffect(() => {
+    const loadColumns = async () => {
+      if (!connectionId || connectionId === 'undefined' || !config.table_name) {
+        setColumns([]);
+        return;
+      }
+
+      try {
+        setLoadingColumns(true);
+        console.log(`Loading columns for table ${config.table_name} in connection ${connectionId}`);
+
+        const response = await schemaAPI.getColumns(connectionId, config.table_name);
+        console.log('Columns response:', response);
+
+        // Handle different possible response structures
+        let columnsData = [];
+
+        if (response?.columns && Array.isArray(response.columns)) {
+          columnsData = response.columns;
+        } else if (response?.data?.columns && Array.isArray(response.data.columns)) {
+          columnsData = response.data.columns;
+        } else if (Array.isArray(response)) {
+          columnsData = response;
+        } else {
+          console.warn('Unexpected columns response format:', response);
+        }
+
+        // Extract column names from the response
+        const columnNames = columnsData.map(col => {
+          if (typeof col === 'string') {
+            return col;
+          } else if (col.column_name) {
+            return col.column_name;
+          } else if (col.name) {
+            return col.name;
+          }
+          return col;
+        });
+
+        console.log(`Found ${columnNames.length} columns for table ${config.table_name}`);
+        setColumns(columnNames);
+      } catch (error) {
+        console.error(`Error loading columns for table ${config.table_name}:`, error);
+        showNotification(`Failed to load columns: ${error.message}`, 'error');
+        setColumns([]);
+      } finally {
+        setLoadingColumns(false);
+      }
+    };
+
+    loadColumns();
+  }, [connectionId, config.table_name, showNotification]);
   useEffect(() => {
     const loadTables = async () => {
       if (!connectionId || connectionId === 'undefined') return;
@@ -154,11 +208,20 @@ const AnomalyConfigForm = () => {
       }));
     } else {
       // Handle regular inputs
-      setConfig(prev => ({
-        ...prev,
-        [name]: type === 'checkbox' ? checked :
-                type === 'number' ? parseFloat(value) : value
-      }));
+      setConfig(prev => {
+        const newConfig = {
+          ...prev,
+          [name]: type === 'checkbox' ? checked :
+                  type === 'number' ? parseFloat(value) : value
+        };
+
+        // Clear column selection when table changes
+        if (name === 'table_name' && value !== prev.table_name) {
+          newConfig.column_name = '';
+        }
+
+        return newConfig;
+      });
     }
   };
 
@@ -334,18 +397,36 @@ const AnomalyConfigForm = () => {
                     <label htmlFor="column_name" className="block text-sm font-medium text-gray-700">
                       Column {config.metric_name && availableMetrics.find(m => m.value === config.metric_name)?.level === 'column' && <span className="text-red-500">*</span>}
                     </label>
-                    <div className="mt-1 flex rounded-md shadow-sm">
-                      <input
-                        type="text"
-                        name="column_name"
-                        id="column_name"
-                        value={config.column_name || ''}
-                        onChange={handleInputChange}
-                        required={config.metric_name && availableMetrics.find(m => m.value === config.metric_name)?.level === 'column'}
-                        className="block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
-                        placeholder="Enter column name"
-                      />
-                    </div>
+                    <select
+                      id="column_name"
+                      name="column_name"
+                      value={config.column_name || ''}
+                      onChange={handleInputChange}
+                      required={config.metric_name && availableMetrics.find(m => m.value === config.metric_name)?.level === 'column'}
+                      disabled={loadingColumns}
+                      className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+                    >
+                      {loadingColumns ? (
+                        <option>Loading columns...</option>
+                      ) : columns.length === 0 ? (
+                        <option value="">No columns available</option>
+                      ) : (
+                        <>
+                          <option value="">Select a column</option>
+                          {columns.map((column, index) => (
+                            <option key={index} value={column}>
+                              {column}
+                            </option>
+                          ))}
+                        </>
+                      )}
+                    </select>
+                    {loadingColumns && (
+                      <div className="mt-2 flex items-center text-sm text-gray-500">
+                        <LoadingSpinner size="xs" className="mr-2" />
+                        Loading columns...
+                      </div>
+                    )}
                     <p className="mt-1 text-sm text-gray-500">
                       Only required for column-level metrics.
                     </p>
