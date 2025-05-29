@@ -3,50 +3,38 @@ import {getSession, signOut, supabase} from './supabase';
 import { getCacheItem, setCacheItem, clearCacheItem } from '../utils/cacheUtils';
 import { getRequestAbortController, requestCompleted } from '../utils/requestUtils';
 
-(async () => {
-  try {
-    console.log("Checking auth session structure...");
-    const session = await getSession();
-    console.log("Session available:", !!session);
-    if (session) {
-      // Log a safe version of the session without exposing full tokens
-      const safeSession = { ...session };
-      if (safeSession.access_token) safeSession.access_token = safeSession.access_token.substring(0, 10) + '...';
-      if (safeSession.token) safeSession.token = safeSession.token.substring(0, 10) + '...';
-      if (safeSession.accessToken) safeSession.accessToken = safeSession.accessToken.substring(0, 10) + '...';
-      if (safeSession.user?.token) safeSession.user.token = safeSession.user.token.substring(0, 10) + '...';
-      if (safeSession.data?.access_token) safeSession.data.access_token = safeSession.data.access_token.substring(0, 10) + '...';
-
-      console.log("Session structure:", safeSession);
-      console.log("Token property paths to check:",
-        "access_token:", !!session.access_token,
-        "token:", !!session.token,
-        "accessToken:", !!session.accessToken,
-        "user.token:", !!(session.user && session.user.token),
-        "data.access_token:", !!(session.data && session.data.access_token)
-      );
-    }
-  } catch (e) {
-    console.error("Error checking session:", e);
+// Better API URL configuration
+const getApiBaseUrl = () => {
+  // In development, check multiple possible Flask ports
+  if (process.env.NODE_ENV === 'development') {
+    return process.env.REACT_APP_API_BASE_URL || 'http://localhost:5000/api';
   }
-})();
 
-// Create a base API client with defaults
-const API_BASE_URL = process.env.NODE_ENV === 'development'
-  ? 'http://localhost:5000/api'  // Local development
-  : process.env.REACT_APP_API_BASE_URL || 'https://sparvi-webapp-fjdjdvh2bse9d0gm.centralus-01.azurewebsites.net/api';
+  // In production, always use environment variable
+  if (!process.env.REACT_APP_API_BASE_URL) {
+    console.error('REACT_APP_API_BASE_URL not set in production!');
+  }
 
-console.log("Full environment details:", {
+  return process.env.REACT_APP_API_BASE_URL || 'https://sparvi-webapp-fjdjdvh2bse9d0gm.centralus-01.azurewebsites.net/api';
+};
+
+const API_BASE_URL = getApiBaseUrl();
+
+console.log("API Configuration:", {
   NODE_ENV: process.env.NODE_ENV,
   REACT_APP_API_BASE_URL: process.env.REACT_APP_API_BASE_URL,
   COMPUTED_API_BASE_URL: API_BASE_URL
 });
 
+// Create a base API client with defaults
 const apiClient = axios.create({
   baseURL: API_BASE_URL,
   headers: {
     'Content-Type': 'application/json',
   },
+  // Add these for better CORS handling
+  withCredentials: true,
+  timeout: 60000,
 });
 
 // Create an auth ready state
@@ -114,63 +102,70 @@ export const setAuthReady = () => {
   }
 })();
 
-// const debugAuth = async () => {
-//   try {
-//     const session = await getSession();
-//     console.log("Auth check: Session exists:", !!session);
-//
-//     // Check different possible token locations
-//     const token = session?.access_token ||
-//                  session?.token ||
-//                  session?.accessToken ||
-//                  (session?.user?.token) ||
-//                  (session?.data?.access_token);
-//
-//     console.log("Auth check: Token exists:", !!token);
-//     if (token) {
-//       console.log("Auth check: Token preview:", `${token.substring(0, 10)}...`);
-//     } else {
-//       // If no token found, log the session structure to help debug
-//       console.log("Auth check: Session structure:", JSON.stringify(session, null, 2));
-//     }
-//     return !!token;
-//   } catch (e) {
-//     console.error("Error in debugAuth:", e);
-//     return false;
-//   }
-// };
+// Add debug logging for CORS
+apiClient.interceptors.request.use(config => {
+  console.log('Making request:', {
+    method: config.method,
+    url: config.url,
+    baseURL: config.baseURL,
+    fullUrl: `${config.baseURL}${config.url}`,
+    headers: {
+      ...config.headers,
+      Authorization: config.headers.Authorization ? '[HIDDEN]' : 'Not set'
+    }
+  });
+  return config;
+});
 
+// Simplified request interceptor
 apiClient.interceptors.request.use(
   async (config) => {
     try {
+      // Skip auth for OPTIONS requests (CORS preflight)
+      if (config.method?.toLowerCase() === 'options') {
+        console.log('Skipping auth for OPTIONS request');
+        return config;
+      }
+
       const session = await getSession();
-      console.log("Full Session Object:", session);
-
-      const token =
-        session?.access_token ||
-        session?.token ||
-        session?.accessToken ||
-        (session?.user?.token) ||
-        (session?.data?.access_token);
-
-      console.log("Token being sent:", token ? token.substring(0, 20) + '...' : 'No token');
+      const token = session?.access_token;
 
       if (token) {
         config.headers.Authorization = `Bearer ${token}`;
+        console.log("Token added to request:", token.substring(0, 20) + '...');
+      } else {
+        console.warn("No auth token available for request to:", config.url);
       }
     } catch (err) {
-      console.error('Error adding auth token to request:', err);
+      console.error('Error in request interceptor:', err);
+      // Don't fail the request if auth fails - let the server handle it
     }
+
     return config;
   },
-  (error) => Promise.reject(error)
+  (error) => {
+    console.error('Request interceptor error:', error);
+    return Promise.reject(error);
+  }
 );
 
 // Response interceptor for error handling
 apiClient.interceptors.response.use(
   (response) => response,
   async (error) => {
-    // Don't treat cancelled requests as errors
+    // Handle CORS errors specifically
+    if (error.code === 'ERR_NETWORK' || error.message === 'Network Error') {
+      console.error('Network error - possibly CORS issue:', error);
+      console.error('Request config:', error.config);
+      // Don't redirect on CORS errors
+      return Promise.reject({
+        ...error,
+        isCorsError: true,
+        message: 'Network error - check CORS configuration'
+      });
+    }
+
+    // Handle cancelled requests
     if (axios.isCancel(error)) {
       return Promise.reject({ cancelled: true });
     }
@@ -216,11 +211,6 @@ apiClient.interceptors.response.use(
   }
 );
 
-/**
- * Enhanced API request function with caching, abort control, and error handling
- * @param {Object} options - Request options
- * @returns {Promise} Promise resolving to the response data
- */
 /**
  * Enhanced API request function with caching, abort control, and error handling
  * @param {Object} options - Request options
@@ -314,7 +304,8 @@ const enhancedRequest = async (options) => {
       message: error.message,
       status: error.response?.status,
       data: error.response?.data,
-      requestId
+      requestId,
+      isCorsError: error.isCorsError
     });
 
     // Clear the abort controller
@@ -327,6 +318,32 @@ const enhancedRequest = async (options) => {
     if (timeoutId) {
       clearTimeout(timeoutId);
     }
+  }
+};
+
+// Test CORS function
+export const testCors = async () => {
+  try {
+    console.log('Testing CORS with OPTIONS request...');
+    const response = await fetch(`${API_BASE_URL}/connections`, {
+      method: 'OPTIONS',
+      headers: {
+        'Origin': window.location.origin,
+        'Access-Control-Request-Method': 'GET',
+        'Access-Control-Request-Headers': 'authorization,content-type'
+      }
+    });
+
+    console.log('CORS test response:', {
+      status: response.status,
+      statusText: response.statusText,
+      headers: Object.fromEntries(response.headers.entries())
+    });
+
+    return response.ok;
+  } catch (error) {
+    console.error('CORS test failed:', error);
+    return false;
   }
 };
 
@@ -369,7 +386,14 @@ export const connectionsAPI = {
       }
 
       console.error('Error fetching connections:', error);
-      // Return valid but empty response
+
+      // Provide more specific error handling for CORS
+      if (error.isCorsError) {
+        console.error('CORS Error detected - frontend cannot reach backend');
+        throw new Error('Cannot connect to server - CORS configuration issue');
+      }
+
+      // Return valid but empty response for other errors
       return { data: { connections: [] } };
     });
   },
@@ -483,6 +507,8 @@ export const connectionsAPI = {
       if (error.response && error.response.status === 401) {
         console.error("Authentication error in dashboard batch request");
         // You might want to trigger a login redirect here
+      } else if (error.isCorsError) {
+        console.error("CORS error in dashboard batch request");
       } else {
         console.error("Dashboard batch request failed:", error);
       }
@@ -644,7 +670,8 @@ export const schemaAPI = {
       // Check if it's an auth error
       if (error.response && error.response.status === 401) {
         console.error("Authentication error in table dashboard batch request");
-        // You might want to trigger a login redirect here
+      } else if (error.isCorsError) {
+        console.error("CORS error in table dashboard batch request");
       } else {
         console.error("Table dashboard batch request failed:", error);
       }
@@ -1303,7 +1330,6 @@ export const analyticsAPI = {
     });
   }
 };
-
 
 // Enhanced Anomaly API
 export const anomalyAPI = {

@@ -1346,9 +1346,7 @@ load_dotenv()
 
 
 def setup_cors(app):
-    """
-    Configure CORS with detailed logging and error handling
-    """
+    """Configure CORS with production-ready settings"""
     try:
         # Define allowed origins
         allowed_origins = [
@@ -1357,29 +1355,27 @@ def setup_cors(app):
             "https://ambitious-wave-0fdea0310.6.azurestaticapps.net"
         ]
 
-        # Log the CORS configuration for diagnostics
-        logger.info(f"CORS configured with the following origins: {allowed_origins}")
+        logger.info(f"Setting up CORS for origins: {allowed_origins}")
 
-        # Try a more permissive CORS configuration for debugging
-        cors = CORS(app,
-                   origins=allowed_origins,
-                   allow_headers=["Content-Type", "Authorization"],
-                   methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-                   supports_credentials=True)
+        # Configure CORS with explicit settings
+        CORS(app,
+             origins=allowed_origins,
+             methods=['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+             allow_headers=['Content-Type', 'Authorization'],
+             supports_credentials=True,
+             resources={r"/api/*": {"origins": allowed_origins}})
 
-        logger.info("CORS configuration completed successfully")
-
-        # Add a test route to verify CORS is working
-        @app.route('/api/cors-test', methods=['GET', 'OPTIONS'])
-        def cors_test():
-            return jsonify({"message": "CORS is working", "origin": request.headers.get('Origin')})
+        logger.info("CORS setup completed successfully")
 
     except Exception as e:
-        logger.error(f"CORS configuration failed: {str(e)}")
+        logger.error(f"CORS setup failed: {e}")
         logger.error(traceback.format_exc())
-        # Fallback CORS if primary config fails
-        logger.warning("Using fallback CORS configuration")
-        CORS(app)  # Minimal CORS if primary config fails
+        # Emergency fallback
+        CORS(app, origins="*", supports_credentials=True)
+        logger.warning("Using emergency CORS fallback (allow all origins)")
+
+
+
 
 def create_error_handlers(app):
     """
@@ -6839,6 +6835,27 @@ def after_request(response):
             response.headers.set('Access-Control-Max-Age', '86400')  # 24 hours for batch endpoint
 
     return response
+
+@app.route('/api/<path:path>', methods=['OPTIONS'])
+def handle_options(path):
+    """Handle OPTIONS requests for all API endpoints"""
+    origin = request.headers.get('Origin')
+    allowed_origins = [
+        "https://cloud.sparvi.io",
+        "http://localhost:3000",
+        "https://ambitious-wave-0fdea0310.6.azurestaticapps.net"
+    ]
+
+    if origin in allowed_origins:
+        response = jsonify({'status': 'ok'})
+        response.headers['Access-Control-Allow-Origin'] = origin
+        response.headers['Access-Control-Allow-Methods'] = 'GET,PUT,POST,DELETE,OPTIONS'
+        response.headers['Access-Control-Allow-Headers'] = 'Content-Type,Authorization'
+        response.headers['Access-Control-Allow-Credentials'] = 'true'
+        response.headers['Access-Control-Max-Age'] = '86400'
+        return response
+    else:
+        return jsonify({'error': 'Origin not allowed'}), 403
 
 
 if __name__ == "__main__":
