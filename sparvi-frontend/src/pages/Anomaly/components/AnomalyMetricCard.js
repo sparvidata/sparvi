@@ -1,5 +1,3 @@
-// src/components/anomaly/AnomalyMetricCard.js
-
 import React from 'react';
 import {
   TableCellsIcon,

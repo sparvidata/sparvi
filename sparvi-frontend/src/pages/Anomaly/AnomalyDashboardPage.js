@@ -1,5 +1,3 @@
-// src/pages/Anomaly/AnomalyDashboardPage.js - Refactored without BatchRequest
-
 import React, { useState, useEffect } from 'react';
 import { useConnection } from '../../contexts/EnhancedConnectionContext';
 import { useUI } from '../../contexts/UIContext';

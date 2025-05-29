@@ -1,5 +1,3 @@
-// src/pages/Anomaly/components/AnomalyDetailModal.js - Complete Fixed Version
-
 import React, { useState, useEffect } from 'react';
 import { Dialog, Transition } from '@headlessui/react';
 import {
@@ -20,6 +18,7 @@ const AnomalyDetailModal = ({ connectionId, anomalyId, onClose, onStatusUpdate }
   const [anomaly, setAnomaly] = useState(null);
   const [loading, setLoading] = useState(true);
   const [loadingMetrics, setLoadingMetrics] = useState(true);
+  const [updatingStatus, setUpdatingStatus] = useState(false);
   const [metrics, setMetrics] = useState([]);
   const [resolutionNote, setResolutionNote] = useState('');
   const [error, setError] = useState(null);
@@ -27,7 +26,7 @@ const AnomalyDetailModal = ({ connectionId, anomalyId, onClose, onStatusUpdate }
   // Check if we have valid IDs before making API calls
   const hasValidIds = connectionId && connectionId !== 'undefined' && anomalyId;
 
-  // Fetch anomaly data
+  // Fetch anomaly data using anomalyService
   useEffect(() => {
     if (!hasValidIds) {
       setError('Invalid connection or anomaly ID');
@@ -48,7 +47,7 @@ const AnomalyDetailModal = ({ connectionId, anomalyId, onClose, onStatusUpdate }
         console.log('Anomaly data loaded:', anomalyData);
       } catch (err) {
         console.error('Error fetching anomaly:', err);
-        setError('Failed to load anomaly details');
+        setError(`Failed to load anomaly details: ${err.message}`);
       } finally {
         setLoading(false);
       }
@@ -57,7 +56,7 @@ const AnomalyDetailModal = ({ connectionId, anomalyId, onClose, onStatusUpdate }
     fetchAnomalyData();
   }, [connectionId, anomalyId, hasValidIds]);
 
-  // Fetch historical metrics
+  // Fetch historical metrics using anomalyService
   useEffect(() => {
     if (!anomaly || !hasValidIds) {
       setLoadingMetrics(false);
@@ -105,19 +104,38 @@ const AnomalyDetailModal = ({ connectionId, anomalyId, onClose, onStatusUpdate }
     }
   };
 
-  // Format metric value
+  // Format metric value using anomalyService helper
   const formatMetricValue = (value) => {
     return anomalyService.formatMetricValue(value);
   };
 
-  // Handle status update
-  const handleStatusUpdate = (newStatus) => {
+  // Handle status update using anomalyService
+  const handleStatusUpdate = async (newStatus) => {
     if (!hasValidIds) {
       setError('Cannot update status: Invalid connection ID');
       return;
     }
 
-    onStatusUpdate(anomalyId, newStatus, resolutionNote);
+    try {
+      setUpdatingStatus(true);
+      setError(null);
+
+      console.log(`Updating anomaly ${anomalyId} status to ${newStatus}`);
+
+      await anomalyService.updateAnomalyStatus(connectionId, anomalyId, newStatus, resolutionNote);
+
+      // Call the parent callback to refresh data
+      if (onStatusUpdate) {
+        onStatusUpdate(anomalyId, newStatus, resolutionNote);
+      }
+
+      console.log(`Status updated successfully to ${newStatus}`);
+    } catch (err) {
+      console.error('Error updating status:', err);
+      setError(`Failed to update status: ${err.message}`);
+    } finally {
+      setUpdatingStatus(false);
+    }
   };
 
   return (
@@ -156,6 +174,7 @@ const AnomalyDetailModal = ({ connectionId, anomalyId, onClose, onStatusUpdate }
                   type="button"
                   className="bg-white rounded-md text-gray-400 hover:text-gray-500 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500"
                   onClick={onClose}
+                  disabled={updatingStatus}
                 >
                   <span className="sr-only">Close</span>
                   <XMarkIcon className="h-6 w-6" aria-hidden="true" />
@@ -293,6 +312,7 @@ const AnomalyDetailModal = ({ connectionId, anomalyId, onClose, onStatusUpdate }
                                 placeholder="Add a note about this anomaly..."
                                 value={resolutionNote}
                                 onChange={(e) => setResolutionNote(e.target.value)}
+                                disabled={updatingStatus}
                               />
                             </div>
                           </div>
@@ -301,19 +321,35 @@ const AnomalyDetailModal = ({ connectionId, anomalyId, onClose, onStatusUpdate }
                             {anomaly.status === 'open' && (
                               <button
                                 type="button"
-                                className="w-full inline-flex justify-center rounded-md border border-yellow-300 shadow-sm px-4 py-2 bg-yellow-50 text-base font-medium text-yellow-700 hover:bg-yellow-100 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-yellow-500 sm:w-auto sm:text-sm"
+                                className="w-full inline-flex justify-center rounded-md border border-yellow-300 shadow-sm px-4 py-2 bg-yellow-50 text-base font-medium text-yellow-700 hover:bg-yellow-100 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-yellow-500 sm:w-auto sm:text-sm disabled:opacity-50 disabled:cursor-not-allowed"
                                 onClick={() => handleStatusUpdate('acknowledged')}
+                                disabled={updatingStatus}
                               >
-                                Acknowledge
+                                {updatingStatus ? (
+                                  <>
+                                    <LoadingSpinner size="xs" className="mr-2" />
+                                    Updating...
+                                  </>
+                                ) : (
+                                  'Acknowledge'
+                                )}
                               </button>
                             )}
 
                             <button
                               type="button"
-                              className="w-full inline-flex justify-center rounded-md border border-transparent shadow-sm px-4 py-2 bg-green-600 text-base font-medium text-white hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 sm:w-auto sm:text-sm"
+                              className="w-full inline-flex justify-center rounded-md border border-transparent shadow-sm px-4 py-2 bg-green-600 text-base font-medium text-white hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 sm:w-auto sm:text-sm disabled:opacity-50 disabled:cursor-not-allowed"
                               onClick={() => handleStatusUpdate('resolved')}
+                              disabled={updatingStatus}
                             >
-                              Mark as Resolved
+                              {updatingStatus ? (
+                                <>
+                                  <LoadingSpinner size="xs" className="mr-2" />
+                                  Updating...
+                                </>
+                              ) : (
+                                'Mark as Resolved'
+                              )}
                             </button>
                           </div>
                         </div>

@@ -1,5 +1,3 @@
-// src/pages/Anomaly/AnomalyExplorerPage.js - Refactored without BatchRequest
-
 import React, { useState, useEffect } from 'react';
 import { useConnection } from '../../../contexts/EnhancedConnectionContext';
 import { useUI } from '../../../contexts/UIContext';
@@ -68,191 +66,187 @@ const AnomalyExplorerPage = () => {
       { name: 'Dashboard', href: '/dashboard' },
       { name: 'Anomaly Detection', href: '/anomalies' },
       { name: activeConnection?.name || 'Connection', href: `/anomalies/${connectionId}` },
-      { name: 'Explorer' }
+      { name: 'Anomaly Explorer' }
     ]);
   }, [updateBreadcrumbs, connectionId, activeConnection]);
 
-  // Load anomalies
+  // Load tables - using schemaAPI
   useEffect(() => {
-    if (connectionId && connectionId !== 'undefined') {
-      loadAnomalies();
-    }
-  }, [connectionId, timeRange, filterStatus, filterTable]);
+    const loadTables = async () => {
+      if (!connectionId || connectionId === 'undefined') return;
 
-  // Load tables
-  useEffect(() => {
-    if (connectionId && connectionId !== 'undefined') {
-      loadTables();
-    }
-  }, [connectionId]);
+      try {
+        setLoadingTables(true);
+        console.log(`Loading tables for connection ${connectionId}`);
 
-  const loadAnomalies = async () => {
-    if (!connectionId || connectionId === 'undefined') return;
+        const response = await schemaAPI.getTables(connectionId);
+        console.log('Tables response:', response);
 
-    try {
-      setLoading(true);
-      setError(null);
+        // Handle different possible response structures
+        let tablesData = [];
+        if (response?.tables && Array.isArray(response.tables)) {
+          tablesData = response.tables;
+        } else if (response?.data?.tables && Array.isArray(response.data.tables)) {
+          tablesData = response.data.tables;
+        } else if (Array.isArray(response)) {
+          tablesData = response;
+        } else {
+          console.warn('Unexpected tables response format:', response);
+        }
 
-      console.log(`Loading anomalies for connection ${connectionId}`);
-
-      const anomaliesData = await anomalyService.getAnomalies(connectionId, {
-        days: timeRange,
-        status: filterStatus !== 'all' ? filterStatus : undefined,
-        table_name: filterTable || undefined,
-        limit: 100
-      });
-
-      setAnomalies(anomaliesData);
-      console.log(`Loaded ${anomaliesData.length} anomalies`);
-    } catch (err) {
-      console.error('Error loading anomalies:', err);
-      setError(`Failed to load anomalies: ${err.message}`);
-      showNotification(`Failed to load anomalies: ${err.message}`, 'error');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const loadTables = async () => {
-    if (!connectionId || connectionId === 'undefined') return;
-
-    try {
-      setLoadingTables(true);
-      console.log(`Loading tables for connection ${connectionId}`);
-
-      const response = await schemaAPI.getTables(connectionId);
-
-      // Handle different possible response structures
-      let tablesData = [];
-      if (response?.tables && Array.isArray(response.tables)) {
-        tablesData = response.tables;
-      } else if (response?.data?.tables && Array.isArray(response.data.tables)) {
-        tablesData = response.data.tables;
-      } else if (Array.isArray(response)) {
-        tablesData = response;
+        console.log(`Found ${tablesData.length} tables for connection ${connectionId}`);
+        setTables(tablesData);
+      } catch (error) {
+        console.error(`Error loading tables for connection ${connectionId}:`, error);
+        showNotification(`Failed to load tables: ${error.message}`, 'error');
+      } finally {
+        setLoadingTables(false);
       }
+    };
 
-      setTables(tablesData);
-      console.log(`Loaded ${tablesData.length} tables`);
-    } catch (err) {
-      console.error('Error loading tables:', err);
-      // Don't show error for tables loading failure - it's not critical
-    } finally {
-      setLoadingTables(false);
-    }
-  };
+    loadTables();
+  }, [connectionId, showNotification]);
 
-  // Handle refresh
-  const handleRefresh = () => {
+  // Load anomalies - using anomalyService
+  useEffect(() => {
+    const loadAnomalies = async () => {
+      if (!connectionId || connectionId === 'undefined') return;
+
+      try {
+        setLoading(true);
+        setError(null);
+        console.log(`Loading anomalies for connection ${connectionId}`);
+
+        // Build filters object
+        const filters = {
+          days: timeRange
+        };
+
+        if (filterStatus !== 'all') filters.status = filterStatus;
+        if (filterSeverity !== 'all') filters.severity = filterSeverity;
+        if (filterTable) filters.table_name = filterTable;
+
+        const anomaliesData = await anomalyService.getAnomalies(connectionId, filters);
+        console.log(`Found ${anomaliesData.length} anomalies`);
+        setAnomalies(anomaliesData);
+      } catch (error) {
+        console.error(`Error loading anomalies for connection ${connectionId}:`, error);
+        const errorMessage = `Failed to load anomalies: ${error.message}`;
+        showNotification(errorMessage, 'error');
+        setError(errorMessage);
+      } finally {
+        setLoading(false);
+      }
+    };
+
     loadAnomalies();
+  }, [connectionId, filterStatus, filterSeverity, filterTable, timeRange, showNotification]);
+
+  // Handle status update from modal
+  const handleStatusUpdate = (anomalyId, newStatus, note) => {
+    // Update the anomaly in the list
+    setAnomalies(prev => prev.map(anomaly =>
+      anomaly.id === anomalyId
+        ? {
+            ...anomaly,
+            status: newStatus,
+            resolution_note: note,
+            resolved_at: newStatus === 'resolved' ? new Date().toISOString() : null
+          }
+        : anomaly
+    ));
+
+    // Close the modal
+    setSelectedAnomalyId(null);
+
+    showNotification(`Anomaly ${newStatus} successfully`, 'success');
   };
 
-  // Handle status update
-  const handleStatusUpdate = async (anomalyId, newStatus, note) => {
-    if (!connectionId || connectionId === 'undefined') {
-      showNotification('Cannot update status: No connection selected', 'error');
-      return;
-    }
+  // Filter anomalies based on search term
+  const filteredAnomalies = anomalies.filter(anomaly => {
+    if (!searchTerm) return true;
 
-    try {
-      await anomalyService.updateAnomalyStatus(connectionId, anomalyId, newStatus, note);
+    const searchLower = searchTerm.toLowerCase();
+    return (
+      anomaly.table_name?.toLowerCase().includes(searchLower) ||
+      anomaly.column_name?.toLowerCase().includes(searchLower) ||
+      anomaly.metric_name?.toLowerCase().includes(searchLower)
+    );
+  });
 
-      showNotification(`Anomaly status updated to ${newStatus}`, 'success');
-
-      // Refresh data
-      await loadAnomalies();
-
-      // Close modal if open
-      if (selectedAnomalyId === anomalyId) {
-        setSelectedAnomalyId(null);
-      }
-
-    } catch (error) {
-      console.error('Error updating anomaly status:', error);
-      showNotification('Failed to update anomaly status', 'error');
-    }
-  };
-
-  // Get severity icon
+  // Get severity icon and color
   const getSeverityIcon = (severity) => {
     switch (severity) {
       case 'high':
-        return <ExclamationTriangleIcon className="h-5 w-5 text-red-600" aria-hidden="true" />;
+        return <ExclamationTriangleIcon className="h-5 w-5 text-red-500" />;
       case 'medium':
-        return <ExclamationCircleIcon className="h-5 w-5 text-yellow-500" aria-hidden="true" />;
+        return <ExclamationCircleIcon className="h-5 w-5 text-yellow-500" />;
       case 'low':
-        return <ExclamationCircleIcon className="h-5 w-5 text-green-500" aria-hidden="true" />;
+        return <ExclamationCircleIcon className="h-5 w-5 text-green-500" />;
       default:
-        return <ExclamationCircleIcon className="h-5 w-5 text-gray-400" aria-hidden="true" />;
+        return <ExclamationCircleIcon className="h-5 w-5 text-gray-400" />;
     }
   };
 
-  // Get status icon
+  // Get status icon and color
   const getStatusIcon = (status) => {
     switch (status) {
-      case 'open':
-        return <ClockIcon className="h-5 w-5 text-blue-500" aria-hidden="true" />;
-      case 'acknowledged':
-        return <ExclamationCircleIcon className="h-5 w-5 text-yellow-500" aria-hidden="true" />;
       case 'resolved':
-        return <CheckIcon className="h-5 w-5 text-green-500" aria-hidden="true" />;
-      case 'expected':
-        return <CheckIcon className="h-5 w-5 text-gray-500" aria-hidden="true" />;
+        return <CheckIcon className="h-5 w-5 text-green-500" />;
+      case 'acknowledged':
+        return <ClockIcon className="h-5 w-5 text-yellow-500" />;
+      case 'open':
+        return <XMarkIcon className="h-5 w-5 text-red-500" />;
       default:
-        return <ClockIcon className="h-5 w-5 text-gray-400" aria-hidden="true" />;
+        return <ExclamationCircleIcon className="h-5 w-5 text-gray-400" />;
     }
   };
 
-  // Status badge style
-  const getStatusBadgeStyle = (status) => {
-    switch (status) {
-      case 'open':
-        return 'bg-blue-100 text-blue-800';
-      case 'acknowledged':
-        return 'bg-yellow-100 text-yellow-800';
-      case 'resolved':
-        return 'bg-green-100 text-green-800';
-      case 'expected':
-        return 'bg-gray-100 text-gray-800';
-      default:
-        return 'bg-gray-100 text-gray-800';
-    }
-  };
-
-  // Helper to format metric display value
+  // Format metric value
   const formatMetricValue = (value) => {
     return anomalyService.formatMetricValue(value);
   };
 
-  // Filter anomalies based on search term and severity
-  const filteredAnomalies = anomalies.filter(anomaly => {
-    // Filter by search term
-    const searchMatches =
-      !searchTerm ||
-      anomaly.table_name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      anomaly.column_name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      anomaly.metric_name?.toLowerCase().includes(searchTerm.toLowerCase());
+  // Format date
+  const formatDate = (dateString) => {
+    return new Date(dateString).toLocaleString();
+  };
 
-    // Filter by severity if needed
-    const severityMatches =
-      filterSeverity === 'all' ||
-      anomaly.severity === filterSeverity;
+  // Quick bulk actions
+  const handleBulkStatusUpdate = async (selectedIds, newStatus) => {
+    if (!connectionId || connectionId === 'undefined') return;
 
-    return searchMatches && severityMatches;
-  });
+    try {
+      await Promise.all(
+        selectedIds.map(id => anomalyService.updateAnomalyStatus(connectionId, id, newStatus, ''))
+      );
 
-  // Show loading while connection is loading
+      // Update local state
+      setAnomalies(prev => prev.map(anomaly =>
+        selectedIds.includes(anomaly.id)
+          ? {
+              ...anomaly,
+              status: newStatus,
+              resolved_at: newStatus === 'resolved' ? new Date().toISOString() : null
+            }
+          : anomaly
+      ));
+
+      showNotification(`${selectedIds.length} anomalies updated successfully`, 'success');
+    } catch (error) {
+      console.error('Error updating anomalies:', error);
+      showNotification(`Failed to update anomalies: ${error.message}`, 'error');
+    }
+  };
+
   if (connectionLoading) {
     return <LoadingSpinner size="lg" className="mx-auto my-12" />;
   }
 
-  // Show error if no connection ID is available
   if (!connectionId || connectionId === 'undefined') {
     return (
       <div className="text-center py-10">
-        <ExclamationCircleIcon className="mx-auto h-12 w-12 text-red-500" />
-        <p className="mt-2 text-lg font-medium text-gray-900">No connection selected</p>
-        <p className="mt-1 text-sm text-gray-500">Please select a connection to view anomalies.</p>
+        <p className="text-red-500">No connection ID available. Please select a connection.</p>
         <Link
           to="/anomalies"
           className="mt-4 inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-primary-600 hover:bg-primary-700"
@@ -267,44 +261,15 @@ const AnomalyExplorerPage = () => {
     <div className="flex flex-col space-y-6">
       <div className="flex justify-between items-center">
         <h1 className="text-2xl font-bold text-gray-900">Anomaly Explorer</h1>
-
-        <div className="flex items-center space-x-4">
-          {/* Time range selector */}
-          <div className="flex items-center space-x-2">
-            <span className="text-sm text-gray-500">Time Range:</span>
-            <select
-              className="rounded-md border-gray-300 py-1 pl-3 pr-10 text-sm focus:outline-none focus:ring-primary-500 focus:border-primary-500"
-              value={timeRange}
-              onChange={(e) => setTimeRange(parseInt(e.target.value))}
-            >
-              <option value={7}>Last 7 days</option>
-              <option value={30}>Last 30 days</option>
-              <option value={90}>Last 90 days</option>
-            </select>
-          </div>
-
-          {/* Refresh button */}
-          <button
-            onClick={handleRefresh}
-            disabled={loading}
-            className="inline-flex items-center px-3 py-2 border border-transparent shadow-sm text-sm leading-4 font-medium rounded-md text-white bg-primary-600 hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 disabled:opacity-50"
-          >
-            {loading ? (
-              <>
-                <LoadingSpinner size="xs" className="mr-2" />
-                Loading...
-              </>
-            ) : (
-              <>
-                <ArrowPathIcon className="h-4 w-4 mr-2" />
-                Refresh
-              </>
-            )}
-          </button>
-        </div>
+        <button
+          onClick={() => window.location.reload()}
+          className="inline-flex items-center px-3 py-2 border border-gray-300 shadow-sm text-sm leading-4 font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500"
+        >
+          <ArrowPathIcon className="h-4 w-4 mr-2" />
+          Refresh
+        </button>
       </div>
 
-      {/* Error display */}
       {error && (
         <div className="rounded-md bg-red-50 p-4">
           <div className="flex">
@@ -320,30 +285,25 @@ const AnomalyExplorerPage = () => {
       )}
 
       {/* Filters */}
-      <div className="bg-white shadow overflow-hidden sm:rounded-md p-4">
-        <div className="grid grid-cols-1 gap-6 lg:grid-cols-4">
+      <div className="bg-white shadow rounded-md p-4">
+        <div className="flex items-center mb-4">
+          <FunnelIcon className="h-5 w-5 text-gray-400 mr-2" />
+          <h3 className="text-sm font-medium text-gray-900">Filters</h3>
+        </div>
+
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-5">
           {/* Search */}
-          <div className="col-span-1 lg:col-span-2">
-            <div className="mt-1 flex rounded-md shadow-sm">
-              <div className="relative flex items-stretch flex-grow">
-                <SearchInput
-                  onSearch={setSearchTerm}
-                  placeholder="Search tables, columns, metrics..."
-                  initialValue={searchTerm}
-                />
-              </div>
-            </div>
+          <div>
+            <SearchInput
+              onSearch={setSearchTerm}
+              placeholder="Search tables, metrics..."
+            />
           </div>
 
           {/* Status filter */}
           <div>
-            <label htmlFor="status" className="block text-sm font-medium text-gray-700">
-              Status
-            </label>
             <select
-              id="status"
-              name="status"
-              className="mt-1 block w-full rounded-md border-gray-300 py-2 pl-3 pr-10 text-base focus:border-primary-500 focus:outline-none focus:ring-primary-500 sm:text-sm"
+              className="block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
               value={filterStatus}
               onChange={(e) => setFilterStatus(e.target.value)}
             >
@@ -351,211 +311,150 @@ const AnomalyExplorerPage = () => {
               <option value="open">Open</option>
               <option value="acknowledged">Acknowledged</option>
               <option value="resolved">Resolved</option>
-              <option value="expected">Expected</option>
+            </select>
+          </div>
+
+          {/* Severity filter */}
+          <div>
+            <select
+              className="block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+              value={filterSeverity}
+              onChange={(e) => setFilterSeverity(e.target.value)}
+            >
+              <option value="all">All Severities</option>
+              <option value="high">High</option>
+              <option value="medium">Medium</option>
+              <option value="low">Low</option>
             </select>
           </div>
 
           {/* Table filter */}
           <div>
-            <label htmlFor="table" className="block text-sm font-medium text-gray-700">
-              Table
-            </label>
             <select
-              id="table"
-              name="table"
-              className="mt-1 block w-full rounded-md border-gray-300 py-2 pl-3 pr-10 text-base focus:border-primary-500 focus:outline-none focus:ring-primary-500 sm:text-sm"
+              className="block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
               value={filterTable}
               onChange={(e) => setFilterTable(e.target.value)}
               disabled={loadingTables}
             >
-              <option value="">All Tables</option>
-              {tables.map((table, index) => (
-                <option key={index} value={table}>
-                  {table}
-                </option>
-              ))}
+              {loadingTables ? (
+                <option>Loading tables...</option>
+              ) : (
+                <>
+                  <option value="">All Tables</option>
+                  {tables.map((table, index) => (
+                    <option key={index} value={table}>
+                      {table}
+                    </option>
+                  ))}
+                </>
+              )}
             </select>
-            {loadingTables && (
-              <div className="mt-1 text-xs text-gray-500">Loading tables...</div>
-            )}
           </div>
 
-          {/* Filter info */}
-          <div className="col-span-1 lg:col-span-4 flex justify-between items-center border-t pt-4 mt-2">
-            <div className="text-sm text-gray-700">
-              <span className="font-medium">{filteredAnomalies.length}</span> anomalies found
-              {searchTerm && (
-                <span className="ml-1">
-                  matching <span className="font-medium">"{searchTerm}"</span>
-                </span>
-              )}
-            </div>
-
-            {/* Clear filters */}
-            {(searchTerm || filterStatus !== 'all' || filterSeverity !== 'all' || filterTable) && (
-              <button
-                type="button"
-                className="inline-flex items-center px-2.5 py-1.5 border border-gray-300 shadow-sm text-xs font-medium rounded text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500"
-                onClick={() => {
-                  setSearchTerm('');
-                  setFilterStatus('all');
-                  setFilterSeverity('all');
-                  setFilterTable('');
-                }}
-              >
-                <XMarkIcon className="mr-1.5 h-4 w-4 text-gray-500" />
-                Clear filters
-              </button>
-            )}
+          {/* Time range */}
+          <div>
+            <select
+              className="block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
+              value={timeRange}
+              onChange={(e) => setTimeRange(parseInt(e.target.value))}
+            >
+              <option value={7}>Last 7 days</option>
+              <option value={30}>Last 30 days</option>
+              <option value={90}>Last 90 days</option>
+              <option value={365}>Last year</option>
+            </select>
           </div>
         </div>
       </div>
 
-      {/* Results */}
-      <div className="bg-white shadow overflow-hidden sm:rounded-lg">
-        {loading ? (
-          <div className="flex justify-center py-12">
-            <LoadingSpinner size="lg" />
-            <span className="ml-3 text-gray-600">Loading anomalies...</span>
-          </div>
-        ) : filteredAnomalies.length > 0 ? (
-          <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-gray-200">
-              <thead className="bg-gray-50">
-                <tr>
-                  <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Severity
-                  </th>
-                  <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Table/Column
-                  </th>
-                  <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Metric
-                  </th>
-                  <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Value
-                  </th>
-                  <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Detected At
-                  </th>
-                  <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Status
-                  </th>
-                  <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Actions
-                  </th>
-                </tr>
-              </thead>
-              <tbody className="bg-white divide-y divide-gray-200">
-                {filteredAnomalies.map((anomaly) => (
-                  <tr
-                    key={anomaly.id}
-                    className="hover:bg-gray-50 cursor-pointer"
-                    onClick={() => setSelectedAnomalyId(anomaly.id)}
-                  >
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <div className="flex items-center">
-                        {getSeverityIcon(anomaly.severity)}
-                        <span className="ml-1 text-sm capitalize">{anomaly.severity}</span>
-                      </div>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <div className="text-sm font-medium text-gray-900">
-                        {anomaly.table_name}
-                      </div>
-                      {anomaly.column_name && (
-                        <div className="text-sm text-gray-500">
-                          {anomaly.column_name}
-                        </div>
-                      )}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <div className="text-sm text-gray-900">
-                        {anomaly.metric_name}
-                      </div>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <div className="text-sm text-gray-900">
-                        {formatMetricValue(anomaly.metric_value)}
-                      </div>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                      {new Date(anomaly.detected_at).toLocaleString()}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${getStatusBadgeStyle(anomaly.status)}`}>
-                        {anomaly.status}
-                      </span>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                      <div className="flex items-center space-x-2">
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setSelectedAnomalyId(anomaly.id);
-                          }}
-                          className="text-primary-600 hover:text-primary-900"
-                        >
-                          View
-                        </button>
-                        {anomaly.status === 'open' && (
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleStatusUpdate(anomaly.id, 'acknowledged');
-                            }}
-                            className="text-yellow-600 hover:text-yellow-900"
-                          >
-                            Acknowledge
-                          </button>
-                        )}
-                        {(anomaly.status === 'open' || anomaly.status === 'acknowledged') && (
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleStatusUpdate(anomaly.id, 'resolved');
-                            }}
-                            className="text-green-600 hover:text-green-900"
-                          >
-                            Resolve
-                          </button>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        ) : (
-          <div className="text-center py-12">
-            <div className="flex justify-center">
-              <FunnelIcon className="h-12 w-12 text-gray-400" />
-            </div>
-            <h3 className="mt-2 text-sm font-medium text-gray-900">No anomalies found</h3>
-            <p className="mt-1 text-sm text-gray-500">
-              Try adjusting your filters or search criteria.
-            </p>
-            <div className="mt-6">
-              <button
-                type="button"
-                className="inline-flex items-center px-4 py-2 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-primary-600 hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500"
-                onClick={() => {
-                  setSearchTerm('');
-                  setFilterStatus('all');
-                  setFilterSeverity('all');
-                  setFilterTable('');
-                }}
-              >
-                <MagnifyingGlassIcon className="-ml-1 mr-2 h-5 w-5" aria-hidden="true" />
-                Clear filters
-              </button>
-            </div>
-          </div>
-        )}
+      {/* Results summary */}
+      <div className="flex items-center justify-between bg-gray-50 px-4 py-2 rounded-md">
+        <p className="text-sm text-gray-600">
+          Showing {filteredAnomalies.length} of {anomalies.length} anomalies
+        </p>
+        <div className="flex items-center space-x-2 text-sm text-gray-500">
+          <span className="flex items-center">
+            <span className="w-2 h-2 bg-red-500 rounded-full mr-1"></span>
+            High: {filteredAnomalies.filter(a => a.severity === 'high').length}
+          </span>
+          <span className="flex items-center">
+            <span className="w-2 h-2 bg-yellow-500 rounded-full mr-1"></span>
+            Medium: {filteredAnomalies.filter(a => a.severity === 'medium').length}
+          </span>
+          <span className="flex items-center">
+            <span className="w-2 h-2 bg-green-500 rounded-full mr-1"></span>
+            Low: {filteredAnomalies.filter(a => a.severity === 'low').length}
+          </span>
+        </div>
       </div>
 
-      {/* Detail modal */}
+      {/* Anomalies list */}
+      {loading ? (
+        <div className="flex justify-center py-12">
+          <LoadingSpinner size="lg" />
+          <span className="ml-3 text-gray-600">Loading anomalies...</span>
+        </div>
+      ) : filteredAnomalies.length > 0 ? (
+        <div className="bg-white shadow overflow-hidden sm:rounded-md">
+          <ul className="divide-y divide-gray-200">
+            {filteredAnomalies.map((anomaly) => (
+              <li key={anomaly.id}>
+                <div
+                  className="block hover:bg-gray-50 cursor-pointer"
+                  onClick={() => setSelectedAnomalyId(anomaly.id)}
+                >
+                  <div className="px-4 py-4 sm:px-6">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center">
+                        {getSeverityIcon(anomaly.severity)}
+                        <div className="ml-2">
+                          <p className="text-sm font-medium text-primary-600 truncate">
+                            {anomaly.table_name}
+                            {anomaly.column_name && `.${anomaly.column_name}`}
+                          </p>
+                          <p className="text-sm text-gray-500">
+                            {anomaly.metric_name}: {formatMetricValue(anomaly.metric_value)}
+                          </p>
+                        </div>
+                      </div>
+                      <div className="flex items-center space-x-2">
+                        {getStatusIcon(anomaly.status)}
+                        <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
+                          anomaly.status === 'resolved' ? 'bg-green-100 text-green-800' :
+                          anomaly.status === 'acknowledged' ? 'bg-yellow-100 text-yellow-800' :
+                          'bg-red-100 text-red-800'
+                        }`}>
+                          {anomaly.status}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="mt-2 sm:flex sm:justify-between">
+                      <div className="sm:flex">
+                        <p className="flex items-center text-sm text-gray-500">
+                          Detected: {formatDate(anomaly.detected_at)}
+                        </p>
+                        <p className="mt-2 flex items-center text-sm text-gray-500 sm:mt-0 sm:ml-6">
+                          Score: {parseFloat(anomaly.score || 0).toFixed(2)}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : (
+        <div className="text-center py-12">
+          <MagnifyingGlassIcon className="mx-auto h-12 w-12 text-gray-400" />
+          <h3 className="mt-2 text-sm font-medium text-gray-900">No anomalies found</h3>
+          <p className="mt-1 text-sm text-gray-500">
+            Try adjusting your filters or time range to see more results.
+          </p>
+        </div>
+      )}
+
+      {/* Detail Modal */}
       {selectedAnomalyId && (
         <AnomalyDetailModal
           connectionId={connectionId}

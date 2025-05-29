@@ -1,5 +1,3 @@
-// Fixed AnomalyConfigForm.js - Removing BatchRequest and using direct API calls like ValidationRuleEditor
-
 import React, { useState, useEffect } from 'react';
 import { useConnection } from '../../../contexts/EnhancedConnectionContext';
 import { useUI } from '../../../contexts/UIContext';
@@ -13,6 +11,7 @@ import {
 import LoadingSpinner from '../../../components/common/LoadingSpinner';
 import EmptyState from '../../../components/common/EmptyState';
 import { schemaAPI } from '../../../api/enhancedApiService';
+import anomalyService from '../../../services/anomalyService';
 
 const AnomalyConfigForm = () => {
   const { activeConnection, loading: connectionLoading } = useConnection();
@@ -74,7 +73,7 @@ const AnomalyConfigForm = () => {
     ]);
   }, [updateBreadcrumbs, connectionId, activeConnection, isEdit]);
 
-  // Load tables - using exact same pattern as ValidationRuleEditor
+  // Load tables - using same pattern as ValidationRuleEditor
   useEffect(() => {
     const loadTables = async () => {
       if (!connectionId || connectionId === 'undefined') return;
@@ -86,17 +85,14 @@ const AnomalyConfigForm = () => {
         const response = await schemaAPI.getTables(connectionId);
         console.log('Tables response:', response);
 
-        // Handle different possible response structures (exact same as ValidationRuleEditor)
+        // Handle different possible response structures
         let tablesData = [];
 
         if (response?.tables && Array.isArray(response.tables)) {
-          // Direct tables array in response
           tablesData = response.tables;
         } else if (response?.data?.tables && Array.isArray(response.data.tables)) {
-          // Nested in data property
           tablesData = response.data.tables;
         } else if (Array.isArray(response)) {
-          // Response is the array itself
           tablesData = response;
         } else {
           console.warn('Unexpected tables response format:', response);
@@ -116,34 +112,23 @@ const AnomalyConfigForm = () => {
     loadTables();
   }, [connectionId, showNotification]);
 
-  // Fetch config data if editing
+  // Fetch config data if editing - using anomalyService
   useEffect(() => {
     if (isEdit && connectionId && connectionId !== 'undefined') {
       const fetchConfig = async () => {
         try {
           setLoading(true);
-          const session = await (await import('../../../api/supabase')).getSession();
-          const token = session?.access_token;
+          setError(null);
 
-          if (!token) {
-            throw new Error('Authentication required');
-          }
+          console.log(`Loading config ${configId} for connection ${connectionId}`);
+          const configData = await anomalyService.getConfig(connectionId, configId);
 
-          const response = await fetch(`/api/connections/${connectionId}/anomalies/configs/${configId}`, {
-            headers: {
-              'Authorization': `Bearer ${token}`
-            }
-          });
-
-          if (!response.ok) {
-            throw new Error('Failed to fetch configuration');
-          }
-
-          const data = await response.json();
-          setConfig(data.config);
+          console.log('Config data loaded:', configData);
+          setConfig(configData);
         } catch (err) {
           console.error('Error fetching config:', err);
-          setError('Failed to load configuration');
+          setError(`Failed to load configuration: ${err.message}`);
+          showNotification(`Failed to load configuration: ${err.message}`, 'error');
         } finally {
           setLoading(false);
         }
@@ -151,7 +136,7 @@ const AnomalyConfigForm = () => {
 
       fetchConfig();
     }
-  }, [connectionId, configId, isEdit]);
+  }, [connectionId, configId, isEdit, showNotification]);
 
   // Handle input changes
   const handleInputChange = (e) => {
@@ -177,7 +162,7 @@ const AnomalyConfigForm = () => {
     }
   };
 
-  // Handle form submission
+  // Handle form submission - using anomalyService
   const handleSubmit = async (e) => {
     e.preventDefault();
 
@@ -190,19 +175,7 @@ const AnomalyConfigForm = () => {
       setSaving(true);
       setError(null);
 
-      const session = await (await import('../../../api/supabase')).getSession();
-      const token = session?.access_token;
-
-      if (!token) {
-        throw new Error('Authentication required');
-      }
-
-      // Prepare the API endpoint and method
-      const url = isEdit
-        ? `/api/connections/${connectionId}/anomalies/configs/${configId}`
-        : `/api/connections/${connectionId}/anomalies/configs`;
-
-      const method = isEdit ? 'PUT' : 'POST';
+      console.log(`${isEdit ? 'Updating' : 'Creating'} config for connection ${connectionId}`);
 
       // Add connection_id to the config data
       const configData = {
@@ -210,20 +183,14 @@ const AnomalyConfigForm = () => {
         connection_id: connectionId
       };
 
-      const response = await fetch(url, {
-        method,
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify(configData)
-      });
-
-      if (!response.ok) {
-        throw new Error(`Failed to ${isEdit ? 'update' : 'create'} configuration`);
+      let result;
+      if (isEdit) {
+        result = await anomalyService.updateConfig(connectionId, configId, configData);
+        console.log('Config updated:', result);
+      } else {
+        result = await anomalyService.createConfig(connectionId, configData);
+        console.log('Config created:', result);
       }
-
-      const result = await response.json();
 
       showNotification(`Configuration ${isEdit ? 'updated' : 'created'} successfully`, 'success');
 
@@ -231,7 +198,9 @@ const AnomalyConfigForm = () => {
       navigate(`/anomalies/${connectionId}/configs`);
     } catch (err) {
       console.error('Error saving config:', err);
-      setError(err.message || `Failed to ${isEdit ? 'update' : 'create'} configuration`);
+      const errorMessage = err.message || `Failed to ${isEdit ? 'update' : 'create'} configuration`;
+      setError(errorMessage);
+      showNotification(errorMessage, 'error');
     } finally {
       setSaving(false);
     }

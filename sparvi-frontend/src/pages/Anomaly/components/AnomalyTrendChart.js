@@ -1,5 +1,3 @@
-// src/components/anomaly/AnomalyTrendChart.js
-
 import React, { useState, useEffect } from 'react';
 import {
   AreaChart,

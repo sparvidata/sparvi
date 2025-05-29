@@ -1,5 +1,3 @@
-// src/pages/Anomaly/components/AnomalyMetricChart.js
-
 import React, { useState, useEffect } from 'react';
 import {
   LineChart,

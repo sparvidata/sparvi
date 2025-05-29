@@ -1,5 +1,3 @@
-// Fixed AnomalyConfigsPage.js - Removing BatchRequest and using direct API calls
-
 import React, { useState, useEffect } from 'react';
 import { useConnection } from '../../../contexts/EnhancedConnectionContext';
 import { useUI } from '../../../contexts/UIContext';
@@ -18,6 +16,7 @@ import LoadingSpinner from '../../../components/common/LoadingSpinner';
 import SearchInput from '../../../components/common/SearchInput';
 import EmptyState from '../../../components/common/EmptyState';
 import { schemaAPI } from '../../../api/enhancedApiService';
+import anomalyService from '../../../services/anomalyService';
 
 const AnomalyConfigsPage = () => {
   const { activeConnection, loading: connectionLoading } = useConnection();
@@ -56,7 +55,7 @@ const AnomalyConfigsPage = () => {
     ]);
   }, [updateBreadcrumbs, connectionId, activeConnection]);
 
-  // Load configurations - direct API call with better auth handling
+  // Load configurations - using anomalyService
   useEffect(() => {
     const loadConfigs = async () => {
       if (!connectionId || connectionId === 'undefined') return;
@@ -66,39 +65,14 @@ const AnomalyConfigsPage = () => {
         setError(null);
         console.log(`Loading configs for connection ${connectionId}`);
 
-        // Get session and token properly
-        const { getSession } = await import('../../../api/supabase');
-        const session = await getSession();
-        const token = session?.access_token;
-
-        if (!token) {
-          throw new Error('Authentication required');
-        }
-
-        const response = await fetch(`/api/connections/${connectionId}/anomalies/configs`, {
-          headers: {
-            'Authorization': `Bearer ${token}`,
-            'Content-Type': 'application/json'
-          }
-        });
-
-        if (!response.ok) {
-          const errorText = await response.text();
-          console.error('Config API response:', response.status, errorText);
-          throw new Error(`Failed to load configurations: ${response.status} ${response.statusText}`);
-        }
-
-        const data = await response.json();
-        console.log('Configs response:', data);
-
-        // Handle response format
-        const configsData = data.configs || data || [];
+        const configsData = await anomalyService.getConfigs(connectionId);
         console.log(`Found ${configsData.length} configurations`);
         setConfigs(configsData);
       } catch (error) {
         console.error(`Error loading configs for connection ${connectionId}:`, error);
-        showNotification(`Failed to load configurations: ${error.message}`, 'error');
-        setError(`Failed to load configurations: ${error.message}`);
+        const errorMessage = `Failed to load configurations: ${error.message}`;
+        showNotification(errorMessage, 'error');
+        setError(errorMessage);
       } finally {
         setLoadingConfigs(false);
       }
@@ -149,7 +123,7 @@ const AnomalyConfigsPage = () => {
     loadTables();
   }, [connectionId, showNotification]);
 
-  // Handle delete confirmation and action
+  // Handle delete confirmation and action - using anomalyService
   const handleDeleteConfig = async (configId, e) => {
     e.stopPropagation();
 
@@ -163,32 +137,13 @@ const AnomalyConfigsPage = () => {
     }
   };
 
-  // Function to handle the actual deletion
+  // Function to handle the actual deletion - using anomalyService
   const deleteConfiguration = async (configId) => {
     if (!connectionId || connectionId === 'undefined') return;
 
     try {
-      const { getSession } = await import('../../../api/supabase');
-      const session = await getSession();
-      const token = session?.access_token;
-
-      if (!token) {
-        throw new Error('Authentication required');
-      }
-
-      const response = await fetch(`/api/connections/${connectionId}/anomalies/configs/${configId}`, {
-        method: 'DELETE',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        }
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        console.error('Delete API response:', response.status, errorText);
-        throw new Error(`Failed to delete configuration: ${response.status} ${response.statusText}`);
-      }
+      console.log(`Deleting config ${configId} for connection ${connectionId}`);
+      await anomalyService.deleteConfig(connectionId, configId);
 
       showNotification('Configuration deleted successfully', 'success');
 
@@ -196,11 +151,12 @@ const AnomalyConfigsPage = () => {
       setRefreshTrigger(prev => prev + 1);
     } catch (error) {
       console.error('Error deleting configuration:', error);
-      showNotification(`Failed to delete configuration: ${error.message}`, 'error');
+      const errorMessage = `Failed to delete configuration: ${error.message}`;
+      showNotification(errorMessage, 'error');
     }
   };
 
-  // Handle config toggle (active/inactive)
+  // Handle config toggle (active/inactive) - using anomalyService
   const handleToggleConfig = async (configId, isActive, e) => {
     e.stopPropagation();
 
@@ -210,28 +166,9 @@ const AnomalyConfigsPage = () => {
     }
 
     try {
-      const { getSession } = await import('../../../api/supabase');
-      const session = await getSession();
-      const token = session?.access_token;
+      console.log(`Toggling config ${configId} to ${!isActive} for connection ${connectionId}`);
 
-      if (!token) {
-        throw new Error('Authentication required');
-      }
-
-      const response = await fetch(`/api/connections/${connectionId}/anomalies/configs/${configId}`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify({ is_active: !isActive })
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        console.error('Toggle API response:', response.status, errorText);
-        throw new Error(`Failed to update configuration: ${response.status} ${response.statusText}`);
-      }
+      await anomalyService.updateConfig(connectionId, configId, { is_active: !isActive });
 
       showNotification(`Configuration ${!isActive ? 'activated' : 'deactivated'} successfully`, 'success');
 
@@ -239,7 +176,8 @@ const AnomalyConfigsPage = () => {
       setRefreshTrigger(prev => prev + 1);
     } catch (error) {
       console.error('Error updating configuration:', error);
-      showNotification(`Failed to update configuration: ${error.message}`, 'error');
+      const errorMessage = `Failed to update configuration: ${error.message}`;
+      showNotification(errorMessage, 'error');
     }
   };
 

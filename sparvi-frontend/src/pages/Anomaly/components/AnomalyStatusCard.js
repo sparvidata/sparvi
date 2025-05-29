@@ -1,5 +1,3 @@
-// src/components/anomaly/AnomalyStatusCard.js
-
 import React from 'react';
 import { formatNumber } from '../../../utils/formatting';
 
