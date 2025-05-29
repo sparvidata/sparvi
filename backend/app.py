@@ -1351,24 +1351,28 @@ def setup_cors(app):
     """
     try:
         # Define allowed origins
-        allowed_origins = ["https://cloud.sparvi.io", "http://localhost:3000",
-                           "https://ambitious-wave-0fdea0310.6.azurestaticapps.net"]
+        allowed_origins = [
+            "https://cloud.sparvi.io",
+            "http://localhost:3000",
+            "https://ambitious-wave-0fdea0310.6.azurestaticapps.net"
+        ]
 
         # Log the CORS configuration for diagnostics
         logger.info(f"CORS configured with the following origins: {allowed_origins}")
 
-        # Create a CORS instance with simplified settings
+        # Try a more permissive CORS configuration for debugging
         cors = CORS(app,
-                    resources={
-                        r"/api/*": {
-                            "origins": allowed_origins,
-                            "supports_credentials": True
-                        }
-                    },
-                    supports_credentials=True)
+                   origins=allowed_origins,
+                   allow_headers=["Content-Type", "Authorization"],
+                   methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+                   supports_credentials=True)
 
-        # Skip accessing cors.resources which is causing the error
-        logger.info(f"Special configuration added for /api endpoints")
+        logger.info("CORS configuration completed successfully")
+
+        # Add a test route to verify CORS is working
+        @app.route('/api/cors-test', methods=['GET', 'OPTIONS'])
+        def cors_test():
+            return jsonify({"message": "CORS is working", "origin": request.headers.get('Origin')})
 
     except Exception as e:
         logger.error(f"CORS configuration failed: {str(e)}")
@@ -1376,7 +1380,6 @@ def setup_cors(app):
         # Fallback CORS if primary config fails
         logger.warning("Using fallback CORS configuration")
         CORS(app)  # Minimal CORS if primary config fails
-
 
 def create_error_handlers(app):
     """
@@ -6784,6 +6787,22 @@ def batch_requests():
             results[req_id] = {"error": str(e)}
 
     return jsonify({"results": results})
+
+@app.before_first_request
+def debug_routes():
+    logger.info("=== Registered Routes ===")
+    for rule in app.url_map.iter_rules():
+        logger.info(f"  {rule.methods} {rule.rule}")
+    logger.info("========================")
+
+@app.before_request
+def log_request_info():
+    logger.info('=== Request Info ===')
+    logger.info(f'Method: {request.method}')
+    logger.info(f'URL: {request.url}')
+    logger.info(f'Origin: {request.headers.get("Origin", "No Origin")}')
+    logger.info(f'Headers: {dict(request.headers)}')
+    logger.info('==================')
 
 
 @app.after_request
