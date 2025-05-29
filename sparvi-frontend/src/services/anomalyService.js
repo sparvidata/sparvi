@@ -3,7 +3,7 @@ import { getSession } from '../api/supabase';
 // Fixed API base URL to be consistent with enhancedApiService
 const API_BASE_URL = process.env.NODE_ENV === 'development'
   ? 'http://localhost:5000/api'
-  : process.env.REACT_APP_API_BASE_URL || '/api';
+  : process.env.REACT_APP_API_BASE_URL || 'sparvi-webapp-fjdjdvh2bse9d0gm.centralus-01.azurewebsites.net';
 
 console.log('🔍 AnomalyService Configuration Debug:');
 console.log('  NODE_ENV:', process.env.NODE_ENV);
