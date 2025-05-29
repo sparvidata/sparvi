@@ -1,9 +1,8 @@
 import { getSession } from '../api/supabase';
 
-// Fixed API base URL to be consistent with enhancedApiService
 const API_BASE_URL = process.env.NODE_ENV === 'development'
   ? 'http://localhost:5000/api'
-  : process.env.REACT_APP_API_BASE_URL || 'sparvi-webapp-fjdjdvh2bse9d0gm.centralus-01.azurewebsites.net/api';
+  : process.env.REACT_APP_API_BASE_URL || 'https://sparvi-webapp-fjdjdvh2bse9d0gm.centralus-01.azurewebsites.net/api';
 
 console.log('🔍 AnomalyService Configuration Debug:');
 console.log('  NODE_ENV:', process.env.NODE_ENV);
@@ -16,6 +15,7 @@ class AnomalyService {
     console.log('🔍 AnomalyService constructor - baseURL:', this.baseURL);
   }
 
+  // Helper method to make authenticated requests
   async makeRequest(endpoint, options = {}) {
     // Add debug logging here too
     console.log('🔍 makeRequest Debug:');
