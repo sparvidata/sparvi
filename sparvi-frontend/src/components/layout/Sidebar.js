@@ -3,34 +3,41 @@ import { NavLink, useLocation } from 'react-router-dom';
 import {
   HomeIcon,
   ServerIcon,
-  TableCellsIcon,
   ClipboardDocumentCheckIcon,
-  ChartBarIcon,
   Cog6ToothIcon,
   ShieldCheckIcon,
   CommandLineIcon,
   ExclamationTriangleIcon
 } from '@heroicons/react/24/outline';
 import { useUI } from '../../contexts/UIContext';
+import { useUserProfile } from '../../hooks/useUserProfile';
 import Logo from '../common/Logo';
 
 const Sidebar = () => {
   const { sidebarOpen, isMobile } = useUI();
+  const { isAdmin, loading: profileLoading } = useUserProfile();
   const location = useLocation();
 
   // Define navigation items
   const navigation = [
     { name: 'Dashboard', icon: HomeIcon, href: '/dashboard', exact: true },
     { name: 'Connections', icon: ServerIcon, href: '/connections' },
-    // { name: 'Data Explorer', icon: TableCellsIcon, href: '/explorer' },
     { name: 'Validations', icon: ClipboardDocumentCheckIcon, href: '/validations' },
     { name: 'Metadata', icon: CommandLineIcon, href: '/metadata' },
     { name: 'Anomalies', icon: ExclamationTriangleIcon, href: '/anomalies' },
-
-    // { name: 'Analytics', icon: ChartBarIcon, href: '/analytics' },
-    // { name: 'Admin', icon: ShieldCheckIcon, href: '/admin' },
-    // { name: 'Settings', icon: Cog6ToothIcon, href: '/settings' },
   ];
+
+  // Add admin section if user is admin (and profile has loaded)
+  if (isAdmin && !profileLoading) {
+    navigation.push(
+      { name: 'Admin', icon: ShieldCheckIcon, href: '/admin', divider: true }
+    );
+  }
+
+  // Always add settings
+  navigation.push(
+    { name: 'Settings', icon: Cog6ToothIcon, href: '/settings' }
+  );
 
   // Function to check if a nav item is active
   const isActive = (navItem) => {
@@ -63,29 +70,36 @@ const Sidebar = () => {
         <div className="flex-1 flex flex-col overflow-y-auto">
           <nav className="flex-1 py-4">
             <div className="px-4 space-y-1">
-              {navigation.map((item) => (
-                <NavLink
-                  key={item.name}
-                  to={item.href}
-                  className={({ isActive }) =>
-                    `sidebar-link ${isActive ? 'active' : ''}`
-                  }
-                >
-                  <item.icon className="mr-3 h-5 w-5" aria-hidden="true" />
-                  {item.name}
-                </NavLink>
-              ))}
+              {navigation.map((item, index) => {
+                const Icon = item.icon;
+                const active = isActive(item);
+
+                return (
+                  <div key={item.name}>
+                    {/* Add divider if specified */}
+                    {item.divider && (
+                      <div className="border-t border-secondary-200 my-3"></div>
+                    )}
+
+                    <NavLink
+                      to={item.href}
+                      className={`sidebar-link ${active ? 'active' : ''}`}
+                    >
+                      <Icon className="mr-3 h-5 w-5" aria-hidden="true" />
+                      {item.name}
+                    </NavLink>
+                  </div>
+                );
+              })}
             </div>
           </nav>
         </div>
 
         {/* Footer */}
         <div className="p-4 border-t border-secondary-200">
-          <div className="flex items-center">
-            <div className="text-xs text-secondary-500">
-              <div>Sparvi Cloud</div>
-              <div>Version: 1.0.0</div>
-            </div>
+          <div className="text-xs text-secondary-500">
+            <div>Sparvi Cloud</div>
+            <div>Version: 1.0.0</div>
           </div>
         </div>
       </div>

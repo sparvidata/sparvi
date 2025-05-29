@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useUI } from '../../contexts/UIContext';
+import { useUserProfile } from '../../hooks/useUserProfile';
 import {
   BellIcon,
   EnvelopeIcon,
@@ -13,6 +14,7 @@ import { apiRequest } from '../../utils/apiUtils';
 
 const NotificationSettings = () => {
   const { showNotification } = useUI();
+  const { profile, isAdmin, loading: profileLoading } = useUserProfile();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [settings, setSettings] = useState({
@@ -42,10 +44,38 @@ const NotificationSettings = () => {
     }
   });
 
-  // Load notification settings
+  // Load notification settings - ALWAYS call hooks at the top level
   useEffect(() => {
-    loadSettings();
-  }, []);
+    // Only load settings if user is admin and profile has loaded
+    if (!profileLoading && isAdmin) {
+      loadSettings();
+    }
+  }, [profileLoading, isAdmin]);
+
+  // Show loading while checking profile
+  if (profileLoading) {
+    return (
+      <div className="flex justify-center py-12">
+        <LoadingSpinner size="lg" />
+      </div>
+    );
+  }
+
+  // Check permissions after hooks have been called
+  if (!isAdmin) {
+    return (
+      <div className="text-center py-12">
+        <ExclamationTriangleIcon className="h-12 w-12 text-secondary-400 mx-auto mb-4" />
+        <h3 className="text-lg font-medium text-secondary-900">Access Denied</h3>
+        <p className="mt-2 text-secondary-500">
+          You need admin privileges to access organization notification settings.
+        </p>
+        <p className="mt-1 text-xs text-secondary-400">
+          Current role: {profile?.role || 'Unknown'}
+        </p>
+      </div>
+    );
+  }
 
   const loadSettings = async () => {
     try {
@@ -126,18 +156,18 @@ const NotificationSettings = () => {
     <div className="max-w-4xl mx-auto space-y-6">
       <div className="bg-white shadow rounded-lg">
         <div className="px-4 py-5 sm:p-6">
-          <h3 className="text-lg leading-6 font-medium text-gray-900 flex items-center">
+          <h3 className="text-lg leading-6 font-medium text-secondary-900 flex items-center">
             <BellIcon className="h-5 w-5 mr-2" />
-            Notification Settings
+            Organization Notification Settings
           </h3>
-          <p className="mt-1 text-sm text-gray-500">
-            Configure how and when you receive anomaly detection alerts.
+          <p className="mt-1 text-sm text-secondary-500">
+            Configure how and when your organization receives anomaly detection alerts.
           </p>
 
           {/* Severity Preferences */}
           <div className="mt-6">
-            <h4 className="text-md font-medium text-gray-900">Alert Severity Levels</h4>
-            <p className="text-sm text-gray-500">Choose which severity levels trigger notifications</p>
+            <h4 className="text-md font-medium text-secondary-900">Alert Severity Levels</h4>
+            <p className="text-sm text-secondary-500">Choose which severity levels trigger notifications</p>
 
             <div className="mt-4 space-y-3">
               <label className="flex items-center">

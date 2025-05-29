@@ -1,12 +1,9 @@
 import React from 'react';
+import { Navigate } from 'react-router-dom';
 
+// Redirect legacy admin users route to new admin layout
 const AdminUsersPage = () => {
-  return (
-    <div>
-      <h1 className="text-2xl font-semibold">Admin Users</h1>
-      <p className="mt-2">Under Construction</p>
-    </div>
-  );
+  return <Navigate to="/admin/users" replace />;
 };
 
 export default AdminUsersPage;

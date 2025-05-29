@@ -34,14 +34,19 @@ import AnomalyExplorerPage from './pages/Anomaly/components/AnomalyExplorerPage'
 import AnomalyConfigsPage from './pages/Anomaly/components/AnomalyConfigsPage';
 import AnomalyConfigForm from './pages/Anomaly/components/AnomalyConfigForm';
 
-// Other pages
+// Analytics pages
 import AnalyticsPage from './pages/Analytics/AnalyticsPage';
 import TableAnalyticsPage from './pages/Analytics/TableAnalyticsPage';
 import SchemaChangesPage from './pages/Analytics/SchemaChangesPage';
 import BusinessImpactPage from './pages/Analytics/BusinessImpactPage';
-import AdminUsersPage from './pages/Admin/AdminUsersPage';
-import AdminSettingsPage from './pages/Admin/AdminSettingsPage';
+
+// Settings pages
 import UserSettingsPage from './pages/Settings/UserSettingsPage';
+
+// Admin pages
+import AdminSettingsPage from './pages/Admin/AdminSettingsPage';
+
+// Other pages
 import NotFoundPage from './pages/NotFoundPage';
 
 function App() {
@@ -95,13 +100,18 @@ function App() {
                   <Route path="/analytics/schema-changes/:connectionId" element={<SchemaChangesPage />} />
                   <Route path="/analytics/business-impact/:connectionId" element={<BusinessImpactPage />} />
 
-                  {/* Admin */}
-                  <Route path="/admin/users" element={<AdminUsersPage />} />
-                  <Route path="/admin/settings" element={<AdminSettingsPage />} />
-                  <Route path="/admin" element={<Navigate to="/admin/users" replace />} />
-
-                  {/* Settings */}
+                  {/* Settings - User Level */}
                   <Route path="/settings" element={<UserSettingsPage />} />
+                  <Route path="/settings/profile" element={<UserSettingsPage />} />
+                  <Route path="/settings/notifications" element={<UserSettingsPage />} />
+                  <Route path="/settings/security" element={<UserSettingsPage />} />
+
+                  {/* Admin - Organization Level */}
+                  <Route path="/admin" element={<AdminSettingsPage />} />
+                  <Route path="/admin/users" element={<AdminSettingsPage />} />
+                  <Route path="/admin/notifications" element={<AdminSettingsPage />} />
+                  <Route path="/admin/settings" element={<AdminSettingsPage />} />
+                  <Route path="/admin/analytics" element={<AdminSettingsPage />} />
 
                   {/* Root redirect */}
                   <Route path="/" element={<Navigate to="/dashboard" replace />} />
