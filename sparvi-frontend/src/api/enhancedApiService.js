@@ -34,7 +34,7 @@ import { getRequestAbortController, requestCompleted } from '../utils/requestUti
 // Create a base API client with defaults
 const API_BASE_URL = process.env.NODE_ENV === 'development'
   ? 'http://localhost:5000/api'  // Local development
-  : process.env.REACT_APP_API_BASE_URL || 'https://sparvi-backend.onrender.com/api';
+  : process.env.REACT_APP_API_BASE_URL || 'sparvi-webapp-fjdjdvh2bse9d0gm.centralus-01.azurewebsites.net';
 
 console.log("Full environment details:", {
   NODE_ENV: process.env.NODE_ENV,

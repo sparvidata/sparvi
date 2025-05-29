@@ -1,6 +1,7 @@
 # core/anomalies/api.py
 
 import logging
+import uuid
 from typing import Dict, Any, List, Optional
 from datetime import datetime, timedelta
 

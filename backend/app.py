@@ -1226,8 +1226,17 @@ anomaly_scheduler_service = None
 def initialize_anomaly_detection():
     global anomaly_scheduler_service
 
+    # Add debug logging
+    logger.info("Registering anomaly detection routes...")
+
     # Register routes
     register_anomaly_routes(app, token_required)
+
+    # Add this to see all registered routes
+    logger.info("All registered routes:")
+    for rule in app.url_map.iter_rules():
+        if 'anomalies' in rule.rule:
+            logger.info(f"  {rule.methods} {rule.rule}")
 
     # Start scheduler service in production mode
     if os.environ.get('FLASK_ENV') != 'development':

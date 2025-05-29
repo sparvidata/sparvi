@@ -1,16 +1,28 @@
-// src/services/anomalyService.js
-
 import { getSession } from '../api/supabase';
+
+// Fixed API base URL to be consistent with enhancedApiService
+const API_BASE_URL = process.env.NODE_ENV === 'development'
+  ? 'http://localhost:5000/api'
+  : process.env.REACT_APP_API_BASE_URL || '/api';
+
+console.log('🔍 AnomalyService Configuration Debug:');
+console.log('  NODE_ENV:', process.env.NODE_ENV);
+console.log('  REACT_APP_API_BASE_URL:', process.env.REACT_APP_API_BASE_URL);
+console.log('  API_BASE_URL:', API_BASE_URL);
 
 class AnomalyService {
   constructor() {
-    this.baseURL = process.env.NODE_ENV === 'development'
-      ? 'http://localhost:5000/api'
-      : '/api';
+    this.baseURL = API_BASE_URL;
+    console.log('🔍 AnomalyService constructor - baseURL:', this.baseURL);
   }
 
-  // Helper method to make authenticated requests
   async makeRequest(endpoint, options = {}) {
+    // Add debug logging here too
+    console.log('🔍 makeRequest Debug:');
+    console.log('  this.baseURL:', this.baseURL);
+    console.log('  endpoint:', endpoint);
+    console.log('  final URL:', `${this.baseURL}${endpoint}`);
+
     try {
       const session = await getSession();
       const token = session?.access_token;
