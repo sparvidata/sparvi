@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { useConnection } from '../../contexts/EnhancedConnectionContext';
 import { useUI } from '../../contexts/UIContext';
 import { useAutomationConfig } from '../../hooks/useAutomationConfig';
-import { getSession } from '../../api/supabase';
+import { automationAPI } from '../../api/enhancedApiService';
 import {
   ClockIcon,
   PlayIcon,
@@ -35,21 +35,23 @@ const AutomationPage = () => {
   useEffect(() => {
     const loadJobs = async () => {
       try {
-        const session = await getSession();
-        const token = session?.access_token;
+        setJobsLoading(true);
 
-        if (!token) return;
-
-        const response = await fetch('/api/automation/jobs?limit=20', {
-          headers: { 'Authorization': `Bearer ${token}` }
+        const response = await automationAPI.getJobs({
+          limit: 20,
+          forceFresh: true
         });
 
-        if (response.ok) {
-          const data = await response.json();
-          setAutomationJobs(data.jobs || []);
+        if (response?.jobs) {
+          setAutomationJobs(response.jobs);
+        } else if (Array.isArray(response)) {
+          setAutomationJobs(response);
+        } else {
+          setAutomationJobs([]);
         }
       } catch (error) {
         console.error('Error loading automation jobs:', error);
+        setAutomationJobs([]);
       } finally {
         setJobsLoading(false);
       }
@@ -65,18 +67,24 @@ const AutomationPage = () => {
   const toggleGlobalAutomation = async () => {
     if (!globalConfig) return;
 
-    const newConfig = {
-      ...globalConfig,
-      automation_enabled: !globalConfig.automation_enabled
-    };
+    const newEnabled = !globalConfig.automation_enabled;
 
-    const success = await updateGlobalConfig(newConfig);
-    if (success) {
-      showNotification(
-        `Global automation ${newConfig.automation_enabled ? 'enabled' : 'disabled'}`,
-        'success'
-      );
-    } else {
+    try {
+      const success = await updateGlobalConfig({
+        ...globalConfig,
+        automation_enabled: newEnabled
+      });
+
+      if (success) {
+        showNotification(
+          `Global automation ${newEnabled ? 'enabled' : 'disabled'}`,
+          'success'
+        );
+      } else {
+        showNotification('Failed to update global automation setting', 'error');
+      }
+    } catch (error) {
+      console.error('Error toggling global automation:', error);
       showNotification('Failed to update global automation setting', 'error');
     }
   };
@@ -308,19 +316,6 @@ const ConnectionAutomationSummary = ({ connection, config, onUpdateConfig, globa
     config.schema_change_detection?.enabled ||
     config.validation_automation?.enabled;
 
-  const getAutomationIcon = (type) => {
-    switch (type) {
-      case 'metadata':
-        return TableCellsIcon;
-      case 'schema':
-        return CommandLineIcon;
-      case 'validation':
-        return ClipboardDocumentCheckIcon;
-      default:
-        return ClockIcon;
-    }
-  };
-
   return (
     <div className={`border rounded-lg p-4 ${
       hasEnabledAutomation && globalEnabled 
@@ -453,6 +448,8 @@ const AutomationJobSummary = ({ job, compact = false }) => {
   };
 
   const formatTimeAgo = (timestamp) => {
+    if (!timestamp) return 'Unknown';
+
     const now = new Date();
     const then = new Date(timestamp);
     const diffMs = now - then;
@@ -466,6 +463,7 @@ const AutomationJobSummary = ({ job, compact = false }) => {
   };
 
   const formatJobType = (type) => {
+    if (!type) return 'Unknown';
     return type.replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase());
   };
 

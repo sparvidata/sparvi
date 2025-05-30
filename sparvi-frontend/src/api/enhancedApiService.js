@@ -1479,5 +1479,268 @@ export const anomalyAPI = {
   }
 };
 
+// Enhanced Automation API
+export const automationAPI = {
+  // Global Configuration
+  getGlobalConfig: (options = {}) => {
+    const { forceFresh = false, requestId = 'automation.globalConfig.get' } = options;
+    return enhancedRequest({
+      url: '/automation/global-config',
+      cacheKey: 'automation.globalConfig',
+      cacheTTL: 5 * 60 * 1000, // 5 minutes
+      requestId,
+      forceFresh
+    });
+  },
+
+  updateGlobalConfig: (configData) => {
+    return enhancedRequest({
+      method: 'PUT',
+      url: '/automation/global-config',
+      data: configData,
+      requestId: 'automation.globalConfig.update'
+    }).then(response => {
+      // Clear global config cache
+      clearCacheItem('automation.globalConfig');
+      return response;
+    });
+  },
+
+  toggleGlobalAutomation: (enabled) => {
+    return enhancedRequest({
+      method: 'POST',
+      url: '/automation/global-toggle',
+      data: { enabled },
+      requestId: 'automation.globalToggle'
+    }).then(response => {
+      // Clear global config cache
+      clearCacheItem('automation.globalConfig');
+      return response;
+    });
+  },
+
+  // Connection Configuration
+  getConnectionConfigs: (options = {}) => {
+    const { forceFresh = false, requestId = 'automation.connectionConfigs.getAll' } = options;
+    return enhancedRequest({
+      url: '/automation/connection-configs',
+      cacheKey: 'automation.connectionConfigs',
+      cacheTTL: 5 * 60 * 1000, // 5 minutes
+      requestId,
+      forceFresh
+    });
+  },
+
+  getConnectionConfig: (connectionId, options = {}) => {
+    const { forceFresh = false, requestId = `automation.connectionConfig.get.${connectionId}` } = options;
+    return enhancedRequest({
+      url: `/automation/connection-configs/${connectionId}`,
+      cacheKey: `automation.connectionConfig.${connectionId}`,
+      cacheTTL: 5 * 60 * 1000, // 5 minutes
+      requestId,
+      forceFresh
+    });
+  },
+
+  updateConnectionConfig: (connectionId, configData) => {
+    return enhancedRequest({
+      method: 'PUT',
+      url: `/automation/connection-configs/${connectionId}`,
+      data: configData,
+      requestId: `automation.connectionConfig.update.${connectionId}`
+    }).then(response => {
+      // Clear affected cache items
+      clearCacheItem(`automation.connectionConfig.${connectionId}`);
+      clearCacheItem('automation.connectionConfigs');
+      clearCacheItem(`automation.status.${connectionId}`);
+      return response;
+    });
+  },
+
+  // Table Configuration
+  getTableConfig: (connectionId, tableName, options = {}) => {
+    const { forceFresh = false, requestId = `automation.tableConfig.get.${connectionId}.${tableName}` } = options;
+    return enhancedRequest({
+      url: `/automation/table-configs/${connectionId}/${tableName}`,
+      cacheKey: `automation.tableConfig.${connectionId}.${tableName}`,
+      cacheTTL: 5 * 60 * 1000, // 5 minutes
+      requestId,
+      forceFresh
+    });
+  },
+
+  updateTableConfig: (connectionId, tableName, configData) => {
+    return enhancedRequest({
+      method: 'PUT',
+      url: `/automation/table-configs/${connectionId}/${tableName}`,
+      data: configData,
+      requestId: `automation.tableConfig.update.${connectionId}.${tableName}`
+    }).then(response => {
+      // Clear affected cache items
+      clearCacheItem(`automation.tableConfig.${connectionId}.${tableName}`);
+      return response;
+    });
+  },
+
+  // Status and Monitoring
+  getAutomationStatus: (organizationId = null, connectionId = null, options = {}) => {
+    const { forceFresh = false } = options;
+    const endpoint = connectionId
+      ? `/automation/status/${connectionId}`
+      : '/automation/status';
+
+    const requestId = connectionId
+      ? `automation.status.connection.${connectionId}`
+      : 'automation.status.global';
+
+    const cacheKey = connectionId
+      ? `automation.status.${connectionId}`
+      : 'automation.status.global';
+
+    return enhancedRequest({
+      url: endpoint,
+      cacheKey,
+      cacheTTL: 1 * 60 * 1000, // 1 minute (status changes frequently)
+      requestId,
+      forceFresh
+    });
+  },
+
+  getJobs: (options = {}) => {
+    const {
+      connectionId,
+      status,
+      limit = 50,
+      forceFresh = false,
+      requestId = 'automation.jobs.get'
+    } = options;
+
+    const params = {};
+    if (connectionId) params.connection_id = connectionId;
+    if (status) params.status = status;
+    if (limit) params.limit = limit;
+
+    return enhancedRequest({
+      url: '/automation/jobs',
+      params,
+      cacheKey: `automation.jobs.${JSON.stringify(params)}`,
+      cacheTTL: 30 * 1000, // 30 seconds (jobs change frequently)
+      requestId,
+      forceFresh
+    });
+  },
+
+  // Control Operations
+  toggleConnectionAutomation: (connectionId, enabled) => {
+    return enhancedRequest({
+      method: 'POST',
+      url: `/automation/toggle/${connectionId}`,
+      data: { enabled },
+      requestId: `automation.toggle.${connectionId}`
+    }).then(response => {
+      // Clear affected cache items
+      clearCacheItem(`automation.connectionConfig.${connectionId}`);
+      clearCacheItem(`automation.status.${connectionId}`);
+      clearCacheItem('automation.connectionConfigs');
+      return response;
+    });
+  },
+
+  triggerAutomation: (connectionId, automationType = null) => {
+    return enhancedRequest({
+      method: 'POST',
+      url: `/automation/trigger/${connectionId}`,
+      data: { automation_type: automationType },
+      requestId: `automation.trigger.${connectionId}.${automationType || 'all'}`
+    }).then(response => {
+      // Clear job cache to reflect new job
+      clearCacheItem('automation.jobs');
+      clearCacheItem(`automation.status.${connectionId}`);
+      return response;
+    });
+  },
+
+  cancelJob: (jobId) => {
+    return enhancedRequest({
+      method: 'POST',
+      url: `/automation/jobs/${jobId}/cancel`,
+      requestId: `automation.cancelJob.${jobId}`
+    }).then(response => {
+      // Clear job cache
+      clearCacheItem('automation.jobs');
+      return response;
+    });
+  },
+
+  // Dashboard
+  getDashboard: (options = {}) => {
+    const { forceFresh = false, requestId = 'automation.dashboard' } = options;
+    return enhancedRequest({
+      url: '/automation/dashboard',
+      cacheKey: 'automation.dashboard',
+      cacheTTL: 2 * 60 * 1000, // 2 minutes
+      requestId,
+      forceFresh
+    });
+  },
+
+  // Templates
+  getTemplates: (options = {}) => {
+    const { forceFresh = false, requestId = 'automation.templates' } = options;
+    return enhancedRequest({
+      url: '/automation/templates',
+      cacheKey: 'automation.templates',
+      cacheTTL: 30 * 60 * 1000, // 30 minutes (templates don't change often)
+      requestId,
+      forceFresh
+    });
+  },
+
+  // Bulk Operations
+  bulkUpdateConfigs: (connectionIds, configData) => {
+    return enhancedRequest({
+      method: 'POST',
+      url: '/automation/bulk-update',
+      data: {
+        connection_ids: connectionIds,
+        config: configData
+      },
+      requestId: 'automation.bulkUpdate'
+    }).then(response => {
+      // Clear all connection config caches
+      connectionIds.forEach(id => {
+        clearCacheItem(`automation.connectionConfig.${id}`);
+        clearCacheItem(`automation.status.${id}`);
+      });
+      clearCacheItem('automation.connectionConfigs');
+      return response;
+    });
+  },
+
+  // Admin Operations
+  getSchedulerStatus: (options = {}) => {
+    const { forceFresh = false, requestId = 'automation.scheduler.status' } = options;
+    return enhancedRequest({
+      url: '/automation/scheduler/status',
+      cacheKey: 'automation.scheduler.status',
+      cacheTTL: 30 * 1000, // 30 seconds
+      requestId,
+      forceFresh
+    });
+  },
+
+  restartScheduler: () => {
+    return enhancedRequest({
+      method: 'POST',
+      url: '/automation/scheduler/restart',
+      requestId: 'automation.scheduler.restart'
+    }).then(response => {
+      // Clear scheduler status cache
+      clearCacheItem('automation.scheduler.status');
+      return response;
+    });
+  }
+};
+
 // Export default enhancedRequest for custom API calls
 export default enhancedRequest;

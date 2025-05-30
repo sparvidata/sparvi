@@ -45,24 +45,31 @@ class AutomationAPI:
     def update_global_config(self, config_data: Dict[str, Any], user_id: str) -> Dict[str, Any]:
         """Update global automation configuration"""
         try:
+            # Clean the config_data to only include valid table columns
+            clean_config_data = {
+                "automation_enabled": config_data.get("automation_enabled", True),
+                "max_concurrent_jobs": config_data.get("max_concurrent_jobs", 3),
+                "default_retry_attempts": config_data.get("default_retry_attempts", 2),
+                "notification_settings": config_data.get("notification_settings", {}),
+                "updated_at": datetime.now().isoformat()
+            }
+
             # Check if config exists
             existing = self.supabase.supabase.table("automation_global_config") \
                 .select("id") \
                 .execute()
 
-            config_data["updated_at"] = datetime.now().isoformat()
-
             if existing.data and len(existing.data) > 0:
                 # Update existing
                 response = self.supabase.supabase.table("automation_global_config") \
-                    .update(config_data) \
+                    .update(clean_config_data) \
                     .eq("id", existing.data[0]["id"]) \
                     .execute()
             else:
                 # Create new
-                config_data["created_at"] = datetime.now().isoformat()
+                clean_config_data["created_at"] = datetime.now().isoformat()
                 response = self.supabase.supabase.table("automation_global_config") \
-                    .insert(config_data) \
+                    .insert(clean_config_data) \
                     .execute()
 
             if response.data:
@@ -88,7 +95,7 @@ class AutomationAPI:
         try:
             # Get all connections for the organization first
             connections_response = self.supabase.supabase.table("database_connections") \
-                .select("id") \
+                .select("id, name, connection_type") \
                 .eq("organization_id", organization_id) \
                 .execute()
 
@@ -97,13 +104,24 @@ class AutomationAPI:
 
             connection_ids = [conn["id"] for conn in connections_response.data]
 
-            # Get automation configs for these connections
+            # Create a lookup dict for connection info
+            connections_lookup = {conn["id"]: conn for conn in connections_response.data}
+
+            # Get automation configs for these connections (without join)
             response = self.supabase.supabase.table("automation_connection_configs") \
-                .select("*, database_connections(name, connection_type)") \
+                .select("*") \
                 .in_("connection_id", connection_ids) \
                 .execute()
 
-            return response.data if response.data else []
+            # Manually add connection info to avoid join issues
+            configs = response.data if response.data else []
+            for config in configs:
+                connection_info = connections_lookup.get(config["connection_id"])
+                if connection_info:
+                    config["connection_name"] = connection_info["name"]
+                    config["connection_type"] = connection_info["connection_type"]
+
+            return configs
 
         except Exception as e:
             logger.error(f"Error getting connection configs: {str(e)}")
@@ -147,26 +165,32 @@ class AutomationAPI:
     def update_connection_config(self, connection_id: str, config_data: Dict[str, Any], user_id: str) -> Dict[str, Any]:
         """Update automation configuration for a connection"""
         try:
+            # Clean the config_data to only include valid table columns
+            clean_config_data = {
+                "metadata_refresh": config_data.get("metadata_refresh", {}),
+                "schema_change_detection": config_data.get("schema_change_detection", {}),
+                "validation_automation": config_data.get("validation_automation", {}),
+                "updated_at": datetime.now().isoformat()
+            }
+
             # Check if config exists
             existing = self.supabase.supabase.table("automation_connection_configs") \
                 .select("id") \
                 .eq("connection_id", connection_id) \
                 .execute()
 
-            config_data["updated_at"] = datetime.now().isoformat()
-
             if existing.data and len(existing.data) > 0:
                 # Update existing
                 response = self.supabase.supabase.table("automation_connection_configs") \
-                    .update(config_data) \
+                    .update(clean_config_data) \
                     .eq("connection_id", connection_id) \
                     .execute()
             else:
                 # Create new
-                config_data["connection_id"] = connection_id
-                config_data["created_at"] = datetime.now().isoformat()
+                clean_config_data["connection_id"] = connection_id
+                clean_config_data["created_at"] = datetime.now().isoformat()
                 response = self.supabase.supabase.table("automation_connection_configs") \
-                    .insert(config_data) \
+                    .insert(clean_config_data) \
                     .execute()
 
             if response.data:
@@ -220,6 +244,16 @@ class AutomationAPI:
     Dict[str, Any]:
         """Update automation configuration for a table"""
         try:
+            # Clean the config_data to only include valid table columns
+            clean_config_data = {
+                "auto_run_validations": config_data.get("auto_run_validations", False),
+                "auto_run_interval_hours": config_data.get("auto_run_interval_hours", 24),
+                "validation_notification_threshold": config_data.get("validation_notification_threshold",
+                                                                     "failures_only"),
+                "custom_schedule": config_data.get("custom_schedule", {}),
+                "updated_at": datetime.now().isoformat()
+            }
+
             # Check if config exists
             existing = self.supabase.supabase.table("automation_table_configs") \
                 .select("id") \
@@ -227,24 +261,22 @@ class AutomationAPI:
                 .eq("table_name", table_name) \
                 .execute()
 
-            config_data["updated_at"] = datetime.now().isoformat()
-
             if existing.data and len(existing.data) > 0:
                 # Update existing
                 response = self.supabase.supabase.table("automation_table_configs") \
-                    .update(config_data) \
+                    .update(clean_config_data) \
                     .eq("connection_id", connection_id) \
                     .eq("table_name", table_name) \
                     .execute()
             else:
                 # Create new
-                config_data.update({
+                clean_config_data.update({
                     "connection_id": connection_id,
                     "table_name": table_name,
                     "created_at": datetime.now().isoformat()
                 })
                 response = self.supabase.supabase.table("automation_table_configs") \
-                    .insert(config_data) \
+                    .insert(clean_config_data) \
                     .execute()
 
             if response.data:

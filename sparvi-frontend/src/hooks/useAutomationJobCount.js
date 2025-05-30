@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { getSession } from '../api/supabase';
+import { automationAPI } from '../api/enhancedApiService';
 
 export const useAutomationJobCount = () => {
   const [activeJobCount, setActiveJobCount] = useState(0);
@@ -8,24 +8,23 @@ export const useAutomationJobCount = () => {
   useEffect(() => {
     const loadJobCount = async () => {
       try {
-        const session = await getSession();
-        const token = session?.access_token;
+        setLoading(true);
 
-        if (!token) {
-          setLoading(false);
-          return;
-        }
-
-        const response = await fetch('/api/automation/jobs?status=running', {
-          headers: { 'Authorization': `Bearer ${token}` }
+        const response = await automationAPI.getJobs({
+          status: 'running',
+          forceFresh: true // Always get fresh data for job counts
         });
 
-        if (response.ok) {
-          const data = await response.json();
-          setActiveJobCount(data.jobs?.length || 0);
+        if (response?.jobs) {
+          setActiveJobCount(response.jobs.length);
+        } else if (Array.isArray(response)) {
+          setActiveJobCount(response.length);
+        } else {
+          setActiveJobCount(0);
         }
       } catch (error) {
         console.error('Error loading job count:', error);
+        setActiveJobCount(0);
       } finally {
         setLoading(false);
       }

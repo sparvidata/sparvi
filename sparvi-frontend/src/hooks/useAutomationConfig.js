@@ -1,5 +1,5 @@
-import { useState, useEffect } from 'react';
-import { getSession } from '../api/supabase';
+import { useState, useEffect, useCallback } from 'react';
+import { automationAPI } from '../api/enhancedApiService';
 
 export const useAutomationConfig = (connectionId = null) => {
   const [globalConfig, setGlobalConfig] = useState(null);
@@ -7,117 +7,114 @@ export const useAutomationConfig = (connectionId = null) => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
-  useEffect(() => {
-    const loadConfigs = async () => {
+  const loadConfigs = useCallback(async () => {
+    try {
+      setLoading(true);
+      setError(null);
+
+      // Load global config
       try {
-        const session = await getSession();
-        const token = session?.access_token;
-
-        if (!token) {
-          setLoading(false);
-          return;
-        }
-
-        // Load global config
-        const globalResponse = await fetch('/api/automation/global-config', {
-          headers: { 'Authorization': `Bearer ${token}` }
-        });
-
-        if (globalResponse.ok) {
-          const global = await globalResponse.json();
-          setGlobalConfig(global);
-        }
-
-        // Load connection-specific configs
-        if (connectionId) {
-          const connResponse = await fetch(`/api/automation/connection-configs/${connectionId}`, {
-            headers: { 'Authorization': `Bearer ${token}` }
-          });
-
-          if (connResponse.ok) {
-            const connConfig = await connResponse.json();
-            setConnectionConfigs({ [connectionId]: connConfig });
-          }
-        } else {
-          // Load all connection configs
-          const allConfigsResponse = await fetch('/api/automation/connection-configs', {
-            headers: { 'Authorization': `Bearer ${token}` }
-          });
-
-          if (allConfigsResponse.ok) {
-            const allConfigs = await allConfigsResponse.json();
-            setConnectionConfigs(allConfigs);
-          }
+        const globalResponse = await automationAPI.getGlobalConfig();
+        if (globalResponse?.config) {
+          setGlobalConfig(globalResponse.config);
         }
       } catch (err) {
-        console.error('Error loading automation configs:', err);
-        setError(err);
-      } finally {
-        setLoading(false);
+        console.error('Error loading global config:', err);
+        // Don't fail completely if global config fails
       }
-    };
 
-    loadConfigs();
+      // Load connection-specific configs
+      if (connectionId) {
+        try {
+          const connResponse = await automationAPI.getConnectionConfig(connectionId);
+          if (connResponse?.config) {
+            setConnectionConfigs({ [connectionId]: connResponse.config });
+          }
+        } catch (err) {
+          console.error('Error loading connection config:', err);
+        }
+      } else {
+        // Load all connection configs
+        try {
+          const allConfigsResponse = await automationAPI.getConnectionConfigs();
+          if (allConfigsResponse?.configs) {
+            // Convert array to object keyed by connection_id
+            const configsObject = {};
+            allConfigsResponse.configs.forEach(config => {
+              if (config.connection_id) {
+                configsObject[config.connection_id] = config;
+              }
+            });
+            setConnectionConfigs(configsObject);
+          }
+        } catch (err) {
+          console.error('Error loading all connection configs:', err);
+        }
+      }
+    } catch (err) {
+      console.error('Error loading automation configs:', err);
+      setError(err);
+    } finally {
+      setLoading(false);
+    }
   }, [connectionId]);
+
+  useEffect(() => {
+    loadConfigs();
+  }, [loadConfigs]);
 
   const updateGlobalConfig = async (newConfig) => {
     try {
-      const session = await getSession();
-      const token = session?.access_token;
+      const response = await automationAPI.updateGlobalConfig(newConfig);
 
-      if (!token) return false;
-
-      const response = await fetch('/api/automation/global-config', {
-        method: 'PUT',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(newConfig)
-      });
-
-      if (response.ok) {
-        const updated = await response.json();
-        setGlobalConfig(updated);
+      if (response?.config) {
+        setGlobalConfig(response.config);
+        return true;
+      } else if (response && !response.error) {
+        // Some APIs return the config directly
+        setGlobalConfig(response);
         return true;
       }
+
       return false;
     } catch (error) {
       console.error('Error updating global config:', error);
+      setError(error);
       return false;
     }
   };
 
   const updateConnectionConfig = async (connId, newConfig) => {
     try {
-      const session = await getSession();
-      const token = session?.access_token;
+      const response = await automationAPI.updateConnectionConfig(connId, newConfig);
 
-      if (!token) return false;
-
-      const response = await fetch(`/api/automation/connection-configs/${connId}`, {
-        method: 'PUT',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(newConfig)
-      });
-
-      if (response.ok) {
-        const updated = await response.json();
+      if (response?.config) {
         setConnectionConfigs(prev => ({
           ...prev,
-          [connId]: updated
+          [connId]: response.config
+        }));
+        return true;
+      } else if (response && !response.error) {
+        // Some APIs return the config directly
+        setConnectionConfigs(prev => ({
+          ...prev,
+          [connId]: response
         }));
         return true;
       }
+
       return false;
     } catch (error) {
       console.error('Error updating connection config:', error);
+      setError(error);
       return false;
     }
   };
+
+  // Add refresh function
+  const refreshConfigs = useCallback(async () => {
+    await loadConfigs();
+  }, [loadConfigs]);
 
   return {
     globalConfig,
@@ -125,6 +122,7 @@ export const useAutomationConfig = (connectionId = null) => {
     loading,
     error,
     updateGlobalConfig,
-    updateConnectionConfig
+    updateConnectionConfig,
+    refreshConfigs
   };
 };
