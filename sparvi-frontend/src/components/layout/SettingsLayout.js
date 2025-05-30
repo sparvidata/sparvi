@@ -1,14 +1,16 @@
 import React, { useState } from 'react';
-import { useLocation } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import {
   UserCircleIcon,
   BellIcon,
   KeyIcon,
-  ShieldCheckIcon
+  ShieldCheckIcon,
+  ClockIcon
 } from '@heroicons/react/24/outline';
 
 const SettingsLayout = ({ children, activeTab, onTabChange }) => {
   const location = useLocation();
+  const navigate = useNavigate();
 
   const tabs = [
     {
@@ -16,6 +18,13 @@ const SettingsLayout = ({ children, activeTab, onTabChange }) => {
       name: 'Profile',
       icon: UserCircleIcon,
       path: '/settings/profile'
+    },
+    {
+      id: 'automation',
+      name: 'Automation',
+      icon: ClockIcon,
+      path: '/settings/automation',
+      description: 'Configure automated processes'
     },
     {
       id: 'notifications',
@@ -31,12 +40,17 @@ const SettingsLayout = ({ children, activeTab, onTabChange }) => {
     }
   ];
 
+  const handleTabClick = (tab) => {
+    onTabChange(tab.id);
+    navigate(tab.path);
+  };
+
   return (
     <div className="max-w-7xl mx-auto">
       <div className="mb-6">
         <h1 className="text-2xl font-semibold text-secondary-900">Account Settings</h1>
         <p className="mt-1 text-sm text-secondary-500">
-          Manage your account settings and preferences.
+          Manage your account settings, automation, and preferences.
         </p>
       </div>
 
@@ -51,15 +65,22 @@ const SettingsLayout = ({ children, activeTab, onTabChange }) => {
               return (
                 <button
                   key={tab.id}
-                  onClick={() => onTabChange(tab.id)}
+                  onClick={() => handleTabClick(tab)}
                   className={`${
                     isActive
                       ? 'border-primary-500 text-primary-600'
                       : 'border-transparent text-secondary-500 hover:text-secondary-700 hover:border-secondary-300'
-                  } whitespace-nowrap py-4 px-2 border-b-2 font-medium text-sm flex items-center`}
+                  } whitespace-nowrap py-4 px-2 border-b-2 font-medium text-sm flex items-center group`}
                 >
                   <Icon className="h-5 w-5 mr-2" />
-                  {tab.name}
+                  <div className="text-left">
+                    <div>{tab.name}</div>
+                    {tab.description && (
+                      <div className="text-xs text-secondary-400 font-normal">
+                        {tab.description}
+                      </div>
+                    )}
+                  </div>
                 </button>
               );
             })}

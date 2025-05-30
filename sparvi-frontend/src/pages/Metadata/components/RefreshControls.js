@@ -1,13 +1,18 @@
 import React from 'react';
 import { useUI } from '../../../contexts/UIContext';
+import { useAutomationStatus } from '../../../hooks/useAutomationStatus';
 import LoadingSpinner from '../../../components/common/LoadingSpinner';
 import ColumnsIcon from '../../../components/icons/ColumnsIcon';
 import {
   TableCellsIcon,
   ChartBarIcon,
   ArrowPathIcon,
-  ExclamationTriangleIcon
+  ExclamationTriangleIcon,
+  ClockIcon,
+  PlayIcon,
+  Cog6ToothIcon
 } from '@heroicons/react/24/outline';
+import { Link } from 'react-router-dom';
 
 const RefreshControls = ({
   connectionId,
@@ -19,6 +24,7 @@ const RefreshControls = ({
   onViewSchemaChanges
 }) => {
   const { showNotification } = useUI();
+  const { status: automationStatus, toggleAutomation, triggerManualRun, loading: statusLoading } = useAutomationStatus(connectionId);
 
   // Refresh a specific type of metadata
   const handleRefresh = (type) => {
@@ -57,6 +63,42 @@ const RefreshControls = ({
     });
   };
 
+  // Toggle automation for metadata refresh
+  const handleToggleMetadataAutomation = async () => {
+    const success = await toggleAutomation('metadata_refresh', !automationStatus.connection_config?.metadata_refresh?.enabled);
+    if (success) {
+      showNotification(
+        `Metadata automation ${!automationStatus.connection_config?.metadata_refresh?.enabled ? 'enabled' : 'disabled'}`,
+        'success'
+      );
+    } else {
+      showNotification('Failed to toggle metadata automation', 'error');
+    }
+  };
+
+  // Toggle automation for schema change detection
+  const handleToggleSchemaAutomation = async () => {
+    const success = await toggleAutomation('schema_change_detection', !automationStatus.connection_config?.schema_change_detection?.enabled);
+    if (success) {
+      showNotification(
+        `Schema change detection ${!automationStatus.connection_config?.schema_change_detection?.enabled ? 'enabled' : 'disabled'}`,
+        'success'
+      );
+    } else {
+      showNotification('Failed to toggle schema automation', 'error');
+    }
+  };
+
+  // Trigger automated runs manually
+  const handleTriggerAutomatedRun = async (type) => {
+    const success = await triggerManualRun(type);
+    if (success) {
+      showNotification(`${type.replace('_', ' ')} automation triggered`, 'success');
+    } else {
+      showNotification(`Failed to trigger ${type.replace('_', ' ')} automation`, 'error');
+    }
+  };
+
   // Get status indicator class based on freshness
   const getStatusIndicatorClass = (metadataType) => {
     const status = metadataStatus?.[metadataType]?.freshness?.status;
@@ -72,8 +114,144 @@ const RefreshControls = ({
     }
   };
 
+  // Get automation status for display
+  const getAutomationStatus = (automationType) => {
+    if (statusLoading) return { enabled: false, interval: null, lastRun: null };
+
+    const config = automationStatus.connection_config?.[automationType];
+    const lastRun = automationStatus.last_runs?.[automationType];
+
+    return {
+      enabled: config?.enabled || false,
+      interval: config?.interval_hours,
+      lastRun: lastRun?.completed_at,
+      status: lastRun?.status
+    };
+  };
+
+  const metadataAutomation = getAutomationStatus('metadata_refresh');
+  const schemaAutomation = getAutomationStatus('schema_change_detection');
+
   return (
     <div className="space-y-4">
+      {/* Automation Status Panel */}
+      {!statusLoading && (
+        <div className="bg-white border border-secondary-200 rounded-lg p-4">
+          <div className="flex items-center justify-between mb-3">
+            <h4 className="text-sm font-medium text-secondary-900 flex items-center">
+              <ClockIcon className="h-4 w-4 mr-2" />
+              Automation Status
+            </h4>
+            <Link
+              to="/settings/automation"
+              className="text-xs text-primary-600 hover:text-primary-700 flex items-center"
+            >
+              <Cog6ToothIcon className="h-3 w-3 mr-1" />
+              Configure
+            </Link>
+          </div>
+
+          <div className="space-y-3">
+            {/* Metadata Automation */}
+            <div className="flex items-center justify-between">
+              <div className="flex items-center">
+                <span className="text-xs text-secondary-700">Metadata Refresh</span>
+                {metadataAutomation.enabled && metadataAutomation.interval && (
+                  <span className="ml-2 text-xs text-secondary-500">
+                    (Every {metadataAutomation.interval}h)
+                  </span>
+                )}
+                {metadataAutomation.lastRun && (
+                  <span className="ml-2 text-xs text-secondary-400">
+                    Last: {new Date(metadataAutomation.lastRun).toLocaleDateString()}
+                  </span>
+                )}
+              </div>
+              <div className="flex items-center space-x-2">
+                {metadataAutomation.enabled && (
+                  <button
+                    onClick={() => handleTriggerAutomatedRun('metadata_refresh')}
+                    className="text-xs text-primary-600 hover:text-primary-700"
+                    title="Trigger automated refresh now"
+                  >
+                    <PlayIcon className="h-3 w-3" />
+                  </button>
+                )}
+                <button
+                  onClick={handleToggleMetadataAutomation}
+                  disabled={statusLoading}
+                  className={`flex items-center px-2 py-1 rounded text-xs font-medium ${
+                    metadataAutomation.enabled
+                      ? 'bg-accent-100 text-accent-800 hover:bg-accent-200'
+                      : 'bg-secondary-100 text-secondary-600 hover:bg-secondary-200'
+                  }`}
+                >
+                  {metadataAutomation.enabled ? 'On' : 'Off'}
+                </button>
+              </div>
+            </div>
+
+            {/* Schema Change Detection */}
+            <div className="flex items-center justify-between">
+              <div className="flex items-center">
+                <span className="text-xs text-secondary-700">Schema Detection</span>
+                {schemaAutomation.enabled && schemaAutomation.interval && (
+                  <span className="ml-2 text-xs text-secondary-500">
+                    (Every {schemaAutomation.interval}h)
+                  </span>
+                )}
+                {schemaAutomation.lastRun && (
+                  <span className="ml-2 text-xs text-secondary-400">
+                    Last: {new Date(schemaAutomation.lastRun).toLocaleDateString()}
+                  </span>
+                )}
+              </div>
+              <div className="flex items-center space-x-2">
+                {schemaAutomation.enabled && (
+                  <button
+                    onClick={() => handleTriggerAutomatedRun('schema_change_detection')}
+                    className="text-xs text-primary-600 hover:text-primary-700"
+                    title="Trigger schema detection now"
+                  >
+                    <PlayIcon className="h-3 w-3" />
+                  </button>
+                )}
+                <button
+                  onClick={handleToggleSchemaAutomation}
+                  disabled={statusLoading}
+                  className={`flex items-center px-2 py-1 rounded text-xs font-medium ${
+                    schemaAutomation.enabled
+                      ? 'bg-accent-100 text-accent-800 hover:bg-accent-200'
+                      : 'bg-secondary-100 text-secondary-600 hover:bg-secondary-200'
+                  }`}
+                >
+                  {schemaAutomation.enabled ? 'On' : 'Off'}
+                </button>
+              </div>
+            </div>
+
+            {/* Global automation disabled warning */}
+            {!automationStatus.global_enabled && (
+              <div className="mt-2 p-2 bg-warning-50 border border-warning-200 rounded flex items-start">
+                <ExclamationTriangleIcon className="h-4 w-4 text-warning-400 mr-2 mt-0.5" />
+                <div>
+                  <p className="text-xs text-warning-800">
+                    Global automation is disabled.
+                  </p>
+                  <Link
+                    to="/settings/automation"
+                    className="text-xs text-warning-600 hover:text-warning-700 underline"
+                  >
+                    Enable in settings →
+                  </Link>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Manual Refresh Controls */}
       <div>
         <button
           onClick={handleRefreshAll}
@@ -88,7 +266,7 @@ const RefreshControls = ({
           ) : (
             <>
               <ArrowPathIcon className="-ml-1 mr-2 h-5 w-5" aria-hidden="true" />
-              Refresh All Metadata
+              Manual Refresh All
             </>
           )}
         </button>
@@ -194,11 +372,9 @@ const RefreshControls = ({
                     {metadataStatus.changes_detected} schema {metadataStatus.changes_detected === 1 ? 'change has' : 'changes have'} been detected.
                   </p>
 
-                  {/* Add more actionable info */}
                   <div className="mt-3">
                     <button
                       onClick={() => {
-                        // Use the callback prop to switch tabs
                         if (onViewSchemaChanges) {
                           onViewSchemaChanges();
                         }

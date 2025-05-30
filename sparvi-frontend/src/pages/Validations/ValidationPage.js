@@ -3,6 +3,7 @@ import { useSearchParams } from 'react-router-dom';
 import { useConnection } from '../../contexts/EnhancedConnectionContext';
 import { useUI } from '../../contexts/UIContext';
 import { useTablesData } from '../../hooks/useTablesData';
+import { useAutomationStatus } from '../../hooks/useAutomationStatus';
 import useValidations from '../../hooks/useValidations';
 import ValidationResultsSummary from './components/ValidationResultsSummary';
 import ValidationResultsTrend from './components/ValidationResultsTrend';
@@ -10,6 +11,7 @@ import ValidationRuleList from './components/ValidationRuleList';
 import ValidationRuleEditor from './components/ValidationRuleEditor';
 import ValidationDebugHelper from './components/ValidationDebugHelper';
 import ValidationErrorHandler from './components/ValidationErrorHandler';
+import ValidationAutomationControls from './components/ValidationAutomationControls';
 import LoadingSpinner from '../../components/common/LoadingSpinner';
 import EmptyState from '../../components/common/EmptyState';
 import { ClipboardDocumentCheckIcon, ServerIcon } from '@heroicons/react/24/outline';
@@ -31,6 +33,10 @@ const ValidationPage = () => {
   const [columnsCache, setColumnsCache] = useState({});
   const [forceRender, setForceRender] = useState(false); // Used to force re-renders
 
+  // Automation hooks
+  const connectionId = activeConnection?.id;
+  const { status: automationStatus, toggleAutomation, triggerManualRun } = useAutomationStatus(connectionId);
+
   // Set breadcrumbs
   useEffect(() => {
     updateBreadcrumbs([
@@ -47,7 +53,6 @@ const ValidationPage = () => {
   }, [searchParams]);
 
   // Use hooks for data fetching
-  const connectionId = activeConnection?.id;
   const tablesQuery = useTablesData(connectionId, { enabled: !!connectionId });
   const validationData = useValidations(connectionId, selectedTable);
 
@@ -177,6 +182,29 @@ const ValidationPage = () => {
     }
   }, [validationData]);
 
+  // Handle automation toggle for validation automation
+  const handleToggleValidationAutomation = async () => {
+    const success = await toggleAutomation('validation_automation', !automationStatus.connection_config?.validation_automation?.enabled);
+    if (success) {
+      showNotification(
+        `Validation automation ${!automationStatus.connection_config?.validation_automation?.enabled ? 'enabled' : 'disabled'}`,
+        'success'
+      );
+    } else {
+      showNotification('Failed to toggle validation automation', 'error');
+    }
+  };
+
+  // Handle triggering automated validation run
+  const handleTriggerAutomatedRun = async () => {
+    const success = await triggerManualRun('validation_automation');
+    if (success) {
+      showNotification('Validation automation triggered', 'success');
+    } else {
+      showNotification('Failed to trigger validation automation', 'error');
+    }
+  };
+
   // If no connections, show empty state
   if (!activeConnection) {
     return (
@@ -197,8 +225,18 @@ const ValidationPage = () => {
       </div>
 
       <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-12">
-        {/* Side panel with tables */}
-        <div className="lg:col-span-3">
+        {/* Side panel with tables and automation controls */}
+        <div className="lg:col-span-3 space-y-6">
+          {/* Validation Automation Controls */}
+          <ValidationAutomationControls
+            connectionId={connectionId}
+            tableName={selectedTable}
+            automationStatus={automationStatus}
+            onToggleValidationAutomation={handleToggleValidationAutomation}
+            onTriggerAutomatedRun={handleTriggerAutomatedRun}
+          />
+
+          {/* Tables List */}
           <div className="bg-white shadow rounded-lg">
             <div className="px-4 py-3 border-b border-secondary-200">
               <h3 className="text-sm font-medium text-secondary-900">Tables</h3>

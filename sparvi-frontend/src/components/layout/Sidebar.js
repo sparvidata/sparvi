@@ -7,15 +7,18 @@ import {
   Cog6ToothIcon,
   ShieldCheckIcon,
   CommandLineIcon,
-  ExclamationTriangleIcon
+  ExclamationTriangleIcon,
+  ClockIcon
 } from '@heroicons/react/24/outline';
 import { useUI } from '../../contexts/UIContext';
 import { useUserProfile } from '../../hooks/useUserProfile';
+import { useAutomationJobCount } from '../../hooks/useAutomationJobCount';
 import Logo from '../common/Logo';
 
 const Sidebar = () => {
   const { sidebarOpen, isMobile } = useUI();
   const { isAdmin, loading: profileLoading } = useUserProfile();
+  const { activeJobCount, loading: jobCountLoading } = useAutomationJobCount();
   const location = useLocation();
 
   // Define navigation items
@@ -25,6 +28,13 @@ const Sidebar = () => {
     { name: 'Validations', icon: ClipboardDocumentCheckIcon, href: '/validations' },
     { name: 'Metadata', icon: CommandLineIcon, href: '/metadata' },
     { name: 'Anomalies', icon: ExclamationTriangleIcon, href: '/anomalies' },
+    {
+      name: 'Automation',
+      icon: ClockIcon,
+      href: '/automation',
+      badge: !jobCountLoading && activeJobCount > 0 ? activeJobCount : null,
+      description: 'Manage automated processes'
+    },
   ];
 
   // Add admin section if user is admin (and profile has loaded)
@@ -83,10 +93,18 @@ const Sidebar = () => {
 
                     <NavLink
                       to={item.href}
-                      className={`sidebar-link ${active ? 'active' : ''}`}
+                      className={`sidebar-link ${active ? 'active' : ''} relative`}
+                      title={item.description}
                     >
                       <Icon className="mr-3 h-5 w-5" aria-hidden="true" />
-                      {item.name}
+                      <span className="flex-1">{item.name}</span>
+
+                      {/* Badge for active job count */}
+                      {item.badge && (
+                        <span className="ml-2 inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-primary-100 text-primary-800">
+                          {item.badge}
+                        </span>
+                      )}
                     </NavLink>
                   </div>
                 );
@@ -100,6 +118,11 @@ const Sidebar = () => {
           <div className="text-xs text-secondary-500">
             <div>Sparvi Cloud</div>
             <div>Version: 1.0.0</div>
+            {!jobCountLoading && activeJobCount > 0 && (
+              <div className="mt-1 text-primary-600">
+                {activeJobCount} automation job{activeJobCount !== 1 ? 's' : ''} running
+              </div>
+            )}
           </div>
         </div>
       </div>

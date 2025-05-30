@@ -40,6 +40,10 @@ import TableAnalyticsPage from './pages/Analytics/TableAnalyticsPage';
 import SchemaChangesPage from './pages/Analytics/SchemaChangesPage';
 import BusinessImpactPage from './pages/Analytics/BusinessImpactPage';
 
+// NEW: Automation pages
+import AutomationPage from './pages/Automation/AutomationPage';
+import AutomationSettingsPage from './pages/Settings/AutomationSettingsPage';
+
 // Settings pages
 import UserSettingsPage from './pages/Settings/UserSettingsPage';
 
@@ -87,6 +91,9 @@ function App() {
                   {/* Metadata */}
                   <Route path="/metadata" element={<MetadataPage />} />
 
+                  {/* NEW: Automation - Standalone page */}
+                  <Route path="/automation" element={<AutomationPage />} />
+
                   {/* Anomalies */}
                   <Route path="/anomalies" element={<AnomalyDashboardPage />} />
                   <Route path="/anomalies/:connectionId" element={<AnomalyDashboardPage />} />
@@ -103,6 +110,7 @@ function App() {
                   {/* Settings - User Level */}
                   <Route path="/settings" element={<UserSettingsPage />} />
                   <Route path="/settings/profile" element={<UserSettingsPage />} />
+                  <Route path="/settings/automation" element={<AutomationSettingsPage />} />
                   <Route path="/settings/notifications" element={<UserSettingsPage />} />
                   <Route path="/settings/security" element={<UserSettingsPage />} />
 
