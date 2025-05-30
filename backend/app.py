@@ -1426,6 +1426,7 @@ def create_error_handlers(app):
 
 app = Flask(__name__, template_folder="templates")
 setup_cors(app)
+create_error_handlers(app)
 app.register_blueprint(notifications_bp, url_prefix='/api')
 
 initialize_anomaly_detection()
