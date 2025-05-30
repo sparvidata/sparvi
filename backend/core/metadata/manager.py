@@ -435,6 +435,96 @@ class MetadataTaskManager:
 
         return None
 
+    def submit_automation_metadata_refresh(self, connection_id: str, metadata_types: List[str] = None,
+                                           priority: str = "medium"):
+        """
+        Submit metadata refresh task for automation system
+
+        Args:
+            connection_id: Connection ID
+            metadata_types: List of metadata types to refresh (tables, columns, statistics)
+            priority: Task priority
+
+        Returns:
+            Task ID
+        """
+        if not metadata_types:
+            metadata_types = ["tables", "columns"]
+
+        # Map metadata types to collection depth
+        if "statistics" in metadata_types:
+            depth = "high"
+            table_limit = 50
+        elif "columns" in metadata_types:
+            depth = "medium"
+            table_limit = 75
+        else:
+            depth = "low"
+            table_limit = 100
+
+        return self.submit_collection_task(
+            connection_id,
+            {"depth": depth, "table_limit": table_limit, "automation_trigger": True},
+            priority
+        )
+
+    def get_metadata_collection_status(self, connection_id: str) -> Dict[str, Any]:
+        """
+        Get status of metadata collection for automation system
+
+        Args:
+            connection_id: Connection ID
+
+        Returns:
+            Status dictionary
+        """
+        try:
+            # Check freshness of different metadata types
+            tables_metadata = self.storage_service.get_metadata(connection_id, "tables")
+            columns_metadata = self.storage_service.get_metadata(connection_id, "columns")
+            statistics_metadata = self.storage_service.get_metadata(connection_id, "statistics")
+
+            status = {
+                "connection_id": connection_id,
+                "tables": self._get_metadata_status(tables_metadata),
+                "columns": self._get_metadata_status(columns_metadata),
+                "statistics": self._get_metadata_status(statistics_metadata),
+                "overall_status": "unknown"
+            }
+
+            # Determine overall status
+            statuses = [status["tables"]["status"], status["columns"]["status"], status["statistics"]["status"]]
+            if "fresh" in statuses:
+                status["overall_status"] = "fresh"
+            elif "recent" in statuses:
+                status["overall_status"] = "recent"
+            elif "stale" in statuses:
+                status["overall_status"] = "stale"
+            else:
+                status["overall_status"] = "unknown"
+
+            return status
+
+        except Exception as e:
+            logger.error(f"Error getting metadata collection status: {str(e)}")
+            return {
+                "connection_id": connection_id,
+                "overall_status": "error",
+                "error": str(e)
+            }
+
+    def _get_metadata_status(self, metadata: Optional[Dict]) -> Dict[str, Any]:
+        """Get status info for a metadata object"""
+        if not metadata:
+            return {"status": "missing", "age_hours": None, "last_collected": None}
+
+        freshness = metadata.get("freshness", {})
+        return {
+            "status": freshness.get("status", "unknown"),
+            "age_hours": freshness.get("age_hours"),
+            "last_collected": metadata.get("collected_at")
+        }
+
     def _scheduled_refresh_loop(self):
         """Background thread for scheduled metadata refreshes"""
         logger.info("Started scheduled refresh thread")
@@ -528,6 +618,29 @@ class MetadataTaskManager:
 
                                         logger.info(f"Published {len(task_ids)} schema change events")
 
+                                        # Publish automation events for schema changes
+                                        try:
+                                            from core.automation.events import AutomationEventType, \
+                                                publish_automation_event
+
+                                            publish_automation_event(
+                                                event_type=AutomationEventType.SCHEMA_CHANGES_DETECTED,
+                                                data={
+                                                    "connection_id": connection_id,
+                                                    "changes_detected": len(changes),
+                                                    "important": important_changes,
+                                                    "change_types": change_types
+                                                },
+                                                connection_id=connection_id,
+                                                organization_id=organization_id
+                                            )
+                                            logger.info("Published automation event for schema changes")
+
+                                        except ImportError:
+                                            logger.warning("Automation events not available")
+                                        except Exception as e:
+                                            logger.error(f"Error publishing automation event: {str(e)}")
+
                                         # Process specific high-priority change types immediately
                                         high_priority_changes = [
                                             c for c in changes
@@ -604,7 +717,7 @@ class MetadataTaskManager:
 
                 # Get connections for this organization
                 org_connections = self.supabase_manager.supabase.table("database_connections") \
-                    .select("id, name, connection_type") \
+                    .select("id, name, connection_type, organization_id") \
                     .eq("organization_id", org_id) \
                     .execute()
 
@@ -729,7 +842,7 @@ class MetadataTaskManager:
         if last_refreshed:
             try:
                 refresh_date = datetime.fromisoformat(last_refreshed.replace('Z', '+00:00'))
-                now = datetime.datetime.now(datetime.timezone.utc).isoformat()
+                now = datetime.now(datetime.timezone.utc)
 
                 # If refreshed very recently, lower priority
                 age_hours = (now - refresh_date).total_seconds() / 3600

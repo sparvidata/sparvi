@@ -20,6 +20,7 @@ logger = logging.getLogger('supabase_manager')
 # Load environment variables
 load_dotenv()
 
+
 class SupabaseSingleton:
     """Singleton implementation for Supabase client"""
     _instance = None
@@ -43,6 +44,7 @@ class SupabaseSingleton:
                     logger.info("Supabase singleton client initialized")
 
         return cls._instance
+
 
 class SupabaseManager:
     """Manager class for Supabase operations, handling data storage and retrieval."""
@@ -243,6 +245,34 @@ class SupabaseManager:
 
         except Exception as e:
             logger.error(f"Error getting validation rules: {str(e)}")
+            return []
+
+    def get_validations_by_column(self, organization_id: str, table_name: str, column_name: str, connection_id: str) -> \
+    List[Dict]:
+        """Get validations that might be affected by a column change"""
+        try:
+            query = self.supabase.table("validation_rules") \
+                .select("*") \
+                .eq("organization_id", organization_id) \
+                .eq("table_name", table_name) \
+                .eq("connection_id", connection_id)
+
+            response = query.execute()
+
+            if not response.data:
+                return []
+
+            # Filter rules that reference the specific column
+            affected_rules = []
+            for rule in response.data:
+                query_text = rule.get("query", "").lower()
+                if column_name.lower() in query_text:
+                    affected_rules.append(rule)
+
+            return affected_rules
+
+        except Exception as e:
+            logger.error(f"Error getting validations by column: {str(e)}")
             return []
 
     def add_validation_rule(self, organization_id: str, table_name: str, connection_id: str, rule: Dict) -> str:

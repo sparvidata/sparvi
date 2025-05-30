@@ -1,4 +1,4 @@
-# core/notifications/publisher.py - Multi-tenant version
+# core/notifications/publisher.py - Multi-tenant version with automation support
 
 import logging
 import smtplib
@@ -26,7 +26,7 @@ class NotificationPublisher:
         Publish notification events for a specific organization
 
         Args:
-            event_type: Type of event ('anomaly', etc.)
+            event_type: Type of event ('anomaly', 'automation', etc.)
             payload: Event payload with notification data
 
         Returns:
@@ -40,6 +40,8 @@ class NotificationPublisher:
 
             if event_type == "anomaly" and payload.get("type") == "anomaly_detected":
                 return self._send_anomaly_notification(organization_id, payload)
+            elif event_type == "automation":
+                return self._send_automation_notification(organization_id, payload)
 
             return True
         except Exception as e:
@@ -123,7 +125,7 @@ View details in your Sparvi dashboard.
                     notification_settings, subject, message
                 )
 
-            # Slack notifications  
+            # Slack notifications
             if notification_settings.get("slack_enabled", False):
                 success &= self._send_slack_notification(
                     notification_settings, subject, message, data
@@ -140,6 +142,141 @@ View details in your Sparvi dashboard.
         except Exception as e:
             logger.error(f"Error sending anomaly notification for org {organization_id}: {str(e)}")
             return False
+
+    def _send_automation_notification(self, organization_id: str, payload: Dict[str, Any]) -> bool:
+        """
+        Send notifications for automation events
+
+        Args:
+            organization_id: Organization ID
+            payload: Automation event payload
+
+        Returns:
+            Success status
+        """
+        try:
+            # Get notification settings for this organization
+            notification_settings = self._get_notification_settings(organization_id)
+
+            if not notification_settings:
+                logger.info(f"No notification settings for organization {organization_id}")
+                return True
+
+            # Check if automation notifications are enabled
+            if not notification_settings.get("automation_notifications_enabled", True):
+                logger.info(f"Automation notifications disabled for organization {organization_id}")
+                return True
+
+            event_type = payload.get("type", "")
+            data = payload.get("data", {})
+
+            # Only send notifications for important automation events
+            important_events = [
+                "automation_job_failed",
+                "schema_changes_detected",
+                "validation_failures_detected"
+            ]
+
+            if event_type not in important_events:
+                logger.debug(f"Skipping notification for non-important event: {event_type}")
+                return True
+
+            # Build notification content based on event type
+            subject, message = self._build_automation_message(event_type, data, payload)
+
+            if not subject or not message:
+                logger.warning(f"Could not build message for automation event: {event_type}")
+                return True
+
+            # Send via configured channels
+            success = True
+
+            # Email notifications
+            if notification_settings.get("email_enabled", False):
+                success &= self._send_email_notification(
+                    notification_settings, subject, message
+                )
+
+            # Slack notifications
+            if notification_settings.get("slack_enabled", False):
+                success &= self._send_slack_notification(
+                    notification_settings, subject, message, data
+                )
+
+            # Webhook notifications
+            if notification_settings.get("webhook_enabled", False):
+                success &= self._send_webhook_notification(
+                    notification_settings, payload
+                )
+
+            return success
+
+        except Exception as e:
+            logger.error(f"Error sending automation notification for org {organization_id}: {str(e)}")
+            return False
+
+    def _build_automation_message(self, event_type: str, data: Dict[str, Any], payload: Dict[str, Any]) -> tuple:
+        """Build notification message for automation events"""
+        try:
+            if event_type == "automation_job_failed":
+                job_type = data.get("job_type", "automation")
+                error = data.get("error", "Unknown error")
+                connection_id = data.get("connection_id", "Unknown")
+
+                subject = f"🔧 Automation Job Failed"
+                message = f"""
+Automation Job Failure
+
+Job Type: {job_type}
+Connection: {connection_id}
+Error: {error}
+Time: {payload.get("timestamp", "Unknown")}
+
+Please check your automation settings in the Sparvi dashboard.
+                """.strip()
+
+            elif event_type == "schema_changes_detected":
+                changes_count = data.get("changes_detected", 0)
+                connection_id = data.get("connection_id", "Unknown")
+                important = data.get("important", False)
+
+                if important:
+                    subject = f"⚠️ Important Schema Changes Detected"
+                    message = f"""
+Important Database Schema Changes Detected
+
+Connection: {connection_id}
+Changes Detected: {changes_count}
+Time: {payload.get("timestamp", "Unknown")}
+
+Minor schema changes have been detected and logged in your Sparvi dashboard.
+                    """.strip()
+
+            elif event_type == "validation_failures_detected":
+                failed_rules = data.get("failed_rules", 0)
+                tables = data.get("tables", [])
+                connection_id = data.get("connection_id", "Unknown")
+
+                subject = f"❌ Validation Failures Detected"
+                message = f"""
+Data Validation Failures Detected
+
+Connection: {connection_id}
+Failed Rules: {failed_rules}
+Affected Tables: {len(tables)}
+Time: {payload.get("timestamp", "Unknown")}
+
+Please review the failed validation rules in your Sparvi dashboard.
+                """.strip()
+
+            else:
+                return None, None
+
+            return subject, message
+
+        except Exception as e:
+            logger.error(f"Error building automation message: {str(e)}")
+            return None, None
 
     def _get_notification_settings(self, organization_id: str) -> Optional[Dict[str, Any]]:
         """
@@ -214,44 +351,34 @@ View details in your Sparvi dashboard.
                 logger.warning("No Slack webhook URL configured")
                 return True
 
-            # Format for Slack
-            high_severity = data.get("high_severity_count", 0)
-            medium_severity = data.get("medium_severity_count", 0)
+            # Format for Slack - determine color based on event type and severity
+            color = "danger"  # Default to danger
 
-            color = "danger" if high_severity > 0 else "warning"
+            # Determine color based on content
+            if "Schema Changes" in subject:
+                color = "warning" if "Important" in subject else "good"
+            elif "Validation Failures" in subject:
+                color = "danger"
+            elif "Job Failed" in subject:
+                color = "danger"
+            elif "Anomaly Alert" in subject:
+                high_severity = data.get("high_severity_count", 0)
+                color = "danger" if high_severity > 0 else "warning"
 
-            payload = {
+            # Build Slack payload
+            slack_payload = {
                 "text": subject,
                 "attachments": [
                     {
                         "color": color,
-                        "fields": [
-                            {
-                                "title": "Table",
-                                "value": data.get("table_name", "Unknown"),
-                                "short": True
-                            },
-                            {
-                                "title": "Metric",
-                                "value": data.get("metric_name", "Unknown"),
-                                "short": True
-                            },
-                            {
-                                "title": "High Severity",
-                                "value": str(high_severity),
-                                "short": True
-                            },
-                            {
-                                "title": "Medium Severity",
-                                "value": str(medium_severity),
-                                "short": True
-                            }
-                        ]
+                        "text": message,
+                        "fields": self._build_slack_fields(data),
+                        "footer": "Sparvi Data Quality Platform"
                     }
                 ]
             }
 
-            response = requests.post(webhook_url, json=payload, timeout=10)
+            response = requests.post(webhook_url, json=slack_payload, timeout=10)
             response.raise_for_status()
 
             logger.info("Slack notification sent successfully")
@@ -260,6 +387,62 @@ View details in your Sparvi dashboard.
         except Exception as e:
             logger.error(f"Error sending Slack notification: {str(e)}")
             return False
+
+    def _build_slack_fields(self, data: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Build Slack fields based on data content"""
+        fields = []
+
+        # Add relevant fields based on what's in the data
+        if "table_name" in data:
+            fields.append({
+                "title": "Table",
+                "value": data["table_name"],
+                "short": True
+            })
+
+        if "connection_id" in data:
+            fields.append({
+                "title": "Connection",
+                "value": data["connection_id"],
+                "short": True
+            })
+
+        if "high_severity_count" in data:
+            fields.extend([
+                {
+                    "title": "High Severity",
+                    "value": str(data["high_severity_count"]),
+                    "short": True
+                },
+                {
+                    "title": "Medium Severity",
+                    "value": str(data.get("medium_severity_count", 0)),
+                    "short": True
+                }
+            ])
+
+        if "failed_rules" in data:
+            fields.append({
+                "title": "Failed Rules",
+                "value": str(data["failed_rules"]),
+                "short": True
+            })
+
+        if "changes_detected" in data:
+            fields.append({
+                "title": "Changes Detected",
+                "value": str(data["changes_detected"]),
+                "short": True
+            })
+
+        if "job_type" in data:
+            fields.append({
+                "title": "Job Type",
+                "value": data["job_type"],
+                "short": True
+            })
+
+        return fields
 
     def _send_webhook_notification(self, settings: Dict[str, Any], payload: Dict[str, Any]) -> bool:
         """Send webhook notification using organization-specific settings"""

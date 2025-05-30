@@ -165,7 +165,7 @@ class SupabaseValidationManager:
             return False
 
     def execute_rules(self, organization_id: str, connection_string: str, table_name: str, connection_id: str = None) -> \
-    List[Dict[str, Any]]:
+            List[Dict[str, Any]]:
         """Execute all validation rules for a table against the specified database"""
         # Get all rules for this table
         rules = self.get_rules(organization_id, table_name, connection_id)
@@ -236,6 +236,20 @@ class SupabaseValidationManager:
                                 logger.error(f"Error storing validation result: {str(storage_error)}")
                                 # Continue execution even if storage fails
 
+                            # Publish automation event for validation failures
+                            if not is_valid:
+                                try:
+                                    self._publish_validation_failure_event(
+                                        organization_id=organization_id,
+                                        connection_id=connection_id,
+                                        table_name=table_name,
+                                        rule_name=rule['rule_name'],
+                                        actual_value=actual_value,
+                                        expected_value=rule['expected_value']
+                                    )
+                                except Exception as event_error:
+                                    logger.error(f"Error publishing validation failure event: {str(event_error)}")
+
                     except Exception as e:
                         logger.error(f"Error executing validation rule {rule['rule_name']}: {str(e)}")
                         logger.error(traceback.format_exc())
@@ -291,6 +305,32 @@ class SupabaseValidationManager:
         except (ValueError, TypeError) as e:
             logger.error(f"Error evaluating rule: {str(e)}")
             return False
+
+    def _publish_validation_failure_event(self, organization_id: str, connection_id: str, table_name: str,
+                                          rule_name: str, actual_value: Any, expected_value: Any):
+        """Publish automation event for validation failure"""
+        try:
+            # Try to import and use automation events
+            from core.automation.events import AutomationEventType, publish_automation_event
+
+            publish_automation_event(
+                event_type=AutomationEventType.VALIDATION_FAILURES_DETECTED,
+                data={
+                    "table_name": table_name,
+                    "rule_name": rule_name,
+                    "actual_value": actual_value,
+                    "expected_value": expected_value,
+                    "failed_rules": 1
+                },
+                connection_id=connection_id,
+                organization_id=organization_id
+            )
+            logger.info(f"Published validation failure event for rule {rule_name}")
+
+        except ImportError:
+            logger.warning("Automation events not available, skipping event publication")
+        except Exception as e:
+            logger.error(f"Error publishing validation failure event: {str(e)}")
 
     def get_validation_history(self, organization_id: str, table_name: str, connection_id: str = None,
                                limit: int = 30) -> List[Dict[str, Any]]:
@@ -381,3 +421,95 @@ class SupabaseValidationManager:
             logger.error(f"Error storing validation result: {str(e)}")
             logger.error(traceback.format_exc())
             return None
+
+    def get_validation_summary(self, organization_id: str, connection_id: str) -> Dict[str, Any]:
+        """Get validation summary for automation dashboard"""
+        try:
+            # Get all validation rules for this connection
+            all_rules = []
+
+            # Get all tables with validations for this connection
+            response = self.supabase.supabase.table("validation_rules") \
+                .select("table_name") \
+                .eq("organization_id", organization_id) \
+                .eq("connection_id", connection_id) \
+                .execute()
+
+            if not response.data:
+                return {
+                    "total_rules": 0,
+                    "tables_with_validations": 0,
+                    "passing_rules": 0,
+                    "failing_rules": 0,
+                    "last_run": None
+                }
+
+            # Get unique tables
+            tables = list(set(rule["table_name"] for rule in response.data))
+
+            total_rules = 0
+            passing_rules = 0
+            failing_rules = 0
+            last_run = None
+
+            for table_name in tables:
+                rules = self.get_rules(organization_id, table_name, connection_id)
+                total_rules += len(rules)
+
+                # Get latest validation results for this table
+                history = self.get_validation_history(organization_id, table_name, connection_id, limit=len(rules))
+
+                if history:
+                    # Group by rule to get latest result for each rule
+                    latest_by_rule = {}
+                    for result in history:
+                        rule_name = result["rule_name"]
+                        if rule_name not in latest_by_rule or result["run_at"] > latest_by_rule[rule_name]["run_at"]:
+                            latest_by_rule[rule_name] = result
+
+                    # Count passing/failing
+                    for result in latest_by_rule.values():
+                        if result["is_valid"]:
+                            passing_rules += 1
+                        else:
+                            failing_rules += 1
+
+                        # Update last run time
+                        if not last_run or result["run_at"] > last_run:
+                            last_run = result["run_at"]
+
+            return {
+                "total_rules": total_rules,
+                "tables_with_validations": len(tables),
+                "passing_rules": passing_rules,
+                "failing_rules": failing_rules,
+                "last_run": last_run
+            }
+
+        except Exception as e:
+            logger.error(f"Error getting validation summary: {str(e)}")
+            return {
+                "total_rules": 0,
+                "tables_with_validations": 0,
+                "passing_rules": 0,
+                "failing_rules": 0,
+                "last_run": None,
+                "error": str(e)
+            }
+
+    def get_tables_with_validations(self, organization_id: str, connection_id: str) -> List[str]:
+        """Get list of tables that have validation rules"""
+        try:
+            response = self.supabase.supabase.table("validation_rules") \
+                .select("table_name") \
+                .eq("organization_id", organization_id) \
+                .eq("connection_id", connection_id) \
+                .execute()
+
+            if response.data:
+                return list(set(rule["table_name"] for rule in response.data))
+            return []
+
+        except Exception as e:
+            logger.error(f"Error getting tables with validations: {str(e)}")
+            return []

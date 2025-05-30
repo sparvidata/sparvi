@@ -19,3 +19,15 @@ dotenv~=0.9.9
 httpx~=0.28.1
 Flask-JWT-Extended~=4.7.1
 snowflake~=1.0.5
+
+# Scheduling and background tasks
+APScheduler==3.10.4
+
+# For advanced scheduling if needed
+croniter==1.4.1
+
+# Performance optimization
+cachetools==5.3.2
+
+# Additional reliability for long-running tasks
+tenacity==8.2.3
