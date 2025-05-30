@@ -1346,35 +1346,36 @@ load_dotenv()
 
 
 def setup_cors(app):
-    """Configure CORS with production-ready settings"""
+    """
+    Configure CORS with detailed logging and error handling
+    """
     try:
         # Define allowed origins
-        allowed_origins = [
-            "https://cloud.sparvi.io",
-            "http://localhost:3000",
-            "https://ambitious-wave-0fdea0310.6.azurestaticapps.net"
-        ]
+        allowed_origins = ["https://cloud.sparvi.io", "http://localhost:3000",
+                           "https://ambitious-wave-0fdea0310.6.azurestaticapps.net"]
 
-        logger.info(f"Setting up CORS for origins: {allowed_origins}")
+        # Log the CORS configuration for diagnostics
+        logger.info(f"CORS configured with the following origins: {allowed_origins}")
 
-        # Configure CORS with explicit settings
-        CORS(app,
-             origins=allowed_origins,
-             methods=['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-             allow_headers=['Content-Type', 'Authorization'],
-             supports_credentials=True,
-             resources={r"/api/*": {"origins": allowed_origins}})
+        # Create a CORS instance with simplified settings
+        cors = CORS(app,
+                    resources={
+                        r"/api/*": {
+                            "origins": allowed_origins,
+                            "supports_credentials": True
+                        }
+                    },
+                    supports_credentials=True)
 
-        logger.info("CORS setup completed successfully")
+        # Skip accessing cors.resources which is causing the error
+        logger.info(f"Special configuration added for /api endpoints")
 
     except Exception as e:
-        logger.error(f"CORS setup failed: {e}")
+        logger.error(f"CORS configuration failed: {str(e)}")
         logger.error(traceback.format_exc())
-        # Emergency fallback
-        CORS(app, origins="*", supports_credentials=True)
-        logger.warning("Using emergency CORS fallback (allow all origins)")
-
-
+        # Fallback CORS if primary config fails
+        logger.warning("Using fallback CORS configuration")
+        CORS(app)  # Minimal CORS if primary config fails
 
 
 def create_error_handlers(app):
@@ -6784,22 +6785,6 @@ def batch_requests():
 
     return jsonify({"results": results})
 
-@app.before_first_request
-def debug_routes():
-    logger.info("=== Registered Routes ===")
-    for rule in app.url_map.iter_rules():
-        logger.info(f"  {rule.methods} {rule.rule}")
-    logger.info("========================")
-
-@app.before_request
-def log_request_info():
-    logger.info('=== Request Info ===')
-    logger.info(f'Method: {request.method}')
-    logger.info(f'URL: {request.url}')
-    logger.info(f'Origin: {request.headers.get("Origin", "No Origin")}')
-    logger.info(f'Headers: {dict(request.headers)}')
-    logger.info('==================')
-
 
 @app.after_request
 def after_request(response):
@@ -6835,27 +6820,6 @@ def after_request(response):
             response.headers.set('Access-Control-Max-Age', '86400')  # 24 hours for batch endpoint
 
     return response
-
-@app.route('/api/<path:path>', methods=['OPTIONS'])
-def handle_options(path):
-    """Handle OPTIONS requests for all API endpoints"""
-    origin = request.headers.get('Origin')
-    allowed_origins = [
-        "https://cloud.sparvi.io",
-        "http://localhost:3000",
-        "https://ambitious-wave-0fdea0310.6.azurestaticapps.net"
-    ]
-
-    if origin in allowed_origins:
-        response = jsonify({'status': 'ok'})
-        response.headers['Access-Control-Allow-Origin'] = origin
-        response.headers['Access-Control-Allow-Methods'] = 'GET,PUT,POST,DELETE,OPTIONS'
-        response.headers['Access-Control-Allow-Headers'] = 'Content-Type,Authorization'
-        response.headers['Access-Control-Allow-Credentials'] = 'true'
-        response.headers['Access-Control-Max-Age'] = '86400'
-        return response
-    else:
-        return jsonify({'error': 'Origin not allowed'}), 403
 
 
 if __name__ == "__main__":
