@@ -1346,36 +1346,60 @@ load_dotenv()
 
 
 def setup_cors(app):
-    """
-    Configure CORS with detailed logging and error handling
-    """
+    """Configure CORS with production-ready settings"""
     try:
         # Define allowed origins
-        allowed_origins = ["https://cloud.sparvi.io", "http://localhost:3000",
-                           "https://ambitious-wave-0fdea0310.6.azurestaticapps.net"]
+        allowed_origins = [
+            "https://cloud.sparvi.io",
+            "http://localhost:3000",
+            "https://ambitious-wave-0fdea0310.6.azurestaticapps.net"
+        ]
 
-        # Log the CORS configuration for diagnostics
-        logger.info(f"CORS configured with the following origins: {allowed_origins}")
+        logger.info(f"Setting up CORS for origins: {allowed_origins}")
 
-        # Create a CORS instance with simplified settings
-        cors = CORS(app,
-                    resources={
-                        r"/api/*": {
-                            "origins": allowed_origins,
-                            "supports_credentials": True
-                        }
-                    },
-                    supports_credentials=True)
+        # Configure CORS with explicit settings - IMPORTANT: This must be done BEFORE registering routes
+        CORS(app,
+             origins=allowed_origins,
+             methods=['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+             allow_headers=['Content-Type', 'Authorization', 'X-Requested-With'],
+             supports_credentials=True,
+             resources={r"/api/*": {"origins": allowed_origins}},
+             # Add these additional options
+             expose_headers=['Content-Range', 'X-Content-Range'],
+             max_age=600)
 
-        # Skip accessing cors.resources which is causing the error
-        logger.info(f"Special configuration added for /api endpoints")
+        logger.info("CORS setup completed successfully")
+
+        # Add manual CORS headers as backup
+        @app.before_request
+        def handle_preflight():
+            if request.method == "OPTIONS":
+                origin = request.headers.get('Origin')
+                if origin in allowed_origins:
+                    response = app.make_default_options_response()
+                    response.headers['Access-Control-Allow-Origin'] = origin
+                    response.headers['Access-Control-Allow-Headers'] = 'Content-Type,Authorization,X-Requested-With'
+                    response.headers['Access-Control-Allow-Methods'] = 'GET,PUT,POST,DELETE,OPTIONS'
+                    response.headers['Access-Control-Allow-Credentials'] = 'true'
+                    response.headers['Access-Control-Max-Age'] = '3600'
+                    return response
+
+        @app.after_request
+        def after_request(response):
+            origin = request.headers.get('Origin')
+            if origin in allowed_origins:
+                response.headers['Access-Control-Allow-Origin'] = origin
+                response.headers['Access-Control-Allow-Headers'] = 'Content-Type,Authorization,X-Requested-With'
+                response.headers['Access-Control-Allow-Methods'] = 'GET,PUT,POST,DELETE,OPTIONS'
+                response.headers['Access-Control-Allow-Credentials'] = 'true'
+            return response
 
     except Exception as e:
-        logger.error(f"CORS configuration failed: {str(e)}")
+        logger.error(f"CORS setup failed: {e}")
         logger.error(traceback.format_exc())
-        # Fallback CORS if primary config fails
-        logger.warning("Using fallback CORS configuration")
-        CORS(app)  # Minimal CORS if primary config fails
+        # Emergency fallback
+        CORS(app, origins="*", supports_credentials=True)
+        logger.warning("Using emergency CORS fallback (allow all origins)")
 
 
 def create_error_handlers(app):
@@ -1402,9 +1426,7 @@ def create_error_handlers(app):
 
 app = Flask(__name__, template_folder="templates")
 setup_cors(app)
-create_error_handlers(app)
 app.register_blueprint(notifications_bp, url_prefix='/api')
-
 
 initialize_anomaly_detection()
 
@@ -6787,37 +6809,29 @@ def batch_requests():
 
 
 @app.after_request
-def after_request(response):
-    """Add CORS headers to all responses"""
+def after_request_cors(response):
+    """Ensure CORS headers are set on all responses"""
     origin = request.headers.get('Origin', '')
 
     # Define allowed origins
-    allowed_origins = ["https://cloud.sparvi.io", "http://localhost:3000",
-                       "https://ambitious-wave-0fdea0310.6.azurestaticapps.net"]
+    allowed_origins = [
+        "https://cloud.sparvi.io",
+        "http://localhost:3000",
+        "https://ambitious-wave-0fdea0310.6.azurestaticapps.net"
+    ]
 
     # Check if the origin is in our list of allowed origins
     if origin in allowed_origins:
-        response.headers.set('Access-Control-Allow-Origin', origin)
+        response.headers['Access-Control-Allow-Origin'] = origin
     else:
-        # Default to your production domain if origin not allowed
-        response.headers.set('Access-Control-Allow-Origin', 'https://cloud.sparvi.io')
+        # For requests without origin (like direct API calls), allow the main domain
+        response.headers['Access-Control-Allow-Origin'] = 'https://cloud.sparvi.io'
 
     # Set standard CORS headers
-    response.headers.set('Access-Control-Allow-Headers', 'Content-Type,Authorization,X-Requested-With')
-    response.headers.set('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS')
-    response.headers.set('Access-Control-Allow-Credentials', 'true')
-
-    # Cache preflight requests to reduce OPTIONS calls
-    response.headers.set('Access-Control-Max-Age', '3600')  # 1 hour
-
-    # Add special handling for the batch endpoint to ensure it works
-    if request.path == '/api/batch':
-        logger.debug(f"Special handling for batch endpoint: {request.method}")
-        if request.method == 'OPTIONS':
-            # For preflight requests, ensure we return proper CORS headers
-            response.headers.set('Access-Control-Allow-Methods', 'POST,OPTIONS')
-            response.headers.set('Access-Control-Allow-Headers', 'Content-Type,Authorization,X-Requested-With')
-            response.headers.set('Access-Control-Max-Age', '86400')  # 24 hours for batch endpoint
+    response.headers['Access-Control-Allow-Headers'] = 'Content-Type,Authorization,X-Requested-With'
+    response.headers['Access-Control-Allow-Methods'] = 'GET,PUT,POST,DELETE,OPTIONS'
+    response.headers['Access-Control-Allow-Credentials'] = 'true'
+    response.headers['Access-Control-Max-Age'] = '3600'
 
     return response
 
