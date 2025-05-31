@@ -20,16 +20,46 @@ export const useAutomationStatus = (connectionId) => {
       try {
         setLoading(true);
 
-        const response = await automationAPI.getAutomationStatus(null, connectionId);
+        // Load both status and config in parallel
+        const [statusResponse, configResponse] = await Promise.all([
+          automationAPI.getAutomationStatus(null, connectionId).catch(err => {
+            console.error('Error loading automation status:', err);
+            return { global_enabled: false, active_jobs: 0 };
+          }),
+          automationAPI.getConnectionConfig(connectionId, { forceFresh: true }).catch(err => {
+            console.error('Error loading connection config:', err);
+            return null;
+          })
+        ]);
 
-        if (response?.status) {
-          setStatus(response.status);
-        } else if (response && !response.error) {
-          // Handle direct status response
-          setStatus(response);
-        }
+        console.log('Automation status response:', statusResponse);
+        console.log('Connection config response:', configResponse);
+
+        // Extract status data - the API returns {"status": {...}}
+        const statusData = statusResponse?.status || statusResponse || {};
+
+        // Extract config data - the API returns {"config": {...}}
+        const configData = configResponse?.config || configResponse;
+
+        setStatus({
+          global_enabled: statusData.global_enabled || false,
+          connection_config: configData,
+          active_jobs: statusData.active_jobs || [],
+          last_runs: statusData.last_runs || {},
+          // Additional status fields
+          pending_jobs: statusData.pending_jobs || 0,
+          failed_jobs_24h: statusData.failed_jobs_24h || 0,
+          last_run: statusData.last_run
+        });
       } catch (error) {
         console.error('Error loading automation status:', error);
+        // Set default values on error
+        setStatus({
+          global_enabled: false,
+          connection_config: null,
+          active_jobs: [],
+          last_runs: {}
+        });
       } finally {
         setLoading(false);
       }
@@ -48,13 +78,19 @@ export const useAutomationStatus = (connectionId) => {
 
       if (response?.result || response?.success) {
         // Reload status after toggle
-        const updatedResponse = await automationAPI.getAutomationStatus(null, connectionId);
+        const [statusResponse, configResponse] = await Promise.all([
+          automationAPI.getAutomationStatus(null, connectionId),
+          automationAPI.getConnectionConfig(connectionId, { forceFresh: true })
+        ]);
 
-        if (updatedResponse?.status) {
-          setStatus(updatedResponse.status);
-        } else if (updatedResponse && !updatedResponse.error) {
-          setStatus(updatedResponse);
-        }
+        const statusData = statusResponse?.status || statusResponse || {};
+        const configData = configResponse?.config || configResponse;
+
+        setStatus(prev => ({
+          ...prev,
+          connection_config: configData,
+          global_enabled: statusData.global_enabled || prev.global_enabled
+        }));
 
         return true;
       }

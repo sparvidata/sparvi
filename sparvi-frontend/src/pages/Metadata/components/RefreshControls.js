@@ -10,6 +10,7 @@ import {
   ExclamationTriangleIcon,
   ClockIcon,
   PlayIcon,
+  PauseIcon,
   Cog6ToothIcon
 } from '@heroicons/react/24/outline';
 import { Link } from 'react-router-dom';
@@ -116,7 +117,7 @@ const RefreshControls = ({
 
   // Get automation status for display
   const getAutomationStatus = (automationType) => {
-    if (statusLoading) return { enabled: false, interval: null, lastRun: null };
+    if (statusLoading) return { enabled: null, interval: null, lastRun: null, loading: true };
 
     const config = automationStatus.connection_config?.[automationType];
     const lastRun = automationStatus.last_runs?.[automationType];
@@ -125,7 +126,8 @@ const RefreshControls = ({
       enabled: config?.enabled || false,
       interval: config?.interval_hours,
       lastRun: lastRun?.completed_at,
-      status: lastRun?.status
+      status: lastRun?.status,
+      loading: false
     };
   };
 
@@ -135,8 +137,7 @@ const RefreshControls = ({
   return (
     <div className="space-y-4">
       {/* Automation Status Panel */}
-      {!statusLoading && (
-        <div className="bg-white border border-secondary-200 rounded-lg p-4">
+      <div className="bg-white border border-secondary-200 rounded-lg p-4">
           <div className="flex items-center justify-between mb-3">
             <h4 className="text-sm font-medium text-secondary-900 flex items-center">
               <ClockIcon className="h-4 w-4 mr-2" />
@@ -156,19 +157,19 @@ const RefreshControls = ({
             <div className="flex items-center justify-between">
               <div className="flex items-center">
                 <span className="text-xs text-secondary-700">Metadata Refresh</span>
-                {metadataAutomation.enabled && metadataAutomation.interval && (
+                {metadataAutomation.enabled && metadataAutomation.interval && !metadataAutomation.loading && (
                   <span className="ml-2 text-xs text-secondary-500">
                     (Every {metadataAutomation.interval}h)
                   </span>
                 )}
-                {metadataAutomation.lastRun && (
+                {metadataAutomation.lastRun && !metadataAutomation.loading && (
                   <span className="ml-2 text-xs text-secondary-400">
                     Last: {new Date(metadataAutomation.lastRun).toLocaleDateString()}
                   </span>
                 )}
               </div>
               <div className="flex items-center space-x-2">
-                {metadataAutomation.enabled && (
+                {metadataAutomation.enabled && !metadataAutomation.loading && (
                   <button
                     onClick={() => handleTriggerAutomatedRun('metadata_refresh')}
                     className="text-xs text-primary-600 hover:text-primary-700"
@@ -177,17 +178,40 @@ const RefreshControls = ({
                     <PlayIcon className="h-3 w-3" />
                   </button>
                 )}
-                <button
-                  onClick={handleToggleMetadataAutomation}
-                  disabled={statusLoading}
-                  className={`flex items-center px-2 py-1 rounded text-xs font-medium ${
-                    metadataAutomation.enabled
-                      ? 'bg-accent-100 text-accent-800 hover:bg-accent-200'
-                      : 'bg-secondary-100 text-secondary-600 hover:bg-secondary-200'
-                  }`}
-                >
-                  {metadataAutomation.enabled ? 'On' : 'Off'}
-                </button>
+
+                {/* Enhanced Toggle Button with Loading State */}
+                {metadataAutomation.loading ? (
+                  // Loading skeleton
+                  <div className="flex items-center px-2 py-1 rounded text-xs font-medium bg-secondary-100">
+                    <div className="flex items-center">
+                      <div className="animate-spin h-3 w-3 border border-secondary-400 border-t-transparent rounded-full mr-1"></div>
+                      <span className="text-secondary-500">Loading...</span>
+                    </div>
+                  </div>
+                ) : (
+                  // Actual toggle
+                  <button
+                    onClick={handleToggleMetadataAutomation}
+                    disabled={statusLoading}
+                    className={`flex items-center px-2 py-1 rounded text-xs font-medium transition-all duration-200 ${
+                      metadataAutomation.enabled
+                        ? 'bg-accent-100 text-accent-800 hover:bg-accent-200'
+                        : 'bg-secondary-100 text-secondary-600 hover:bg-secondary-200'
+                    }`}
+                  >
+                    {metadataAutomation.enabled ? (
+                      <>
+                        <PlayIcon className="h-3 w-3 mr-1" />
+                        On
+                      </>
+                    ) : (
+                      <>
+                        <PauseIcon className="h-3 w-3 mr-1" />
+                        Off
+                      </>
+                    )}
+                  </button>
+                )}
               </div>
             </div>
 
@@ -195,19 +219,19 @@ const RefreshControls = ({
             <div className="flex items-center justify-between">
               <div className="flex items-center">
                 <span className="text-xs text-secondary-700">Schema Detection</span>
-                {schemaAutomation.enabled && schemaAutomation.interval && (
+                {schemaAutomation.enabled && schemaAutomation.interval && !schemaAutomation.loading && (
                   <span className="ml-2 text-xs text-secondary-500">
                     (Every {schemaAutomation.interval}h)
                   </span>
                 )}
-                {schemaAutomation.lastRun && (
+                {schemaAutomation.lastRun && !schemaAutomation.loading && (
                   <span className="ml-2 text-xs text-secondary-400">
                     Last: {new Date(schemaAutomation.lastRun).toLocaleDateString()}
                   </span>
                 )}
               </div>
               <div className="flex items-center space-x-2">
-                {schemaAutomation.enabled && (
+                {schemaAutomation.enabled && !schemaAutomation.loading && (
                   <button
                     onClick={() => handleTriggerAutomatedRun('schema_change_detection')}
                     className="text-xs text-primary-600 hover:text-primary-700"
@@ -216,17 +240,40 @@ const RefreshControls = ({
                     <PlayIcon className="h-3 w-3" />
                   </button>
                 )}
-                <button
-                  onClick={handleToggleSchemaAutomation}
-                  disabled={statusLoading}
-                  className={`flex items-center px-2 py-1 rounded text-xs font-medium ${
-                    schemaAutomation.enabled
-                      ? 'bg-accent-100 text-accent-800 hover:bg-accent-200'
-                      : 'bg-secondary-100 text-secondary-600 hover:bg-secondary-200'
-                  }`}
-                >
-                  {schemaAutomation.enabled ? 'On' : 'Off'}
-                </button>
+
+                {/* Enhanced Toggle Button with Loading State */}
+                {schemaAutomation.loading ? (
+                  // Loading skeleton
+                  <div className="flex items-center px-2 py-1 rounded text-xs font-medium bg-secondary-100">
+                    <div className="flex items-center">
+                      <div className="animate-spin h-3 w-3 border border-secondary-400 border-t-transparent rounded-full mr-1"></div>
+                      <span className="text-secondary-500">Loading...</span>
+                    </div>
+                  </div>
+                ) : (
+                  // Actual toggle
+                  <button
+                    onClick={handleToggleSchemaAutomation}
+                    disabled={statusLoading}
+                    className={`flex items-center px-2 py-1 rounded text-xs font-medium transition-all duration-200 ${
+                      schemaAutomation.enabled
+                        ? 'bg-accent-100 text-accent-800 hover:bg-accent-200'
+                        : 'bg-secondary-100 text-secondary-600 hover:bg-secondary-200'
+                    }`}
+                  >
+                    {schemaAutomation.enabled ? (
+                      <>
+                        <PlayIcon className="h-3 w-3 mr-1" />
+                        On
+                      </>
+                    ) : (
+                      <>
+                        <PauseIcon className="h-3 w-3 mr-1" />
+                        Off
+                      </>
+                    )}
+                  </button>
+                )}
               </div>
             </div>
 
@@ -249,7 +296,6 @@ const RefreshControls = ({
             )}
           </div>
         </div>
-      )}
 
       {/* Manual Refresh Controls */}
       <div>

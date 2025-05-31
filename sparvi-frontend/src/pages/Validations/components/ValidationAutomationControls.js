@@ -22,6 +22,9 @@ const ValidationAutomationControls = ({
   const [loadingTableConfig, setLoadingTableConfig] = useState(false);
   const [savingTableConfig, setSavingTableConfig] = useState(false);
 
+  // Add this helper function at the top of the component
+  const isLoadingAutomationStatus = !automationStatus || !automationStatus.connection_config;
+
   // Load table-specific validation automation config
   useEffect(() => {
     if (!connectionId || !tableName) {
@@ -42,8 +45,8 @@ const ValidationAutomationControls = ({
         });
 
         if (response.ok) {
-          const config = await response.json();
-          setTableConfig(config);
+          const data = await response.json();
+          setTableConfig(data.config || data);
         } else {
           // If no config exists, create default
           setTableConfig({
@@ -83,8 +86,8 @@ const ValidationAutomationControls = ({
       });
 
       if (response.ok) {
-        const updated = await response.json();
-        setTableConfig(updated);
+        const data = await response.json();
+        setTableConfig(data.config || data);
       }
     } catch (error) {
       console.error('Error saving table automation config:', error);
@@ -164,46 +167,61 @@ const ValidationAutomationControls = ({
         <div>
           <div className="flex items-center justify-between mb-2">
             <span className="text-xs font-medium text-secondary-700">Connection-wide Validation Automation</span>
-            <button
-              onClick={onToggleValidationAutomation}
-              disabled={!automationGloballyEnabled}
-              className={`flex items-center px-2 py-1 rounded text-xs font-medium transition-colors ${
-                globalValidationEnabled && automationGloballyEnabled
-                  ? 'bg-accent-100 text-accent-800 hover:bg-accent-200'
-                  : 'bg-secondary-100 text-secondary-600 hover:bg-secondary-200'
-              } ${!automationGloballyEnabled ? 'opacity-50 cursor-not-allowed' : ''}`}
-            >
-              {globalValidationEnabled ? (
-                <>
-                  <PlayIcon className="h-3 w-3 mr-1" />
-                  On
-                </>
-              ) : (
-                <>
-                  <PauseIcon className="h-3 w-3 mr-1" />
-                  Off
-                </>
-              )}
-            </button>
+
+            {isLoadingAutomationStatus ? (
+              // Loading state
+              <div className="flex items-center px-2 py-1 rounded text-xs font-medium bg-secondary-100">
+                <div className="animate-spin h-3 w-3 border border-secondary-400 border-t-transparent rounded-full mr-1"></div>
+                <span className="text-secondary-500">Loading...</span>
+              </div>
+            ) : (
+              // Actual toggle
+              <button
+                onClick={onToggleValidationAutomation}
+                disabled={!automationGloballyEnabled}
+                className={`flex items-center px-2 py-1 rounded text-xs font-medium transition-all duration-200 ${
+                  globalValidationEnabled && automationGloballyEnabled
+                    ? 'bg-accent-100 text-accent-800 hover:bg-accent-200'
+                    : 'bg-secondary-100 text-secondary-600 hover:bg-secondary-200'
+                } ${!automationGloballyEnabled ? 'opacity-50 cursor-not-allowed' : ''}`}
+              >
+                {globalValidationEnabled ? (
+                  <>
+                    <PlayIcon className="h-3 w-3 mr-1" />
+                    On
+                  </>
+                ) : (
+                  <>
+                    <PauseIcon className="h-3 w-3 mr-1" />
+                    Off
+                  </>
+                )}
+              </button>
+            )}
           </div>
 
-          {globalValidationEnabled && automationStatus.connection_config?.validation_automation?.interval_hours && (
-            <p className="text-xs text-secondary-500">
-              Runs every {automationStatus.connection_config.validation_automation.interval_hours} hours
-            </p>
-          )}
+          {/* Only show details when not loading */}
+          {!isLoadingAutomationStatus && (
+            <>
+              {globalValidationEnabled && automationStatus.connection_config?.validation_automation?.interval_hours && (
+                <p className="text-xs text-secondary-500">
+                  Runs every {automationStatus.connection_config.validation_automation.interval_hours} hours
+                </p>
+              )}
 
-          {globalValidationEnabled && automationGloballyEnabled && (
-            <div className="mt-2">
-              <button
-                onClick={onTriggerAutomatedRun}
-                className="text-xs text-primary-600 hover:text-primary-700 flex items-center"
-                title="Trigger validation automation now"
-              >
-                <PlayIcon className="h-3 w-3 mr-1" />
-                Run Now
-              </button>
-            </div>
+              {globalValidationEnabled && automationGloballyEnabled && (
+                <div className="mt-2">
+                  <button
+                    onClick={onTriggerAutomatedRun}
+                    className="text-xs text-primary-600 hover:text-primary-700 flex items-center"
+                    title="Trigger validation automation now"
+                  >
+                    <PlayIcon className="h-3 w-3 mr-1" />
+                    Run Now
+                  </button>
+                </div>
+              )}
+            </>
           )}
         </div>
 
@@ -215,19 +233,31 @@ const ValidationAutomationControls = ({
                 Auto-run for {tableName}
               </span>
               {loadingTableConfig ? (
-                <LoadingSpinner size="xs" />
+                <div className="flex items-center px-2 py-1 rounded text-xs font-medium bg-secondary-100">
+                  <div className="animate-spin h-3 w-3 border border-secondary-400 border-t-transparent rounded-full mr-1"></div>
+                  <span className="text-secondary-500">Loading...</span>
+                </div>
+              ) : isLoadingAutomationStatus ? (
+                // Show loading for table config too if main status is loading
+                <div className="flex items-center px-2 py-1 rounded text-xs font-medium bg-secondary-100">
+                  <div className="animate-spin h-3 w-3 border border-secondary-400 border-t-transparent rounded-full mr-1"></div>
+                  <span className="text-secondary-500">Loading...</span>
+                </div>
               ) : (
                 <button
                   onClick={handleToggleTableAutomation}
                   disabled={!globalValidationEnabled || !automationGloballyEnabled || savingTableConfig}
-                  className={`flex items-center px-2 py-1 rounded text-xs font-medium transition-colors ${
+                  className={`flex items-center px-2 py-1 rounded text-xs font-medium transition-all duration-200 ${
                     tableValidationEnabled && globalValidationEnabled && automationGloballyEnabled
                       ? 'bg-primary-100 text-primary-800 hover:bg-primary-200'
                       : 'bg-secondary-100 text-secondary-600 hover:bg-secondary-200'
                   } ${(!globalValidationEnabled || !automationGloballyEnabled) ? 'opacity-50 cursor-not-allowed' : ''}`}
                 >
                   {savingTableConfig ? (
-                    <LoadingSpinner size="xs" className="mr-1" />
+                    <>
+                      <div className="animate-spin h-3 w-3 border border-current border-t-transparent rounded-full mr-1"></div>
+                      Saving...
+                    </>
                   ) : tableValidationEnabled ? (
                     <>
                       <PlayIcon className="h-3 w-3 mr-1" />
@@ -243,8 +273,8 @@ const ValidationAutomationControls = ({
               )}
             </div>
 
-            {/* Table automation settings */}
-            {tableValidationEnabled && globalValidationEnabled && automationGloballyEnabled && !loadingTableConfig && (
+            {/* Only show table settings when both configs are loaded */}
+            {!isLoadingAutomationStatus && !loadingTableConfig && tableValidationEnabled && globalValidationEnabled && automationGloballyEnabled && (
               <div className="space-y-3 mt-3">
                 <div>
                   <label className="block text-xs font-medium text-secondary-700 mb-1">
@@ -281,43 +311,47 @@ const ValidationAutomationControls = ({
               </div>
             )}
 
-            {/* Status messages */}
-            {!globalValidationEnabled && (
-              <div className="mt-2 p-2 bg-warning-50 border border-warning-200 rounded text-xs">
-                <div className="flex items-start">
-                  <ExclamationCircleIcon className="h-3 w-3 text-warning-400 mr-1 mt-0.5 flex-shrink-0" />
-                  <div>
-                    <p className="text-warning-800">
-                      Enable connection-wide validation automation first.
-                    </p>
+            {/* Status messages - only show when not loading */}
+            {!isLoadingAutomationStatus && (
+              <>
+                {!globalValidationEnabled && (
+                  <div className="mt-2 p-2 bg-warning-50 border border-warning-200 rounded text-xs">
+                    <div className="flex items-start">
+                      <ExclamationCircleIcon className="h-3 w-3 text-warning-400 mr-1 mt-0.5 flex-shrink-0" />
+                      <div>
+                        <p className="text-warning-800">
+                          Enable connection-wide validation automation first.
+                        </p>
+                      </div>
+                    </div>
                   </div>
-                </div>
-              </div>
-            )}
+                )}
 
-            {!automationGloballyEnabled && (
-              <div className="mt-2 p-2 bg-warning-50 border border-warning-200 rounded text-xs">
-                <div className="flex items-start">
-                  <ExclamationCircleIcon className="h-3 w-3 text-warning-400 mr-1 mt-0.5 flex-shrink-0" />
-                  <div>
-                    <p className="text-warning-800">
-                      Global automation is disabled.
-                    </p>
-                    <Link
-                      to="/settings/automation"
-                      className="text-warning-600 hover:text-warning-700 underline"
-                    >
-                      Enable in settings →
-                    </Link>
+                {!automationGloballyEnabled && (
+                  <div className="mt-2 p-2 bg-warning-50 border border-warning-200 rounded text-xs">
+                    <div className="flex items-start">
+                      <ExclamationCircleIcon className="h-3 w-3 text-warning-400 mr-1 mt-0.5 flex-shrink-0" />
+                      <div>
+                        <p className="text-warning-800">
+                          Global automation is disabled.
+                        </p>
+                        <Link
+                          to="/settings/automation"
+                          className="text-warning-600 hover:text-warning-700 underline"
+                        >
+                          Enable in settings →
+                        </Link>
+                      </div>
+                    </div>
                   </div>
-                </div>
-              </div>
+                )}
+              </>
             )}
           </div>
         )}
 
         {/* Last run information */}
-        {automationStatus.last_runs?.validation_automation && (
+        {!isLoadingAutomationStatus && automationStatus.last_runs?.validation_automation && (
           <div className="border-t pt-4">
             <div className="text-xs text-secondary-500">
               <div className="flex items-center">
