@@ -14,8 +14,7 @@ import { useUI } from '../../contexts/UIContext';
 
 const ConnectionsPage = () => {
   const { connections, refreshConnections, setAsDefaultConnection, deleteConnection, setCurrentConnection } = useConnection();
-  const { updateBreadcrumbs, showNotification, setLoading } = useUI();
-  const [isDeleting, setIsDeleting] = useState(false);
+  const { updateBreadcrumbs, showNotification, removeNotification, setLoading } = useUI();  const [isDeleting, setIsDeleting] = useState(false);
   const [connectionToDelete, setConnectionToDelete] = useState(null);
 
   // Set breadcrumbs
@@ -67,13 +66,28 @@ const ConnectionsPage = () => {
   const handleDelete = async () => {
     if (!connectionToDelete) return;
 
+    const connectionName = connectionToDelete.name;
+    const connectionId = connectionToDelete.id;
+
+    // Close modal immediately for better UX
+    setIsDeleting(false);
+    setConnectionToDelete(null);
+
+    // Show loading notification
+    const loadingNotificationId = showNotification('Deleting connection...', 'info', 0); // 0 = don't auto-remove
+
     try {
-      await deleteConnection(connectionToDelete.id);
-      showNotification(`Connection "${connectionToDelete.name}" deleted`, 'success');
-      setIsDeleting(false);
-      setConnectionToDelete(null);
+      await deleteConnection(connectionId);
+
+      // Remove loading notification and show success
+      removeNotification(loadingNotificationId);
+      showNotification(`Connection "${connectionName}" deleted`, 'success');
+
     } catch (error) {
       console.error('Error deleting connection:', error);
+
+      // Remove loading notification and show error
+      removeNotification(loadingNotificationId);
       showNotification('Failed to delete connection', 'error');
     }
   };

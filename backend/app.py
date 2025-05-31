@@ -3541,7 +3541,71 @@ def delete_connection(current_user, organization_id, connection_id):
             return jsonify(
                 {"error": "Cannot delete the default connection. Make another connection the default first."}), 400
 
-        # Delete the connection
+        # Delete related records first (in dependency order)
+        logger.info(f"Deleting related records for connection {connection_id}")
+
+        try:
+            # 1. Delete metadata facts that reference this connection
+            metadata_facts_response = supabase_mgr.supabase.table("metadata_facts") \
+                .delete() \
+                .eq("connection_id", connection_id) \
+                .execute()
+            logger.info(
+                f"Deleted {len(metadata_facts_response.data) if metadata_facts_response.data else 0} metadata facts")
+
+        except Exception as e:
+            logger.warning(f"Error deleting metadata_facts (may not exist): {str(e)}")
+
+        try:
+            # 2. Delete metadata objects for this connection
+            metadata_objects_response = supabase_mgr.supabase.table("metadata_objects") \
+                .delete() \
+                .eq("connection_id", connection_id) \
+                .execute()
+            logger.info(
+                f"Deleted {len(metadata_objects_response.data) if metadata_objects_response.data else 0} metadata objects")
+
+        except Exception as e:
+            logger.warning(f"Error deleting metadata_objects (may not exist): {str(e)}")
+
+        try:
+            # 3. Delete connection metadata (the table causing the constraint error)
+            connection_metadata_response = supabase_mgr.supabase.table("connection_metadata") \
+                .delete() \
+                .eq("connection_id", connection_id) \
+                .execute()
+            logger.info(
+                f"Deleted {len(connection_metadata_response.data) if connection_metadata_response.data else 0} connection metadata records")
+
+        except Exception as e:
+            logger.warning(f"Error deleting connection_metadata (may not exist): {str(e)}")
+
+        try:
+            # 4. Delete any validation results for this connection
+            validation_results_response = supabase_mgr.supabase.table("validation_results") \
+                .delete() \
+                .eq("connection_id", connection_id) \
+                .execute()
+            logger.info(
+                f"Deleted {len(validation_results_response.data) if validation_results_response.data else 0} validation results")
+
+        except Exception as e:
+            logger.warning(f"Error deleting validation_results (may not exist): {str(e)}")
+
+        try:
+            # 5. Delete any metadata tasks for this connection
+            metadata_tasks_response = supabase_mgr.supabase.table("metadata_tasks") \
+                .delete() \
+                .eq("connection_id", connection_id) \
+                .execute()
+            logger.info(
+                f"Deleted {len(metadata_tasks_response.data) if metadata_tasks_response.data else 0} metadata tasks")
+
+        except Exception as e:
+            logger.warning(f"Error deleting metadata_tasks (may not exist): {str(e)}")
+
+        # 6. Finally delete the connection itself
+        logger.info(f"Deleting connection {connection_id}")
         delete_response = supabase_mgr.supabase.table("database_connections") \
             .delete() \
             .eq("id", connection_id) \
@@ -3550,8 +3614,10 @@ def delete_connection(current_user, organization_id, connection_id):
 
         # Check if any rows were deleted
         if delete_response.data and len(delete_response.data) > 0:
+            logger.info(f"Successfully deleted connection {connection_id}")
             return jsonify({"success": True})
         else:
+            logger.error(f"Failed to delete connection {connection_id} - no rows affected")
             return jsonify({"error": "Failed to delete connection"}), 500
 
     except Exception as e:
