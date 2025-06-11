@@ -1,3 +1,5 @@
+import { formatUTCDateForDisplay } from './dateUtils';
+
 /**
  * Format a number with commas for thousands
  * @param {number} value - The number to format
@@ -37,39 +39,17 @@ export const formatPercentage = (value, decimalPlaces = 1) => {
 };
 
 /**
- * Format a date as a string
- * @param {string|Date} date - The date to format
+ * Format a date as a string in user's local timezone
+ * @param {string|Date} date - The date to format (UTC timestamp from backend)
  * @param {boolean} includeTime - Whether to include the time (defaults to false)
- * @returns {string} Formatted date
+ * @param {boolean} showTimezone - Whether to show timezone abbreviation (defaults to false)
+ * @returns {string} Formatted date in user's local timezone
  */
-export const formatDate = (date, includeTime = false) => {
+export const formatDate = (date, includeTime = false, showTimezone = false) => {
   if (!date) return '-';
 
-  try {
-    const dateObj = typeof date === 'string' ? new Date(date) : date;
-
-    // Check if valid date
-    if (isNaN(dateObj.getTime())) return '-';
-
-    // Format options
-    const options = includeTime
-      ? {
-          year: 'numeric',
-          month: 'short',
-          day: 'numeric',
-          hour: '2-digit',
-          minute: '2-digit'
-        }
-      : {
-          year: 'numeric',
-          month: 'short',
-          day: 'numeric'
-        };
-
-    return dateObj.toLocaleDateString(undefined, options);
-  } catch (e) {
-    return '-';
-  }
+  // Use the UTC-aware formatter that displays in local timezone
+  return formatUTCDateForDisplay(date, includeTime, undefined, showTimezone);
 };
 
 /**

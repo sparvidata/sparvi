@@ -1,4 +1,5 @@
 import { validationsAPI } from '../api/enhancedApiService';
+import { getCurrentUTCTimestamp, getMostRecentUTCTimestamp } from '../utils/dateUtils';
 
 class ValidationService {
   // Get validation rules with results
@@ -102,7 +103,7 @@ class ValidationService {
         actual_value: result.actual_value,
         expected_value: result.expected_value,
         error: result.error,
-        run_at: result.run_at || new Date().toISOString(),
+        run_at: result.run_at || getCurrentUTCTimestamp(),
         execution_time_ms: result.execution_time_ms
       }));
 
@@ -118,7 +119,7 @@ class ValidationService {
     try {
       // Run all validations (API doesn't support single rule execution)
       const results = await this.runValidations(connectionId, tableName);
-      
+
       // Find the result for this specific rule
       return results.find(r => r.rule_name === validationRule.rule_name);
     } catch (error) {
@@ -166,14 +167,14 @@ class ValidationService {
   // Helper to merge rules with their results
   mergeRulesWithResults(rules, results) {
     if (!rules || !results) return rules;
-    
+
     const resultsMap = {};
     results.forEach(result => {
       if (result.rule_name) {
         resultsMap[result.rule_name] = result;
       }
     });
-    
+
     return rules.map(rule => {
       const result = resultsMap[rule.rule_name];
       if (result) {
@@ -182,7 +183,7 @@ class ValidationService {
           last_result: result.error ? null : result.is_valid,
           actual_value: result.actual_value,
           error: result.error,
-          last_run_at: result.run_at || new Date().toISOString(),
+          last_run_at: result.run_at || getCurrentUTCTimestamp(),
           execution_time_ms: result.execution_time_ms
         };
       }
@@ -197,11 +198,11 @@ class ValidationService {
     const failed = validations.filter(v => v.last_result === false).length;
     const errored = validations.filter(v => v.error).length;
     const notRun = validations.filter(v => v.last_result === undefined || v.last_result === null).length;
-    
+
     // Calculate health score (only for rules that have been run)
     const runCount = passed + failed;
     const healthScore = runCount > 0 ? Math.round((passed / runCount) * 100) : 0;
-    
+
     return {
       total,
       passed,
@@ -213,26 +214,22 @@ class ValidationService {
     };
   }
 
-  // Get the most recent run timestamp
+  // Get the most recent run timestamp using UTC utilities
   getLastRunTimestamp(validations) {
-    const timestamps = validations
-      .filter(v => v.last_run_at)
-      .map(v => new Date(v.last_run_at).getTime());
-    
-    return timestamps.length > 0 ? new Date(Math.max(...timestamps)) : null;
+    return getMostRecentUTCTimestamp(validations, 'last_run_at');
   }
 
   // Process validation history into trend data
   processTrendData(history, days = 30) {
     if (!history || !history.length) return [];
-    
+
     // Group by date
     const byDate = {};
-    
+
     history.forEach(item => {
       const date = item.run_at ? new Date(item.run_at).toISOString().split('T')[0] : null;
       if (!date) return;
-      
+
       if (!byDate[date]) {
         byDate[date] = {
           date,
@@ -243,9 +240,9 @@ class ValidationService {
           health_score: 0
         };
       }
-      
+
       byDate[date].total++;
-      
+
       if (item.error) {
         byDate[date].error++;
       } else if (item.is_valid === true) {
@@ -254,7 +251,7 @@ class ValidationService {
         byDate[date].failed++;
       }
     });
-    
+
     // Calculate health scores and convert to array
     return Object.values(byDate)
       .map(day => {

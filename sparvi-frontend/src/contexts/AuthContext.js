@@ -11,6 +11,7 @@ import {
 } from '../api/supabase';
 import { userAPI } from '../api/enhancedApiService';
 import { setAuthReady } from '../api/enhancedApiService';
+import { isUTCTimestampExpired } from '../utils/dateUtils';
 
 // Create the auth context
 const AuthContext = createContext();
@@ -73,13 +74,9 @@ export const AuthProvider = ({ children }) => {
     if (!session) return;
 
     try {
-      // Check if token is expired based on session data
+      // Check if token is expired based on session data using UTC utilities
       if (session.expires_at) {
-        const now = Math.floor(Date.now() / 1000);
-        const expiresAt = session.expires_at;
-
-        // If expired (or about to expire in 60 seconds), force logout
-        if (now >= expiresAt - 60) {
+        if (isUTCTimestampExpired(session.expires_at, 60)) {
           console.log('Session expired, logging out');
           await handleLogout();
           return;

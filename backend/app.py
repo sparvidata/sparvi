@@ -3,7 +3,7 @@ import urllib.parse
 import psutil
 import supabase
 from flask import Flask, render_template, jsonify, request
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 import os
 import traceback
 import logging
@@ -1898,14 +1898,16 @@ def fallback_validation_trends(organization_id, connection_id, table_name, rules
     """Fallback implementation for validation trends if RPC query fails"""
     try:
         # Get a date series for the past X days
-        start_date = (datetime.datetime.now(timezone.utc) - datetime.timedelta(days=days))
+        start_date = datetime.now(timezone.utc) - timedelta(days=days)
         date_series = []
 
         # Generate date series
         current = start_date
-        while current <= datetime.datetime.now(timezone.utc):
+        end_date = datetime.now(timezone.utc)
+
+        while current <= end_date:
             date_series.append(current.date().isoformat())
-            current += datetime.timedelta(days=1)
+            current += timedelta(days=1)
 
         # Get validation results for each rule
         supabase_mgr = SupabaseManager()
@@ -5192,8 +5194,8 @@ def get_validation_trends(current_user, organization_id, connection_id, table_na
         if not connection:
             return jsonify({"error": "Connection not found or access denied"}), 404
 
-        # Calculate the start date
-        start_date = (datetime.datetime.now(timezone.utc) - datetime.timedelta(days=days)).isoformat()
+        # Calculate the start date (UTC)
+        start_date = datetime.now(timezone.utc) - timedelta(days=days)
 
         # Get rule IDs for this table
         validation_manager = SupabaseValidationManager()
@@ -5202,136 +5204,206 @@ def get_validation_trends(current_user, organization_id, connection_id, table_na
         if not rules:
             return jsonify({
                 "trends": [],
-                "message": "No validation rules found for this table"
+                "message": "No validation rules found for this table",
+                "table_name": table_name,
+                "days": days,
+                "rule_count": 0
             }), 200
 
         rule_ids = [rule["id"] for rule in rules]
+        logger.info(f"Processing trends for {len(rule_ids)} rules in table {table_name}")
 
-        # Use Supabase direct SQL queries via RPC for more efficient aggregation
+        # Use direct Supabase queries
         supabase_mgr = SupabaseManager()
 
-        # Get the validation results data, optimized for trend analysis
         try:
-            # This approach uses database functions for efficient aggregation:
-            # For each day and rule, get only the latest result
+            # Generate date series in Python
+            date_series = []
+            current_date = start_date
+            end_date = datetime.now(timezone.utc)
 
-            # Create date series for complete timeline
-            date_series_query = f"""
-            WITH date_series AS (
-                SELECT generate_series(
-                    date_trunc('day', now() - interval '{days} days'),
-                    date_trunc('day', now()),
-                    '1 day'::interval
-                )::date as day
-            )
-            SELECT day::text FROM date_series
-            """
+            while current_date <= end_date:
+                date_series.append(current_date.date().isoformat())
+                current_date += timedelta(days=1)
 
-            # Convert to timestamp UTC format strings for consistent date handling
-            date_series_response = supabase_mgr.supabase.rpc(
-                'execute_sql',
-                {'sql_query': date_series_query}
-            ).execute()
+            logger.info(f"Generated date series: {len(date_series)} days from {date_series[0]} to {date_series[-1]}")
 
-            date_series = [date["day"] for date in date_series_response.data]
+            # Get all validation results for the date range and rules
+            all_results = []
 
-            # Get the actual validation results with daily aggregation
-            aggregation_query = f"""
-            WITH daily_results AS (
-                SELECT 
-                    date_trunc('day', run_at)::date as day,
-                    rule_id,
-                    -- Row with max run_at for each rule within each day
-                    FIRST_VALUE(is_valid) OVER (
-                        PARTITION BY date_trunc('day', run_at), rule_id 
-                        ORDER BY run_at DESC
-                    ) as is_valid,
-                    -- Add a row_number to identify the latest record per day per rule
-                    ROW_NUMBER() OVER (
-                        PARTITION BY date_trunc('day', run_at), rule_id 
-                        ORDER BY run_at DESC
-                    ) as rn
-                FROM validation_results
-                WHERE 
-                    organization_id = '{organization_id}'
-                    AND run_at >= '{start_date}'
-                    AND rule_id IN ('{"','".join(rule_ids)}')
-            ),
-            latest_daily_results AS (
-                -- Only keep latest result per day per rule
-                SELECT 
-                    day,
-                    COUNT(*) as total_validations,
-                    COUNT(*) FILTER (WHERE is_valid = true) as passed,
-                    COUNT(*) FILTER (WHERE is_valid = false) as failed
-                FROM daily_results
-                WHERE rn = 1
-                GROUP BY day
-            )
-            SELECT 
-                day::text,
-                total_validations,
-                passed,
-                failed,
-                CASE 
-                    WHEN total_validations > 0 
-                    THEN ROUND((passed::numeric / total_validations) * 100, 2)
-                    ELSE 0 
-                END as health_score
-            FROM latest_daily_results
-            ORDER BY day
-            """
+            # Batch the rule IDs to avoid URL length limits
+            batch_size = 50
+            for i in range(0, len(rule_ids), batch_size):
+                batch_rule_ids = rule_ids[i:i + batch_size]
 
-            results_response = supabase_mgr.supabase.rpc(
-                'execute_sql',
-                {'sql_query': aggregation_query}
-            ).execute()
+                logger.info(f"Fetching results for batch {i // batch_size + 1} ({len(batch_rule_ids)} rules)")
 
-            # Process into a complete time series including days with no data
-            daily_data = {result["day"]: result for result in results_response.data}
+                response = supabase_mgr.supabase.table("validation_results") \
+                    .select("rule_id, is_valid, run_at") \
+                    .eq("organization_id", organization_id) \
+                    .in_("rule_id", batch_rule_ids) \
+                    .gte("run_at", start_date.isoformat()) \
+                    .order("run_at") \
+                    .execute()
+
+                if response.data:
+                    all_results.extend(response.data)
+                    logger.info(f"Found {len(response.data)} results in batch")
+
+            logger.info(f"Total validation results found: {len(all_results)}")
+
+            # Process results into daily aggregates
+            daily_results = {}
+
+            for result in all_results:
+                try:
+                    # Extract date from timestamp (handle both Z and +00:00 formats)
+                    run_at = result["run_at"]
+                    if run_at.endswith('Z'):
+                        run_at = run_at[:-1] + '+00:00'
+
+                    run_date = datetime.fromisoformat(run_at).date().isoformat()
+                    rule_id = result["rule_id"]
+
+                    # Initialize date if needed
+                    if run_date not in daily_results:
+                        daily_results[run_date] = {}
+
+                    # Only keep the latest result for each rule per day
+                    if rule_id not in daily_results[run_date] or result["run_at"] > daily_results[run_date][rule_id][
+                        "run_at"]:
+                        daily_results[run_date][rule_id] = {
+                            "is_valid": result["is_valid"],
+                            "run_at": result["run_at"]
+                        }
+                except Exception as parse_error:
+                    logger.warning(f"Error parsing result timestamp {result.get('run_at')}: {parse_error}")
+                    continue
+
+            logger.info(f"Processed into {len(daily_results)} days with data")
+
+            # Build complete trends data
             complete_trends = []
 
-            # Build complete timeline with zeros for missing days
             for day in date_series:
-                if day in daily_data:
+                if day in daily_results:
+                    # Count results for this day
+                    day_results = daily_results[day]
+                    total = len(day_results)
+                    passed = sum(1 for r in day_results.values() if r["is_valid"] is True)
+                    failed = sum(1 for r in day_results.values() if r["is_valid"] is False)
+                    errored = sum(1 for r in day_results.values() if r["is_valid"] is None)
+                    not_run = len(rules) - total
+
+                    # Calculate health score (only count valid/invalid, not errors)
+                    valid_results = passed + failed
+                    health_score = (passed / valid_results * 100) if valid_results > 0 else 0
+
                     complete_trends.append({
                         "day": day,
-                        "total_validations": daily_data[day]["total_validations"],
-                        "passed": daily_data[day]["passed"],
-                        "failed": daily_data[day]["failed"],
-                        "health_score": daily_data[day]["health_score"],
-                        "not_run": len(rules) - daily_data[day]["total_validations"]
+                        "timestamp": f"{day}T00:00:00Z",  # Add timestamp for frontend charts
+                        "total_validations": total,
+                        "passed": passed,
+                        "failed": failed,
+                        "errored": errored,
+                        "health_score": round(health_score, 2),
+                        "not_run": not_run
                     })
                 else:
-                    # No data for this day, add zeros
+                    # No data for this day
                     complete_trends.append({
                         "day": day,
+                        "timestamp": f"{day}T00:00:00Z",
                         "total_validations": 0,
                         "passed": 0,
                         "failed": 0,
+                        "errored": 0,
                         "health_score": 0,
                         "not_run": len(rules)
                     })
+
+            # Calculate current health score
+            current_health_score = 0
+            if rules:
+                try:
+                    current_health_score = calculate_current_health_score(rules, organization_id, connection_id)
+                except Exception as health_error:
+                    logger.warning(f"Could not calculate current health score: {health_error}")
+
+            logger.info(f"Successfully processed trends: {len(complete_trends)} data points")
 
             return jsonify({
                 "trends": complete_trends,
                 "table_name": table_name,
                 "days": days,
                 "rule_count": len(rules),
-                "current_health_score": calculate_current_health_score(rules, organization_id, connection_id)
+                "current_health_score": current_health_score,
+                "data_points": len([t for t in complete_trends if t["total_validations"] > 0])
             })
 
         except Exception as query_error:
-            logger.error(f"Error executing SQL for trend aggregation: {str(query_error)}")
+            logger.error(f"Error processing validation trends: {str(query_error)}")
             logger.error(traceback.format_exc())
 
-            # Fallback implementation if RPC doesn't work
-            return fallback_validation_trends(organization_id, connection_id, table_name, rules, days)
+            # Return error response with empty trends
+            return jsonify({
+                "error": f"Error processing validation trends: {str(query_error)}",
+                "trends": [],
+                "table_name": table_name,
+                "days": days,
+                "rule_count": len(rules) if rules else 0,
+                "current_health_score": 0
+            }), 500
 
     except Exception as e:
         logger.error(f"Error getting validation trends: {str(e)}")
         logger.error(traceback.format_exc())
-        return jsonify({"error": str(e)}), 500
+        return jsonify({
+            "error": str(e),
+            "trends": [],
+            "table_name": table_name if 'table_name' in locals() else "unknown",
+            "days": days if 'days' in locals() else 30,
+            "rule_count": 0
+        }), 500
+
+
+def calculate_current_health_score(rules, organization_id, connection_id):
+    """Calculate the current health score for validation rules"""
+    try:
+        if not rules:
+            return 0
+
+        supabase_mgr = SupabaseManager()
+        rule_ids = [rule["id"] for rule in rules]
+
+        # Get the latest result for each rule
+        latest_results = []
+
+        for rule_id in rule_ids:
+            response = supabase_mgr.supabase.table("validation_results") \
+                .select("is_valid") \
+                .eq("organization_id", organization_id) \
+                .eq("rule_id", rule_id) \
+                .order("run_at", desc=True) \
+                .limit(1) \
+                .execute()
+
+            if response.data:
+                latest_results.append(response.data[0]["is_valid"])
+
+        if not latest_results:
+            return 0
+
+        # Calculate health score from latest results
+        passed = sum(1 for result in latest_results if result is True)
+        failed = sum(1 for result in latest_results if result is False)
+        valid_results = passed + failed
+
+        return round((passed / valid_results * 100), 2) if valid_results > 0 else 0
+
+    except Exception as e:
+        logger.error(f"Error calculating current health score: {e}")
+        return 0
 
 @app.route("/api/connections/<connection_id>/tables/<table_name>/trends", methods=["GET"])
 @token_required
@@ -5664,6 +5736,49 @@ def get_metadata_status(current_user, organization_id, connection_id):
         if metadata_task_manager is None:
             init_metadata_task_manager()
 
+        # Helper function to calculate freshness status
+        def calculate_freshness_status(collected_at):
+            if not collected_at:
+                return {"status": "unknown", "age_seconds": None}
+
+            try:
+                # Parse the timestamp ensuring UTC handling
+                if isinstance(collected_at, str):
+                    # Handle both Z and +00:00 formats
+                    if collected_at.endswith('Z'):
+                        collected_at = collected_at[:-1] + '+00:00'
+                    collected_time = datetime.fromisoformat(collected_at)
+                else:
+                    collected_time = collected_at
+
+                # Ensure we have timezone info
+                if collected_time.tzinfo is None:
+                    collected_time = collected_time.replace(tzinfo=timezone.utc)
+
+                # Calculate age in seconds
+                now = datetime.now(timezone.utc)
+                age_delta = now - collected_time
+                age_seconds = int(age_delta.total_seconds())
+
+                # Determine status based on age
+                if age_seconds < 0:
+                    status = "error"  # Future timestamp
+                elif age_seconds < 3600:  # Less than 1 hour
+                    status = "fresh"
+                elif age_seconds < 86400:  # Less than 1 day (24 hours)
+                    status = "recent"
+                else:  # More than 1 day
+                    status = "stale"
+
+                return {
+                    "status": status,
+                    "age_seconds": age_seconds
+                }
+
+            except Exception as e:
+                logger.warning(f"Error calculating freshness for {collected_at}: {e}")
+                return {"status": "error", "age_seconds": None}
+
         # Get metadata status efficiently - use the cached getter
         metadata_types = ["tables", "columns", "statistics"]
         status = {}
@@ -5672,15 +5787,21 @@ def get_metadata_status(current_user, organization_id, connection_id):
             metadata = get_metadata_cached(connection_id, metadata_type)
 
             if metadata:
+                collected_at = metadata.get("collected_at")
+                freshness = calculate_freshness_status(collected_at)
+
                 status[metadata_type] = {
                     "available": True,
-                    "freshness": metadata.get("freshness", {"status": "unknown"}),
-                    "last_updated": metadata.get("collected_at")
+                    "freshness": freshness,
+                    "last_updated": collected_at
                 }
+
+                # Log for debugging (remove in production)
+                logger.info(f"Metadata {metadata_type}: collected_at={collected_at}, freshness={freshness}")
             else:
                 status[metadata_type] = {
                     "available": False,
-                    "freshness": {"status": "unknown"},
+                    "freshness": {"status": "unknown", "age_seconds": None},
                     "last_updated": None
                 }
 
@@ -5706,6 +5827,10 @@ def get_metadata_status(current_user, organization_id, connection_id):
             "type": connection.get("connection_type", "Unknown"),
             "id": connection_id
         }
+
+        # Add any schema changes info if available
+        status["changes"] = []
+        status["changes_detected"] = 0
 
         return jsonify(status)
 

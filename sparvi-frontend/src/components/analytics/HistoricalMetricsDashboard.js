@@ -9,6 +9,7 @@ import TrendChart from './TrendChart';
 import MetricCard from './MetricCard';
 import LoadingSpinner from '../common/LoadingSpinner';
 import { formatDate } from '../../utils/formatting';
+import { parseUTCDate } from '../../utils/dateUtils';
 
 /**
  * A component that displays historical metrics data
@@ -208,12 +209,15 @@ function processRowCountTrends(rowCountData, selectedTables = [], isFiltering = 
     filteredData = rowCountData.filter(item => selectedTables.includes(item.table_name));
   }
 
-  // Group data by date
+  // Group data by date using UTC-aware parsing
   const dataByDate = {};
 
   filteredData.forEach(item => {
-    // Extract date portion only (no time)
-    const date = item.timestamp.split('T')[0];
+    // Parse timestamp as UTC and extract date portion
+    const utcDate = parseUTCDate(item.timestamp);
+    if (!utcDate) return; // Skip invalid dates
+
+    const date = utcDate.toISOString().split('T')[0];
 
     if (!dataByDate[date]) {
       dataByDate[date] = {
@@ -231,10 +235,12 @@ function processRowCountTrends(rowCountData, selectedTables = [], isFiltering = 
     dataByDate[date].value += (item.metric_value || 0);
   });
 
-  // Convert to array and sort by date
-  return Object.values(dataByDate).sort((a, b) =>
-    new Date(a.date) - new Date(b.date)
-  );
+  // Convert to array and sort by date using UTC-aware comparison
+  return Object.values(dataByDate).sort((a, b) => {
+    const dateA = parseUTCDate(a.date + 'T00:00:00Z');
+    const dateB = parseUTCDate(b.date + 'T00:00:00Z');
+    return dateA.getTime() - dateB.getTime();
+  });
 }
 
 /**
@@ -243,10 +249,12 @@ function processRowCountTrends(rowCountData, selectedTables = [], isFiltering = 
 function processSchemaChanges(schemaData) {
   if (!schemaData || schemaData.length === 0) return [];
 
-  // Sort by timestamp
-  const sortedData = [...schemaData].sort((a, b) =>
-    new Date(a.timestamp) - new Date(b.timestamp)
-  );
+  // Sort by timestamp using UTC-aware parsing
+  const sortedData = [...schemaData].sort((a, b) => {
+    const dateA = parseUTCDate(a.timestamp);
+    const dateB = parseUTCDate(b.timestamp);
+    return dateA.getTime() - dateB.getTime();
+  });
 
   // Convert to chart format
   return sortedData.map(item => ({
@@ -262,10 +270,12 @@ function processSchemaChanges(schemaData) {
 function processValidationTrends(validationData) {
   if (!validationData || validationData.length === 0) return [];
 
-  // Sort by timestamp
-  const sortedData = [...validationData].sort((a, b) =>
-    new Date(a.timestamp) - new Date(b.timestamp)
-  );
+  // Sort by timestamp using UTC-aware parsing
+  const sortedData = [...validationData].sort((a, b) => {
+    const dateA = parseUTCDate(a.timestamp);
+    const dateB = parseUTCDate(b.timestamp);
+    return dateA.getTime() - dateB.getTime();
+  });
 
   // Convert to chart format
   return sortedData.map(item => ({
@@ -281,10 +291,12 @@ function processValidationTrends(validationData) {
 function processQualityScoreTrends(qualityData) {
   if (!qualityData || qualityData.length === 0) return [];
 
-  // Sort by timestamp
-  const sortedData = [...qualityData].sort((a, b) =>
-    new Date(a.timestamp) - new Date(b.timestamp)
-  );
+  // Sort by timestamp using UTC-aware parsing
+  const sortedData = [...qualityData].sort((a, b) => {
+    const dateA = parseUTCDate(a.timestamp);
+    const dateB = parseUTCDate(b.timestamp);
+    return dateA.getTime() - dateB.getTime();
+  });
 
   // Convert to chart format
   return sortedData.map(item => ({

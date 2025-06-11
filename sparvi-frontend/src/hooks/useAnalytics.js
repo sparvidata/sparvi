@@ -2,6 +2,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { analyticsAPI } from '../api/enhancedApiService';
 import { formatDate } from '../utils/formatting';
+import { parseUTCDate } from '../utils/dateUtils';
 
 /**
  * Custom hook to fetch dashboard metrics data
@@ -124,16 +125,24 @@ export const processRowCountTrends = (rowCountData = []) => {
       dataByTable[tableName] = [];
     }
 
-    dataByTable[tableName].push({
-      timestamp: item.timestamp,
-      value: item.metric_value || 0
-    });
+    // Parse timestamp as UTC and ensure consistent formatting
+    const utcDate = parseUTCDate(item.timestamp);
+    if (utcDate) {
+      dataByTable[tableName].push({
+        timestamp: utcDate.toISOString(),
+        value: item.metric_value || 0
+      });
+    }
   });
 
-  // Create series data for each table
+  // Create series data for each table with proper UTC date sorting
   return Object.entries(dataByTable).map(([tableName, data]) => ({
     name: tableName,
-    data: data.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp))
+    data: data.sort((a, b) => {
+      const dateA = parseUTCDate(a.timestamp);
+      const dateB = parseUTCDate(b.timestamp);
+      return dateA.getTime() - dateB.getTime();
+    })
   }));
 };
 
