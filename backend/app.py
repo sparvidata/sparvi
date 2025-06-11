@@ -1036,24 +1036,6 @@ initialize_anomaly_detection()
 register_automation_routes(app, token_required)
 
 
-@app.teardown_appcontext
-def shutdown_anomaly_detection(exception=None):
-    global anomaly_scheduler_service
-    if anomaly_scheduler_service:
-        anomaly_scheduler_service.stop()
-        logger.info("Anomaly detection scheduler service stopped")
-
-
-@app.teardown_appcontext
-def shutdown_automation_system(exception=None):
-    """Cleanup automation system on shutdown"""
-    try:
-        from core.utils.app_hooks import cleanup_automation_system
-        cleanup_automation_system()
-    except Exception as e:
-        logger.error(f"Error during automation cleanup: {e}")
-
-
 # Set the secret key from environment variables
 app.config["SECRET_KEY"] = os.getenv("SECRET_KEY", "default_secret_key")
 
