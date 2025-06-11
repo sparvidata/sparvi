@@ -57,7 +57,7 @@ class MetadataChangeAnalytics:
                 "object_type": object_type,
                 "object_name": object_name,
                 "change_detected": change_detected,
-                "check_timestamp": datetime.now(timezone.utc).isocalendar(),
+                "check_timestamp": datetime.now(timezone.utc).isoformat(),
                 "refresh_interval_hours": refresh_interval_hours,
                 "organization_id": organization_id,
                 "details": json.dumps(details) if details else json.dumps({})

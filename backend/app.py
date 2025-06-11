@@ -55,18 +55,13 @@ from typing import Dict, Any, List, Optional
 import time
 import logging
 
-# Suppress noisy HTTP/networking libraries
-logging.getLogger('httpcore').setLevel(logging.WARNING)
-logging.getLogger('hpack').setLevel(logging.WARNING)
+# Configure logging BEFORE any other imports that might use logging
+logging.getLogger('httpcore').setLevel(logging.ERROR)
+logging.getLogger('hpack').setLevel(logging.ERROR)
 logging.getLogger('httpx').setLevel(logging.WARNING)
-logging.getLogger('urllib3').setLevel(logging.WARNING)
-logging.getLogger('schedule').setLevel(logging.WARNING)
-logging.getLogger('concurrent.futures').setLevel(logging.WARNING)
 
-# Keep your application logs at INFO level
-logging.getLogger('core').setLevel(logging.INFO)
-logging.getLogger('supabase_manager').setLevel(logging.INFO)
-logging.getLogger('root').setLevel(logging.INFO)
+# Set root logger level but keep your app logs
+logging.basicConfig(level=logging.INFO)
 
 
 class ConnectionPoolManager:
@@ -1097,7 +1092,7 @@ def health_check():
     try:
         health_status = {
             "status": "healthy",
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "services": {}
         }
 
@@ -1606,8 +1601,8 @@ def store_table_list(connection_id, tables):
             "connection_id": connection_id,
             "object_type": "database",
             "object_name": "tables",
-            "created_at": datetime.datetime.now().isoformat(),
-            "updated_at": datetime.datetime.now().isoformat()
+            "created_at": datetime.datetime.now(timezone.utc).isoformat(),
+            "updated_at": datetime.datetime.now(timezone.utc).isoformat()
         }
 
         object_response = storage.supabase.table("metadata_objects").upsert(object_data).execute()
@@ -1624,7 +1619,7 @@ def store_table_list(connection_id, tables):
             "object_id": object_id,
             "property_id": property_id,
             "value_json": json.dumps(tables),
-            "collected_at": datetime.datetime.now().isoformat(),
+            "collected_at": datetime.datetime.now(timezone.utc).isoformat(),
             "refresh_frequency": "1 day"
         }
 
@@ -1659,8 +1654,8 @@ def store_table_metadata(connection_id, table_name, metadata):
             "connection_id": connection_id,
             "object_type": "table",
             "object_name": table_name,
-            "created_at": datetime.datetime.now().isoformat(),
-            "updated_at": datetime.datetime.now().isoformat()
+            "created_at": datetime.datetime.now(timezone.utc).isoformat(),
+            "updated_at": datetime.datetime.now(timezone.utc).isoformat()
         }
 
         object_response = storage.supabase.table("metadata_objects").upsert(object_data).execute()
@@ -1688,7 +1683,7 @@ def store_table_metadata(connection_id, table_name, metadata):
                 "metadata_type_id": metadata_type_id,
                 "object_id": table_object_id,
                 "property_id": prop_id,
-                "collected_at": datetime.datetime.now().isoformat(),
+                "collected_at": datetime.datetime.now(timezone.utc).isoformat(),
                 "refresh_frequency": "1 day"
             }
 
@@ -1730,8 +1725,8 @@ def store_table_metadata(connection_id, table_name, metadata):
                     "object_type": "column",
                     "object_name": column_name,
                     "parent_id": table_object_id,  # Link to parent table
-                    "created_at": datetime.datetime.now().isoformat(),
-                    "updated_at": datetime.datetime.now().isoformat()
+                    "created_at": datetime.datetime.now(timezone.utc).isoformat(),
+                    "updated_at": datetime.datetime.now(timezone.utc).isoformat()
                 }
 
                 col_response = storage.supabase.table("metadata_objects").upsert(column_data).execute()
@@ -1752,7 +1747,7 @@ def store_table_metadata(connection_id, table_name, metadata):
                             "object_id": column_object_id,
                             "property_id": prop_id,
                             "value_text": str(column.get("type", "")),
-                            "collected_at": datetime.datetime.now().isoformat(),
+                            "collected_at": datetime.datetime.now(timezone.utc).isoformat(),
                             "refresh_frequency": "1 day"
                         }
                         storage.supabase.table("metadata_facts").upsert(fact_data).execute()
@@ -1765,7 +1760,7 @@ def store_table_metadata(connection_id, table_name, metadata):
                             "object_id": column_object_id,
                             "property_id": prop_id,
                             "value_text": str(column.get("nullable", "")),
-                            "collected_at": datetime.datetime.now().isoformat(),
+                            "collected_at": datetime.datetime.now(timezone.utc).isoformat(),
                             "refresh_frequency": "1 day"
                         }
                         storage.supabase.table("metadata_facts").upsert(fact_data).execute()
@@ -1777,7 +1772,7 @@ def store_table_metadata(connection_id, table_name, metadata):
                             "object_id": column_object_id,
                             "property_id": prop_id,
                             "value_text": str(column.get(prop_name, "")),
-                            "collected_at": datetime.datetime.now().isoformat(),
+                            "collected_at": datetime.datetime.now(timezone.utc).isoformat(),
                             "refresh_frequency": "1 day"
                         }
                         storage.supabase.table("metadata_facts").upsert(fact_data).execute()
@@ -1841,7 +1836,7 @@ def collect_table_metadata_sync(self, table_name):
             "columns": columns,
             "primary_keys": primary_keys,
             "row_count": row_count,
-            "collected_at": datetime.datetime.now().isoformat()
+            "collected_at": datetime.datetime.now(timezone.utc).isoformat()
         }
 
         logger.info(f"Successfully collected metadata for table {table_name}")
@@ -1851,7 +1846,7 @@ def collect_table_metadata_sync(self, table_name):
         return {
             "table_name": table_name,
             "error": str(e),
-            "collected_at": datetime.datetime.now().isoformat()
+            "collected_at": datetime.datetime.now(timezone.utc).isoformat()
         }
 
 
@@ -1903,12 +1898,12 @@ def fallback_validation_trends(organization_id, connection_id, table_name, rules
     """Fallback implementation for validation trends if RPC query fails"""
     try:
         # Get a date series for the past X days
-        start_date = (datetime.datetime.now() - datetime.timedelta(days=days))
+        start_date = (datetime.datetime.now(timezone.utc) - datetime.timedelta(days=days))
         date_series = []
 
         # Generate date series
         current = start_date
-        while current <= datetime.datetime.now():
+        while current <= datetime.datetime.now(timezone.utc):
             date_series.append(current.date().isoformat())
             current += datetime.timedelta(days=1)
 
@@ -2925,7 +2920,7 @@ def get_profile(current_user, organization_id):
         # Run the profiler using the sparvi-core package - with no samples
         logger.info(f"Starting profile_table call for table: {table_name}")
         result = profile_table(resolved_connection, table_name, previous_profile, include_samples=include_samples)
-        result["timestamp"] = datetime.datetime.now().isoformat()
+        result["timestamp"] = datetime.datetime.now(timezone.utc).isoformat()
         logger.info(f"Profile completed with {len(result)} keys")
 
         # Log memory usage after profiling
@@ -3580,7 +3575,7 @@ def update_connection(current_user, organization_id, connection_id):
             "name": data["name"],
             "connection_type": data["connection_type"],
             "connection_details": data["connection_details"],
-            "updated_at": datetime.datetime.now().isoformat()
+            "updated_at": datetime.datetime.now(timezone.utc).isoformat()
         }
 
         # If password is empty and we're updating, keep the existing password
@@ -4210,13 +4205,13 @@ def get_table_statistics(current_user, organization_id, connection_id, table_nam
                 "last_updated": None,
             },
             "collection_metadata": {
-                "collected_at": datetime.datetime.now().isoformat(),
+                "collected_at": datetime.datetime.now(timezone.utc).isoformat(),
                 "collection_duration_ms": 0
             },
             "column_statistics": {}
         }
 
-        start_time = datetime.datetime.now()
+        start_time = datetime.datetime.now(timezone.utc)
 
         # OPTIMIZATION 1: Build a single query to get multiple column statistics at once
         # This reduces database round trips significantly
@@ -4581,7 +4576,7 @@ def get_table_statistics(current_user, organization_id, connection_id, table_nam
             # Continue with traditional methods if optimized approach fails
 
         # Calculate collection duration
-        end_time = datetime.datetime.now()
+        end_time = datetime.datetime.now(timezone.utc)
         duration_ms = (end_time - start_time).total_seconds() * 1000
         table_stats["collection_metadata"]["collection_duration_ms"] = duration_ms
 
@@ -4613,7 +4608,7 @@ def get_table_statistics(current_user, organization_id, connection_id, table_nam
                 direct_client = create_client(supabase_url, supabase_key)
 
                 # Current timestamp
-                now = datetime.datetime.now().isoformat()
+                now = datetime.datetime.now(timezone.utc).isoformat()
 
                 # Table-level metrics to track
                 historical_records = []
@@ -4744,7 +4739,7 @@ def acknowledge_schema_changes(current_user, organization_id, connection_id):
         direct_client = create_client(supabase_url, supabase_key)
 
         # Update acknowledgment status
-        current_time = datetime.datetime.now().isoformat()
+        current_time = datetime.datetime.now(timezone.utc).isoformat()
         acknowledged_count = 0
 
         # Handle current_user safely
@@ -5031,7 +5026,7 @@ def get_combined_schema(current_user, organization_id, connection_id):
 
         # Add counts and collection timestamp
         schema["table_count"] = len(schema["tables"])
-        schema["collected_at"] = tables_metadata.get("collected_at", datetime.datetime.now().isoformat())
+        schema["collected_at"] = tables_metadata.get("collected_at", datetime.datetime.now(timezone.utc).isoformat())
 
         return jsonify(schema)
 
@@ -5198,7 +5193,7 @@ def get_validation_trends(current_user, organization_id, connection_id, table_na
             return jsonify({"error": "Connection not found or access denied"}), 404
 
         # Calculate the start date
-        start_date = (datetime.datetime.now() - datetime.timedelta(days=days)).isoformat()
+        start_date = (datetime.datetime.now(timezone.utc) - datetime.timedelta(days=days)).isoformat()
 
         # Get rule IDs for this table
         validation_manager = SupabaseValidationManager()
@@ -5360,7 +5355,7 @@ def get_historical_trends(current_user, organization_id, connection_id, table_na
             return jsonify({"error": "Connection not found or access denied"}), 404
 
         # Calculate the start date
-        start_date = (datetime.datetime.now() - datetime.timedelta(days=days)).isoformat()
+        start_date = (datetime.datetime.now(timezone.utc) - datetime.timedelta(days=days)).isoformat()
 
         # Query historical statistics
         try:
@@ -6072,7 +6067,7 @@ def get_change_analytics_dashboard(current_user, organization_id, connection_id)
 
         # 2. Get total checks and changes
         # Get analytics data for the last 30 days
-        thirty_days_ago = (datetime.datetime.now() - datetime.timedelta(days=30)).isoformat()
+        thirty_days_ago = (datetime.datetime.now(timezone.utc) - datetime.timedelta(days=30)).isoformat()
         stats_response = supabase_mgr.supabase.table("metadata_change_analytics") \
             .select("object_name,change_detected,check_timestamp") \
             .eq("connection_id", connection_id) \
@@ -6315,7 +6310,7 @@ def get_analytics_dashboard_metrics(current_user, organization_id, connection_id
 
         # Calculate the start date
         from datetime import datetime, timedelta
-        start_date = (datetime.now() - timedelta(days=days)).isoformat()
+        start_date = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
 
         # Get Supabase client
         supabase_mgr = SupabaseManager()

@@ -57,7 +57,7 @@ class MetadataTask:
         task.id = data["id"]
         task.status = data["status"]
         if "created_at" in data:
-            task.created_at = datetime.fromisoformat(data["created_at"])
+            task.created_at = datetime.fromisoformat(data["created_at"].replace('Z', '+00:00'))
         return task
 
 

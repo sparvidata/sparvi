@@ -1,7 +1,7 @@
 import logging
 import uuid
 from typing import Dict, Any, List, Optional
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from core.storage.supabase_manager import SupabaseManager
 from .scheduler import AutomationScheduler
@@ -51,7 +51,7 @@ class AutomationAPI:
                 "max_concurrent_jobs": config_data.get("max_concurrent_jobs", 3),
                 "default_retry_attempts": config_data.get("default_retry_attempts", 2),
                 "notification_settings": config_data.get("notification_settings", {}),
-                "updated_at": datetime.now().isoformat()
+                "updated_at": datetime.now(timezone.utc).isoformat()
             }
 
             # Check if config exists
@@ -67,7 +67,7 @@ class AutomationAPI:
                     .execute()
             else:
                 # Create new
-                clean_config_data["created_at"] = datetime.now().isoformat()
+                clean_config_data["created_at"] = datetime.now(timezone.utc).isoformat()
                 response = self.supabase.supabase.table("automation_global_config") \
                     .insert(clean_config_data) \
                     .execute()
@@ -170,7 +170,7 @@ class AutomationAPI:
                 "metadata_refresh": config_data.get("metadata_refresh", {}),
                 "schema_change_detection": config_data.get("schema_change_detection", {}),
                 "validation_automation": config_data.get("validation_automation", {}),
-                "updated_at": datetime.now().isoformat()
+                "updated_at": datetime.now(timezone.utc).isoformat()
             }
 
             # Check if config exists
@@ -188,7 +188,7 @@ class AutomationAPI:
             else:
                 # Create new
                 clean_config_data["connection_id"] = connection_id
-                clean_config_data["created_at"] = datetime.now().isoformat()
+                clean_config_data["created_at"] = datetime.now(timezone.utc).isoformat()
                 response = self.supabase.supabase.table("automation_connection_configs") \
                     .insert(clean_config_data) \
                     .execute()
@@ -251,7 +251,7 @@ class AutomationAPI:
                 "validation_notification_threshold": config_data.get("validation_notification_threshold",
                                                                      "failures_only"),
                 "custom_schedule": config_data.get("custom_schedule", {}),
-                "updated_at": datetime.now().isoformat()
+                "updated_at": datetime.now(timezone.utc).isoformat()
             }
 
             # Check if config exists
@@ -273,7 +273,7 @@ class AutomationAPI:
                 clean_config_data.update({
                     "connection_id": connection_id,
                     "table_name": table_name,
-                    "created_at": datetime.now().isoformat()
+                    "created_at": datetime.now(timezone.utc).isoformat()
                 })
                 response = self.supabase.supabase.table("automation_table_configs") \
                     .insert(clean_config_data) \
@@ -330,7 +330,7 @@ class AutomationAPI:
                 status["pending_jobs"] = len([j for j in jobs if j["status"] == "scheduled"])
 
                 # Failed jobs in last 24 hours
-                yesterday = (datetime.now() - timedelta(days=1)).isoformat()
+                yesterday = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
                 status["failed_jobs_24h"] = len([
                     j for j in jobs
                     if j["status"] == "failed" and j.get("created_at", "") >= yesterday
@@ -418,7 +418,7 @@ class AutomationAPI:
         try:
             # Update job status to cancelled
             response = self.supabase.supabase.table("automation_jobs") \
-                .update({"status": "cancelled", "completed_at": datetime.now().isoformat()}) \
+                .update({"status": "cancelled", "completed_at": datetime.now(timezone.utc).isoformat()}) \
                 .eq("id", job_id) \
                 .execute()
 
@@ -478,7 +478,7 @@ class AutomationAPI:
                     .select("job_type, status, created_at, completed_at, started_at") \
                     .eq("connection_id", connection_id) \
                     .in_("status", ["completed", "failed", "running"]) \
-                    .gte("created_at", (datetime.now() - timedelta(days=14)).isoformat()) \
+                    .gte("created_at", (datetime.now(timezone.utc) - timedelta(days=14)).isoformat()) \
                     .order("created_at", desc=True) \
                     .execute()
 
@@ -532,7 +532,7 @@ class AutomationAPI:
             return {
                 "connection_id": connection_id,
                 "next_runs": next_runs,
-                "generated_at": datetime.now().isoformat()
+                "generated_at": datetime.now(timezone.utc).isoformat()
             }
 
         except Exception as e:
@@ -589,7 +589,7 @@ class AutomationAPI:
                 interval_hours = 24
 
             interval_seconds = interval_hours * 3600
-            now = datetime.now()
+            now = datetime.now(timezone.utc)
 
             # Find the most recent completed or running job
             completed_jobs = []
@@ -750,7 +750,7 @@ class AutomationAPI:
         """
         interval_hours = config.get("interval_hours", 24)
         interval_seconds = interval_hours * 3600
-        now = datetime.now()
+        now = datetime.now(timezone.utc)
 
         # Find the most recent completed or running job
         completed_jobs = [job for job in recent_jobs if job["status"] in ["completed", "failed"]]

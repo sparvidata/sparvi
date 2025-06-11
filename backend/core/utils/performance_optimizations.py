@@ -3,6 +3,7 @@ import threading
 from functools import wraps
 from typing import Dict, Any, Callable, Tuple
 import logging
+from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
 
@@ -325,7 +326,7 @@ def batch_compare_schemas(connection_id, current_tables, previous_tables,
         changes.append({
             "type": "table_added",
             "table": table_name,
-            "timestamp": datetime.now().isoformat()
+            "timestamp": datetime.now(timezone.utc).isoformat()
         })
 
     removed_tables = set(previous_tables.keys()) - set(current_tables.keys())
@@ -333,7 +334,7 @@ def batch_compare_schemas(connection_id, current_tables, previous_tables,
         changes.append({
             "type": "table_removed",
             "table": table_name,
-            "timestamp": datetime.now().isoformat()
+            "timestamp": datetime.now(timezone.utc).isoformat()
         })
 
     # For detailed comparisons, only look at common tables and limit to batches

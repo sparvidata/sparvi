@@ -3,6 +3,7 @@
 import logging
 from enum import Enum
 from typing import Dict, Any, Optional
+from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
 
@@ -65,4 +66,4 @@ def publish_anomaly_event(event_type: AnomalyEventType,
 def get_current_timestamp() -> str:
     """Get current timestamp in ISO format"""
     from datetime import datetime
-    return datetime.now().isoformat()
+    return datetime.now(timezone.utc).isoformat()

@@ -3,7 +3,7 @@
 import logging
 import uuid
 from typing import Dict, Any, List, Optional
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from core.anomalies.detector import AnomalyDetector
 from core.anomalies.scheduler import AnomalyDetectionScheduler
@@ -98,8 +98,8 @@ class AnomalyAPI:
         validated_config["id"] = validated_config.get("id", str(uuid.uuid4()))
         validated_config["organization_id"] = organization_id
         validated_config["created_by"] = user_id
-        validated_config["created_at"] = datetime.now().isoformat()
-        validated_config["updated_at"] = datetime.now().isoformat()
+        validated_config["created_at"] = datetime.now(timezone.utc).isoformat()
+        validated_config["updated_at"] = datetime.now(timezone.utc).isoformat()
         validated_config["is_active"] = validated_config.get("is_active", True)
 
         # Insert into database
@@ -148,7 +148,7 @@ class AnomalyAPI:
         validated_config = self.detector.validate_config(merged_config)
 
         # Update metadata
-        validated_config["updated_at"] = datetime.now().isoformat()
+        validated_config["updated_at"] = datetime.now(timezone.utc).isoformat()
 
         # Update in database
         response = self.supabase.supabase.table("anomaly_detection_configs") \
@@ -228,7 +228,7 @@ class AnomalyAPI:
             List of anomaly dictionaries
         """
         # Calculate date range
-        start_date = (datetime.now() - timedelta(days=days)).isoformat()
+        start_date = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
 
         query = self.supabase.supabase.table("anomaly_results") \
             .select("*, anomaly_detection_configs(*)") \
@@ -303,7 +303,7 @@ class AnomalyAPI:
 
         # Set resolved info if status is 'resolved'
         if status == 'resolved':
-            update_data["resolved_at"] = datetime.now().isoformat()
+            update_data["resolved_at"] = datetime.now(timezone.utc).isoformat()
             update_data["resolved_by"] = user_id
 
         # Update in database
@@ -369,7 +369,7 @@ class AnomalyAPI:
             Summary dictionary
         """
         # Calculate date range
-        start_date = (datetime.now() - timedelta(days=days)).isoformat()
+        start_date = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
 
         # Get count by severity
         severity_query = f"""
@@ -428,7 +428,7 @@ class AnomalyAPI:
         WHERE 
             organization_id = '{organization_id}'
             AND connection_id = '{connection_id}'
-            AND detected_at >= '{datetime.now().date().isoformat()}'
+            AND detected_at >= '{datetime.now(timezone.utc).date().isoformat()}'
         """
 
         # Execute queries
@@ -582,7 +582,7 @@ class AnomalyAPI:
             List of daily trend dictionaries
         """
         # Calculate date range
-        start_date = (datetime.now() - timedelta(days=days)).isoformat()
+        start_date = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
 
         # Query for daily counts
         trends_query = f"""

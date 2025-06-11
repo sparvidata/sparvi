@@ -5,7 +5,7 @@ import logging
 import threading
 import traceback
 import schedule
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from core.anomalies.scheduler import AnomalyDetectionScheduler
 from core.storage.supabase_manager import SupabaseManager
@@ -173,7 +173,7 @@ class AnomalyDetectionSchedulerService:
         try:
             # In the MVP, we don't have a specific 'refresh_frequency' field yet,
             # so we'll just get all active configs that have been recently updated
-            cutoff_date = (datetime.now() - timedelta(days=1)).isoformat()
+            cutoff_date = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
 
             response = self.supabase.supabase.table("anomaly_detection_configs") \
                 .select("organization_id,connection_id,id") \

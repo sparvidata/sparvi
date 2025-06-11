@@ -57,7 +57,7 @@ class SchemaChangeDetector:
             changes.append({
                 "type": "table_added",
                 "table": table_name,
-                "timestamp": datetime.now().isoformat()
+                "timestamp": datetime.now(timezone.utc).isoformat()
             })
 
         # Find removed tables
@@ -65,7 +65,7 @@ class SchemaChangeDetector:
             changes.append({
                 "type": "table_removed",
                 "table": table_name,
-                "timestamp": datetime.now().isoformat()
+                "timestamp": datetime.now(timezone.utc).isoformat()
             })
 
         # Check column, primary key, foreign key and index changes in tables that exist in both schemas
@@ -169,7 +169,7 @@ class SchemaChangeDetector:
                     "type": col_info.get("type", "unknown"),
                     "nullable": col_info.get("nullable", None)
                 },
-                "timestamp": datetime.now().isoformat()
+                "timestamp": datetime.now(timezone.utc).isoformat()
             })
             logger.debug(f"Detected column_added: {col_info.get('name')}")
 
@@ -183,7 +183,7 @@ class SchemaChangeDetector:
                 "details": {
                     "type": col_info.get("type", "unknown")
                 },
-                "timestamp": datetime.now().isoformat()
+                "timestamp": datetime.now(timezone.utc).isoformat()
             })
             logger.debug(f"Detected column_removed: {col_info.get('name')}")
 
@@ -202,7 +202,7 @@ class SchemaChangeDetector:
                         "previous_type": previous_col.get("type", "unknown"),
                         "new_type": current_col.get("type", "unknown")
                     },
-                    "timestamp": datetime.now().isoformat()
+                    "timestamp": datetime.now(timezone.utc).isoformat()
                 })
                 logger.debug(f"Detected column_type_changed: {current_col.get('name')}")
 
@@ -216,7 +216,7 @@ class SchemaChangeDetector:
                         "previous_nullable": previous_col.get("nullable", None),
                         "new_nullable": current_col.get("nullable", None)
                     },
-                    "timestamp": datetime.now().isoformat()
+                    "timestamp": datetime.now(timezone.utc).isoformat()
                 })
                 logger.debug(f"Detected column_nullability_changed: {current_col.get('name')}")
 
@@ -257,7 +257,7 @@ class SchemaChangeDetector:
                 "details": {
                     "columns": current_pk
                 },
-                "timestamp": datetime.now().isoformat()
+                "timestamp": datetime.now(timezone.utc).isoformat()
             })
             return changes
 
@@ -269,7 +269,7 @@ class SchemaChangeDetector:
                 "details": {
                     "columns": previous_pk
                 },
-                "timestamp": datetime.now().isoformat()
+                "timestamp": datetime.now(timezone.utc).isoformat()
             })
             return changes
 
@@ -282,7 +282,7 @@ class SchemaChangeDetector:
                     "previous_columns": previous_pk,
                     "new_columns": current_pk
                 },
-                "timestamp": datetime.now().isoformat()
+                "timestamp": datetime.now(timezone.utc).isoformat()
             })
 
         return changes
@@ -331,7 +331,7 @@ class SchemaChangeDetector:
                     "referred_table": fk.get("referred_table", ""),
                     "referred_columns": fk.get("referred_columns", [])
                 },
-                "timestamp": datetime.now().isoformat()
+                "timestamp": datetime.now(timezone.utc).isoformat()
             })
 
         # Find removed foreign keys
@@ -345,7 +345,7 @@ class SchemaChangeDetector:
                     "referred_table": fk.get("referred_table", ""),
                     "referred_columns": fk.get("referred_columns", [])
                 },
-                "timestamp": datetime.now().isoformat()
+                "timestamp": datetime.now(timezone.utc).isoformat()
             })
 
         # Check for foreign key changes
@@ -404,7 +404,7 @@ class SchemaChangeDetector:
                     "columns": idx.get("columns", []),
                     "unique": idx.get("unique", False)
                 },
-                "timestamp": datetime.now().isoformat()
+                "timestamp": datetime.now(timezone.utc).isoformat()
             })
 
         # Find removed indexes
@@ -418,7 +418,7 @@ class SchemaChangeDetector:
                     "columns": idx.get("columns", []),
                     "unique": idx.get("unique", False)
                 },
-                "timestamp": datetime.now().isoformat()
+                "timestamp": datetime.now(timezone.utc).isoformat()
             })
 
         # Check for changed indexes with the same name but different definition
@@ -446,7 +446,7 @@ class SchemaChangeDetector:
                             "previous_unique": previous_idx.get("unique", False),
                             "new_unique": current_idx.get("unique", False)
                         },
-                        "timestamp": datetime.now().isoformat()
+                        "timestamp": datetime.now(timezone.utc).isoformat()
                     })
 
         return changes
@@ -667,7 +667,7 @@ class SchemaChangeDetector:
                 logger.warning("No organization ID found, cannot store schema changes.")
                 return
 
-            current_time = datetime.now().isoformat()
+            current_time = datetime.now(timezone.utc).isoformat()
             stored_count = 0
             skipped_count = 0
 
@@ -682,7 +682,7 @@ class SchemaChangeDetector:
                                  (f".{column_name}" if column_name else ""))
 
                     # Check if this exact change already exists (within the last day)
-                    yesterday = (datetime.now() - timedelta(days=1)).isoformat()
+                    yesterday = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
 
                     query = supabase_manager.supabase.table("schema_changes") \
                         .select("id", count="exact") \

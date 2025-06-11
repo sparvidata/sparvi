@@ -1,6 +1,6 @@
 from flask import Blueprint, request, jsonify
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 
 from .api import AutomationAPI
 
@@ -510,7 +510,7 @@ def register_automation_routes(app, token_required):
 
             return jsonify({
                 "next_runs_by_connection": all_next_runs,
-                "generated_at": datetime.now().isoformat()
+                "generated_at": datetime.now(timezone.utc).isoformat()
             }), 200
 
         except Exception as e:

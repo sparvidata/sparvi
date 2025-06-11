@@ -3,7 +3,7 @@
 import logging
 import uuid
 from typing import Dict, Any, List, Optional
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 logger = logging.getLogger(__name__)
 
@@ -53,7 +53,7 @@ class HistoricalMetricsTracker:
                 "column_name": column_name,
                 "metric_name": metric_name,
                 "metric_type": metric_type,
-                "timestamp": datetime.now().isoformat()
+                "timestamp": datetime.now(timezone.utc).isoformat()
             }
 
             # Set value based on type
@@ -110,7 +110,7 @@ class HistoricalMetricsTracker:
                     "table_name": metric.get("table_name"),
                     "column_name": metric.get("column_name"),
                     "metric_type": metric.get("type", "system"),
-                    "timestamp": datetime.now().isoformat(),
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
                     "source": metric.get("source", "system")
                 }
 
@@ -159,7 +159,7 @@ class HistoricalMetricsTracker:
         """
         try:
             # Calculate date range
-            start_date = (datetime.now() - timedelta(days=days)).isoformat()
+            start_date = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
 
             # Build query
             query = self.supabase.supabase.table("historical_metrics") \

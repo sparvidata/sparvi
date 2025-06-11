@@ -2,7 +2,7 @@ import logging
 import uuid
 import threading
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, Any, List, Optional
 from concurrent.futures import ThreadPoolExecutor, Future
 import schedule
@@ -166,7 +166,7 @@ class AutomationScheduler:
         """Check if a job should be scheduled based on last run time"""
         try:
             # Get last completed job of this type for this connection
-            cutoff_time = (datetime.now() - timedelta(hours=interval_hours)).isoformat()
+            cutoff_time = (datetime.now(timezone.utc) - timedelta(hours=interval_hours)).isoformat()
 
             response = self.supabase.supabase.table("automation_jobs") \
                 .select("completed_at") \
@@ -194,7 +194,7 @@ class AutomationScheduler:
                 "connection_id": connection_id,
                 "job_type": "metadata_refresh",
                 "status": "scheduled",
-                "scheduled_at": datetime.now().isoformat(),
+                "scheduled_at": datetime.now(timezone.utc).isoformat(),
                 "job_config": config
             }
 
@@ -220,7 +220,7 @@ class AutomationScheduler:
                 "connection_id": connection_id,
                 "job_type": "schema_detection",
                 "status": "scheduled",
-                "scheduled_at": datetime.now().isoformat(),
+                "scheduled_at": datetime.now(timezone.utc).isoformat(),
                 "job_config": config
             }
 
@@ -246,7 +246,7 @@ class AutomationScheduler:
                 "connection_id": connection_id,
                 "job_type": "validation_run",
                 "status": "scheduled",
-                "scheduled_at": datetime.now().isoformat(),
+                "scheduled_at": datetime.now(timezone.utc).isoformat(),
                 "job_config": config
             }
 
@@ -265,7 +265,7 @@ class AutomationScheduler:
         """Execute a metadata refresh job"""
         try:
             # Update job status to running
-            self._update_job_status(job_id, "running", started_at=datetime.now().isoformat())
+            self._update_job_status(job_id, "running", started_at=datetime.now(timezone.utc).isoformat())
 
             # Import metadata manager
             from core.metadata.manager import MetadataTaskManager
@@ -295,7 +295,7 @@ class AutomationScheduler:
             # Update job status to completed
             self._update_job_status(
                 job_id, "completed",
-                completed_at=datetime.now().isoformat(),
+                completed_at=datetime.now(timezone.utc).isoformat(),
                 result_summary=results
             )
 
@@ -318,7 +318,7 @@ class AutomationScheduler:
         """Execute a schema change detection job"""
         try:
             # Update job status to running
-            self._update_job_status(job_id, "running", started_at=datetime.now().isoformat())
+            self._update_job_status(job_id, "running", started_at=datetime.now(timezone.utc).isoformat())
 
             # Import schema change detector
             from core.metadata.schema_change_detector import SchemaChangeDetector
@@ -350,7 +350,7 @@ class AutomationScheduler:
                             self.supabase.supabase.table("schema_changes") \
                                 .update({
                                 "acknowledged": True,
-                                "acknowledged_at": datetime.now().isoformat(),
+                                "acknowledged_at": datetime.now(timezone.utc).isoformat(),
                                 "acknowledged_by": "automation"
                             }) \
                                 .eq("connection_id", connection_id) \
@@ -366,7 +366,7 @@ class AutomationScheduler:
             # Update job status to completed
             self._update_job_status(
                 job_id, "completed",
-                completed_at=datetime.now().isoformat(),
+                completed_at=datetime.now(timezone.utc).isoformat(),
                 result_summary=results
             )
 
@@ -390,7 +390,7 @@ class AutomationScheduler:
         """Execute a validation automation job"""
         try:
             # Update job status to running
-            self._update_job_status(job_id, "running", started_at=datetime.now().isoformat())
+            self._update_job_status(job_id, "running", started_at=datetime.now(timezone.utc).isoformat())
 
             # Get connection details
             connection = self.supabase.get_connection(connection_id)
@@ -458,7 +458,7 @@ class AutomationScheduler:
             # Update job status to completed
             self._update_job_status(
                 job_id, "completed",
-                completed_at=datetime.now().isoformat(),
+                completed_at=datetime.now(timezone.utc).isoformat(),
                 result_summary=results
             )
 
@@ -521,7 +521,7 @@ class AutomationScheduler:
         """Clean up old completed/failed jobs"""
         try:
             # Delete jobs older than 30 days
-            cutoff_date = (datetime.now() - timedelta(days=30)).isoformat()
+            cutoff_date = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
 
             self.supabase.supabase.table("automation_jobs") \
                 .delete() \

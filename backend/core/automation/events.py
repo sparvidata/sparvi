@@ -1,7 +1,7 @@
 import logging
 from enum import Enum
 from typing import Dict, Any, Optional
-from datetime import datetime
+from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
 
@@ -53,7 +53,7 @@ def publish_automation_event(event_type: AutomationEventType,
             "connection_id": connection_id,
             "organization_id": organization_id,
             "user_id": user_id,
-            "timestamp": datetime.now().isoformat()
+            "timestamp": datetime.now(timezone.utc).isoformat()
         }
 
         # Log the event
@@ -199,7 +199,7 @@ class AutomationEventHandler:
                 "action_required": notification_data.get("action_required", False),
                 "data": notification_data.get("details", {}),
                 "read": False,
-                "created_at": datetime.now().isoformat()
+                "created_at": datetime.now(timezone.utc).isoformat()
             }
 
             # Insert into notifications table
