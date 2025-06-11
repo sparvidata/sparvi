@@ -455,3 +455,82 @@ def register_automation_routes(app, token_required):
             return jsonify({"error": str(e)}), 500
 
     logger.info("Automation routes registered successfully")
+
+    # Add these routes to backend/core/automation/routes.py
+
+    @app.route("/api/automation/connections/<connection_id>/next-runs", methods=["GET"])
+    @token_required
+    def get_connection_next_runs(current_user, organization_id, connection_id):
+        """Get next run times for a specific connection"""
+        try:
+            # Verify connection belongs to organization
+            connection_response = automation_api.supabase.supabase.table("database_connections") \
+                .select("id") \
+                .eq("id", connection_id) \
+                .eq("organization_id", organization_id) \
+                .execute()
+
+            if not connection_response.data:
+                return jsonify({"error": "Connection not found"}), 404
+
+            next_runs = automation_api.get_next_run_times(organization_id, connection_id)
+            return jsonify(next_runs), 200
+
+        except Exception as e:
+            logger.error(f"Error getting connection next runs: {str(e)}")
+            return jsonify({"error": str(e)}), 500
+
+    @app.route("/api/automation/next-runs", methods=["GET"])
+    @token_required
+    def get_all_next_runs(current_user, organization_id):
+        """Get next run times for all connections in the organization"""
+        try:
+            # Get all connections for the organization
+            connections_response = automation_api.supabase.supabase.table("database_connections") \
+                .select("id, name") \
+                .eq("organization_id", organization_id) \
+                .execute()
+
+            if not connections_response.data:
+                return jsonify({"connections": [], "message": "No connections found"}), 200
+
+            all_next_runs = {}
+
+            for connection in connections_response.data:
+                connection_id = connection["id"]
+                connection_name = connection["name"]
+
+                next_runs_data = automation_api.get_next_run_times(organization_id, connection_id)
+
+                if next_runs_data.get("next_runs"):
+                    all_next_runs[connection_id] = {
+                        "connection_name": connection_name,
+                        "next_runs": next_runs_data["next_runs"]
+                    }
+
+            return jsonify({
+                "next_runs_by_connection": all_next_runs,
+                "generated_at": datetime.now().isoformat()
+            }), 200
+
+        except Exception as e:
+            logger.error(f"Error getting all next runs: {str(e)}")
+            return jsonify({"error": str(e)}), 500
+
+    @app.route("/api/automation/status-enhanced", methods=["GET"])
+    @token_required
+    def get_enhanced_automation_status(current_user, organization_id):
+        """Get automation status with next run times included"""
+        try:
+            connection_id = request.args.get("connection_id")
+
+            status = automation_api.get_automation_status_with_next_runs(
+                organization_id=organization_id,
+                connection_id=connection_id
+            )
+
+            return jsonify({"status": status}), 200
+
+        except Exception as e:
+            logger.error(f"Error getting enhanced automation status: {str(e)}")
+            return jsonify({"error": str(e)}), 500

@@ -837,23 +837,38 @@ def init_metadata_task_manager():
 
 
 def init_automation_system():
-    """Initialize the automation system"""
+    """Initialize the automation system with detailed logging"""
+    logger.info("Starting automation system initialization...")
+
     try:
+        logger.info("Calling initialize_automation_system()...")
         automation_success = initialize_automation_system()
+
+        logger.info(f"Automation initialization result: {automation_success}")
+
         if automation_success:
-            logger.info("✅ Automation system started successfully")
+            logger.info("Automation system started successfully")
 
             # Integrate with existing metadata system
+            logger.info("Integrating automation with metadata system...")
             integration_success = integrate_with_metadata_system()
+
             if integration_success:
-                logger.info("✅ Automation integrated with metadata system")
+                logger.info("Automation integrated with metadata system")
             else:
-                logger.warning("⚠️ Automation metadata integration failed")
+                logger.warning("Automation metadata integration failed")
         else:
-            logger.warning("⚠️ Automation system failed to start")
-    except Exception as e:
-        logger.error(f"Error initializing automation system: {str(e)}")
+            logger.error("Automation system failed to start")
+
+    except ImportError as e:
+        logger.error(f"Import error in automation system: {str(e)}")
+        logger.error("This usually means missing dependencies or module path issues")
         logger.error(traceback.format_exc())
+    except Exception as e:
+        logger.error(f"Unexpected error initializing automation system: {str(e)}")
+        logger.error(traceback.format_exc())
+
+    logger.info("Automation system initialization complete")
 
 
 def setup_comprehensive_logging():
@@ -1054,7 +1069,8 @@ metadata_task_queue = queue.Queue()
 threading.Timer(5.0, init_metadata_task_manager).start()  # 5-second delay to ensure other services are ready
 
 # Initialize automation with a delay to ensure other services are ready
-threading.Timer(6.0, init_automation_system).start()
+logger.info("Initializing automation system...")
+init_automation_system()
 
 optimized_classes = apply_performance_optimizations()
 
@@ -6517,6 +6533,16 @@ def batch_requests():
 
     return jsonify({"results": results})
 
+@app.route('/test/start-automation')
+def test_start_automation():
+    """Test endpoint to manually start automation - REMOVE IN PRODUCTION"""
+    try:
+        logger.info("Manual automation startup triggered via test endpoint")
+        init_automation_system()
+        return jsonify({"message": "Automation startup attempted - check logs"})
+    except Exception as e:
+        logger.error(f"Error in manual automation startup: {str(e)}")
+        return jsonify({"error": str(e)}), 500
 
 @app.after_request
 def after_request_cors(response):

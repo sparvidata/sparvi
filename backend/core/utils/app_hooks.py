@@ -28,20 +28,33 @@ def initialize_automation_system():
         success = _automation_service.start()
 
         if success:
-            logger.info("✅ Automation system started successfully")
+            logger.info("Automation system started successfully")
 
-            # Register cleanup handlers
-            atexit.register(cleanup_automation_system)
-            signal.signal(signal.SIGTERM, _signal_handler)
-            signal.signal(signal.SIGINT, _signal_handler)
+            # Only register signal handlers if we're in the main thread
+            try:
+                import threading
+                if threading.current_thread() is threading.main_thread():
+                    # Register cleanup handlers only in main thread
+                    atexit.register(cleanup_automation_system)
+                    signal.signal(signal.SIGTERM, _signal_handler)
+                    signal.signal(signal.SIGINT, _signal_handler)
+                    logger.info("Signal handlers registered successfully")
+                else:
+                    logger.warning("Skipping signal handler registration (not in main thread)")
+                    # Just register atexit cleanup which works from any thread
+                    atexit.register(cleanup_automation_system)
+            except Exception as signal_error:
+                logger.warning(f"Could not register signal handlers: {signal_error}")
+                # Still register atexit cleanup
+                atexit.register(cleanup_automation_system)
 
         else:
-            logger.warning("⚠️ Automation system failed to start")
+            logger.warning("Automation system failed to start")
 
         return success
 
     except Exception as e:
-        logger.error(f"❌ Error initializing automation system: {str(e)}")
+        logger.error(f"Error initializing automation system: {str(e)}")
         return False
 
 
@@ -56,10 +69,10 @@ def cleanup_automation_system():
         if _automation_service and _automation_service.is_running():
             logger.info("Shutting down automation system...")
             _automation_service.stop()
-            logger.info("✅ Automation system shutdown complete")
+            logger.info("Automation system shutdown complete")
 
     except Exception as e:
-        logger.error(f"❌ Error during automation cleanup: {str(e)}")
+        logger.error(f"Error during automation cleanup: {str(e)}")
 
 
 def get_automation_health():
@@ -118,9 +131,9 @@ def restart_automation_system():
         success = _automation_service.restart()
 
         if success:
-            logger.info("✅ Automation system restarted successfully")
+            logger.info("Automation system restarted successfully")
         else:
-            logger.error("❌ Failed to restart automation system")
+            logger.error("Failed to restart automation system")
 
         return success
 
@@ -201,11 +214,11 @@ def integrate_with_metadata_system():
         supabase_manager = SupabaseManager()
         set_event_handler_supabase(supabase_manager)
 
-        logger.info("✅ Automation system integrated with metadata system")
+        logger.info("Automation system integrated with metadata system")
         return True
 
     except Exception as e:
-        logger.error(f"❌ Error integrating automation with metadata system: {str(e)}")
+        logger.error(f"Error integrating automation with metadata system: {str(e)}")
         return False
 
 

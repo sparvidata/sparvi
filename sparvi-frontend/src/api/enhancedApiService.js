@@ -1519,6 +1519,76 @@ export const automationAPI = {
     });
   },
 
+  // Get next run times for a specific connection
+  getNextRunTimes: (connectionId, options = {}) => {
+    const { forceFresh = false, requestId = `automation.nextRuns.${connectionId}` } = options;
+
+    if (!connectionId) {
+      console.warn('getNextRunTimes called without connectionId');
+      return Promise.resolve({ next_runs: {} });
+    }
+
+    return enhancedRequest({
+      url: `/automation/connections/${connectionId}/next-runs`,
+      cacheKey: `automation.nextRuns.${connectionId}`,
+      cacheTTL: 1 * 60 * 1000, // 1 minute cache - next runs change frequently
+      requestId,
+      forceFresh
+    }).catch(error => {
+      console.error(`Error fetching next run times for connection ${connectionId}:`, error);
+      // Return a safe default instead of throwing
+      return {
+        connection_id: connectionId,
+        next_runs: {},
+        error: error.message || 'Failed to load next run times'
+      };
+    });
+  },
+
+  // Get next run times for all connections
+  getAllNextRunTimes: (options = {}) => {
+    const { forceFresh = false, requestId = 'automation.allNextRuns' } = options;
+    return enhancedRequest({
+      url: '/automation/next-runs',
+      cacheKey: 'automation.allNextRuns',
+      cacheTTL: 1 * 60 * 1000, // 1 minute cache
+      requestId,
+      forceFresh
+    }).catch(error => {
+      console.error('Error fetching all next run times:', error);
+      // Return a safe default instead of throwing
+      return {
+        next_runs_by_connection: {},
+        error: error.message || 'Failed to load next run times'
+      };
+    });
+  },
+
+  // Enhanced status with next run times
+  getEnhancedStatus: (connectionId = null, options = {}) => {
+    const { forceFresh = false } = options;
+
+    const params = {};
+    if (connectionId) params.connection_id = connectionId;
+
+    const requestId = connectionId
+      ? `automation.enhancedStatus.${connectionId}`
+      : 'automation.enhancedStatus.all';
+
+    const cacheKey = connectionId
+      ? `automation.enhancedStatus.${connectionId}`
+      : 'automation.enhancedStatus.all';
+
+    return enhancedRequest({
+      url: '/automation/status-enhanced',
+      params,
+      cacheKey,
+      cacheTTL: 1 * 60 * 1000, // 1 minute cache
+      requestId,
+      forceFresh
+    });
+  },
+
   // Connection Configuration
   getConnectionConfigs: (options = {}) => {
     const { forceFresh = false, requestId = 'automation.connectionConfigs.getAll' } = options;

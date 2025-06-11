@@ -1,6 +1,10 @@
+// COMPLETE REPLACEMENT for your RefreshControls.js component
+
 import React from 'react';
+import { Link } from 'react-router-dom';
 import { useUI } from '../../../contexts/UIContext';
 import { useAutomationStatus } from '../../../hooks/useAutomationStatus';
+import { useNextRunTimes } from '../../../hooks/useNextRunTimes';
 import LoadingSpinner from '../../../components/common/LoadingSpinner';
 import ColumnsIcon from '../../../components/icons/ColumnsIcon';
 import {
@@ -11,9 +15,9 @@ import {
   ClockIcon,
   PlayIcon,
   PauseIcon,
-  Cog6ToothIcon
+  Cog6ToothIcon,
+  CalendarIcon
 } from '@heroicons/react/24/outline';
-import { Link } from 'react-router-dom';
 
 const RefreshControls = ({
   connectionId,
@@ -26,6 +30,7 @@ const RefreshControls = ({
 }) => {
   const { showNotification } = useUI();
   const { status: automationStatus, toggleAutomation, triggerManualRun, loading: statusLoading } = useAutomationStatus(connectionId);
+  const { nextRuns, loading: nextRunsLoading, refresh: refreshNextRuns } = useNextRunTimes(connectionId);
 
   // Refresh a specific type of metadata
   const handleRefresh = (type) => {
@@ -72,6 +77,8 @@ const RefreshControls = ({
         `Metadata automation ${!automationStatus.connection_config?.metadata_refresh?.enabled ? 'enabled' : 'disabled'}`,
         'success'
       );
+      // Refresh next runs after toggling
+      refreshNextRuns();
     } else {
       showNotification('Failed to toggle metadata automation', 'error');
     }
@@ -85,6 +92,8 @@ const RefreshControls = ({
         `Schema change detection ${!automationStatus.connection_config?.schema_change_detection?.enabled ? 'enabled' : 'disabled'}`,
         'success'
       );
+      // Refresh next runs after toggling
+      refreshNextRuns();
     } else {
       showNotification('Failed to toggle schema automation', 'error');
     }
@@ -134,37 +143,42 @@ const RefreshControls = ({
   const metadataAutomation = getAutomationStatus('metadata_refresh');
   const schemaAutomation = getAutomationStatus('schema_change_detection');
 
+  // Format time until next run
+  const formatTimeUntil = (nextRunData) => {
+    if (!nextRunData) return null;
+
+    if (nextRunData.currently_running) return 'Running now';
+    if (nextRunData.is_overdue) return 'Overdue';
+    return nextRunData.time_until_next;
+  };
+
   return (
     <div className="space-y-4">
       {/* Automation Status Panel */}
       <div className="bg-white border border-secondary-200 rounded-lg p-4">
-          <div className="flex items-center justify-between mb-3">
-            <h4 className="text-sm font-medium text-secondary-900 flex items-center">
-              <ClockIcon className="h-4 w-4 mr-2" />
-              Automation Status
-            </h4>
-            <Link
-              to="/settings/automation"
-              className="text-xs text-primary-600 hover:text-primary-700 flex items-center"
-            >
-              <Cog6ToothIcon className="h-3 w-3 mr-1" />
-              Configure
-            </Link>
-          </div>
+        <div className="flex items-center justify-between mb-3">
+          <h4 className="text-sm font-medium text-secondary-900 flex items-center">
+            <ClockIcon className="h-4 w-4 mr-2" />
+            Automation Status
+          </h4>
+          <Link
+            to="/settings/automation"
+            className="text-xs text-primary-600 hover:text-primary-700 flex items-center"
+          >
+            <Cog6ToothIcon className="h-3 w-3 mr-1" />
+            Configure
+          </Link>
+        </div>
 
-          <div className="space-y-3">
-            {/* Metadata Automation */}
+        <div className="space-y-3">
+          {/* Metadata Automation */}
+          <div className="space-y-1">
             <div className="flex items-center justify-between">
               <div className="flex items-center">
                 <span className="text-xs text-secondary-700">Metadata Refresh</span>
                 {metadataAutomation.enabled && metadataAutomation.interval && !metadataAutomation.loading && (
                   <span className="ml-2 text-xs text-secondary-500">
                     (Every {metadataAutomation.interval}h)
-                  </span>
-                )}
-                {metadataAutomation.lastRun && !metadataAutomation.loading && (
-                  <span className="ml-2 text-xs text-secondary-400">
-                    Last: {new Date(metadataAutomation.lastRun).toLocaleDateString()}
                   </span>
                 )}
               </div>
@@ -181,7 +195,6 @@ const RefreshControls = ({
 
                 {/* Enhanced Toggle Button with Loading State */}
                 {metadataAutomation.loading ? (
-                  // Loading skeleton
                   <div className="flex items-center px-2 py-1 rounded text-xs font-medium bg-secondary-100">
                     <div className="flex items-center">
                       <div className="animate-spin h-3 w-3 border border-secondary-400 border-t-transparent rounded-full mr-1"></div>
@@ -189,7 +202,6 @@ const RefreshControls = ({
                     </div>
                   </div>
                 ) : (
-                  // Actual toggle
                   <button
                     onClick={handleToggleMetadataAutomation}
                     disabled={statusLoading}
@@ -215,18 +227,49 @@ const RefreshControls = ({
               </div>
             </div>
 
-            {/* Schema Change Detection */}
+            {/* Next Run Time for Metadata */}
+            {metadataAutomation.enabled && !metadataAutomation.loading && (
+              <div className="ml-0 text-xs">
+                {nextRunsLoading ? (
+                  <div className="text-secondary-400 flex items-center">
+                    <LoadingSpinner size="xs" className="mr-1" />
+                    Loading next run...
+                  </div>
+                ) : nextRuns.metadata_refresh ? (
+                  <div className={`flex items-center ${
+                    nextRuns.metadata_refresh.is_overdue 
+                      ? 'text-warning-600' 
+                      : nextRuns.metadata_refresh.currently_running
+                      ? 'text-primary-600'
+                      : 'text-secondary-500'
+                  }`}>
+                    <CalendarIcon className="h-3 w-3 mr-1" />
+                    {nextRuns.metadata_refresh.currently_running ? (
+                      'Currently running'
+                    ) : nextRuns.metadata_refresh.is_overdue ? (
+                      'Next run overdue'
+                    ) : (
+                      `Next: ${nextRuns.metadata_refresh.time_until_next}`
+                    )}
+                  </div>
+                ) : (
+                  <div className="text-secondary-400 flex items-center">
+                    <CalendarIcon className="h-3 w-3 mr-1" />
+                    Calculating next run...
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* Schema Change Detection */}
+          <div className="space-y-1">
             <div className="flex items-center justify-between">
               <div className="flex items-center">
                 <span className="text-xs text-secondary-700">Schema Detection</span>
                 {schemaAutomation.enabled && schemaAutomation.interval && !schemaAutomation.loading && (
                   <span className="ml-2 text-xs text-secondary-500">
                     (Every {schemaAutomation.interval}h)
-                  </span>
-                )}
-                {schemaAutomation.lastRun && !schemaAutomation.loading && (
-                  <span className="ml-2 text-xs text-secondary-400">
-                    Last: {new Date(schemaAutomation.lastRun).toLocaleDateString()}
                   </span>
                 )}
               </div>
@@ -243,7 +286,6 @@ const RefreshControls = ({
 
                 {/* Enhanced Toggle Button with Loading State */}
                 {schemaAutomation.loading ? (
-                  // Loading skeleton
                   <div className="flex items-center px-2 py-1 rounded text-xs font-medium bg-secondary-100">
                     <div className="flex items-center">
                       <div className="animate-spin h-3 w-3 border border-secondary-400 border-t-transparent rounded-full mr-1"></div>
@@ -251,7 +293,6 @@ const RefreshControls = ({
                     </div>
                   </div>
                 ) : (
-                  // Actual toggle
                   <button
                     onClick={handleToggleSchemaAutomation}
                     disabled={statusLoading}
@@ -277,25 +318,60 @@ const RefreshControls = ({
               </div>
             </div>
 
-            {/* Global automation disabled warning */}
-            {!automationStatus.global_enabled && (
-              <div className="mt-2 p-2 bg-warning-50 border border-warning-200 rounded flex items-start">
-                <ExclamationTriangleIcon className="h-4 w-4 text-warning-400 mr-2 mt-0.5" />
-                <div>
-                  <p className="text-xs text-warning-800">
-                    Global automation is disabled.
-                  </p>
-                  <Link
-                    to="/settings/automation"
-                    className="text-xs text-warning-600 hover:text-warning-700 underline"
-                  >
-                    Enable in settings →
-                  </Link>
-                </div>
+            {/* Next Run Time for Schema Detection */}
+            {schemaAutomation.enabled && !schemaAutomation.loading && (
+              <div className="ml-0 text-xs">
+                {nextRunsLoading ? (
+                  <div className="text-secondary-400 flex items-center">
+                    <LoadingSpinner size="xs" className="mr-1" />
+                    Loading next run...
+                  </div>
+                ) : nextRuns.schema_change_detection ? (
+                  <div className={`flex items-center ${
+                    nextRuns.schema_change_detection.is_overdue 
+                      ? 'text-warning-600' 
+                      : nextRuns.schema_change_detection.currently_running
+                      ? 'text-primary-600'
+                      : 'text-secondary-500'
+                  }`}>
+                    <CalendarIcon className="h-3 w-3 mr-1" />
+                    {nextRuns.schema_change_detection.currently_running ? (
+                      'Currently running'
+                    ) : nextRuns.schema_change_detection.is_overdue ? (
+                      'Next run overdue'
+                    ) : (
+                      `Next: ${nextRuns.schema_change_detection.time_until_next}`
+                    )}
+                  </div>
+                ) : (
+                  <div className="text-secondary-400 flex items-center">
+                    <CalendarIcon className="h-3 w-3 mr-1" />
+                    Calculating next run...
+                  </div>
+                )}
               </div>
             )}
           </div>
+
+          {/* Global automation disabled warning */}
+          {!automationStatus.global_enabled && (
+            <div className="mt-2 p-2 bg-warning-50 border border-warning-200 rounded flex items-start">
+              <ExclamationTriangleIcon className="h-4 w-4 text-warning-400 mr-2 mt-0.5" />
+              <div>
+                <p className="text-xs text-warning-800">
+                  Global automation is disabled.
+                </p>
+                <Link
+                  to="/settings/automation"
+                  className="text-xs text-warning-600 hover:text-warning-700 underline"
+                >
+                  Enable in settings →
+                </Link>
+              </div>
+            </div>
+          )}
         </div>
+      </div>
 
       {/* Manual Refresh Controls */}
       <div>
