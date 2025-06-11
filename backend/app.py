@@ -1066,7 +1066,27 @@ metadata_storage = MetadataStorage()
 
 task_executor = ThreadPoolExecutor(max_workers=5)
 metadata_task_queue = queue.Queue()
-threading.Timer(5.0, init_metadata_task_manager).start()  # 5-second delay to ensure other services are ready
+
+def delayed_initialization():
+    """Initialize services with proper error handling"""
+    try:
+        # Initialize metadata task manager first
+        init_metadata_task_manager()
+
+        # Small delay between services
+        time.sleep(2)
+
+        # Initialize automation system
+        init_automation_system()
+
+        logger.info("All background services initialized successfully")
+    except Exception as e:
+        logger.error(f"Error in delayed initialization: {str(e)}")
+        logger.error(traceback.format_exc())
+
+
+# Start with longer delay
+threading.Timer(10.0, delayed_initialization).start()
 
 # Initialize automation with a delay to ensure other services are ready
 logger.info("Initializing automation system...")
@@ -1075,7 +1095,47 @@ init_automation_system()
 optimized_classes = apply_performance_optimizations()
 
 
-# Add automation health check endpoints
+@app.route('/health')
+def health_check():
+    """Main application health check"""
+    try:
+        health_status = {
+            "status": "healthy",
+            "timestamp": datetime.now().isoformat(),
+            "services": {}
+        }
+
+        # Check automation health
+        try:
+            from core.utils.app_hooks import get_automation_health
+            automation_health = get_automation_health()
+            health_status["services"]["automation"] = {
+                "healthy": automation_health.get("healthy", False),
+                "status": automation_health.get("status", {})
+            }
+        except Exception as e:
+            health_status["services"]["automation"] = {
+                "healthy": False,
+                "error": str(e)
+            }
+
+        # Determine overall health
+        all_healthy = all(
+            service.get("healthy", False)
+            for service in health_status["services"].values()
+        )
+
+        if not all_healthy:
+            health_status["status"] = "degraded"
+
+        return jsonify(health_status), 200 if all_healthy else 503
+
+    except Exception as e:
+        return jsonify({
+            "status": "unhealthy",
+            "error": str(e)
+        }), 503
+
 @app.route('/health/automation')
 def automation_health():
     """Health check endpoint for automation system"""
@@ -1096,6 +1156,28 @@ def automation_health_detailed(current_user, organization_id):
     health_result, status_code = automation_health_endpoint()
     return jsonify(health_result), status_code
 
+
+@app.route('/health/automation/persistence')
+@token_required
+def automation_persistence_check(current_user, organization_id):
+    """Check how long automation has been running"""
+    try:
+        from core.utils.app_hooks import get_automation_health
+        health = get_automation_health()
+
+        # Add uptime information
+        if health.get("healthy"):
+            status = health.get("status", {})
+            # Add worker process info
+            import os
+            health["worker_info"] = {
+                "process_id": os.getpid(),
+                "worker_started": os.environ.get('WORKER_START_TIME', 'unknown')
+            }
+
+        return jsonify(health), 200 if health["healthy"] else 503
+    except Exception as e:
+        return jsonify({"healthy": False, "error": str(e)}), 503
 
 @app.route('/admin/automation/<action>', methods=['POST'])
 @token_required

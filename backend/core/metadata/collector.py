@@ -2,7 +2,7 @@ import logging
 import uuid
 import time
 import asyncio
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import json
 from typing import List, Dict, Any, Optional, Tuple
 
@@ -159,7 +159,7 @@ class MetadataCollector:
                 "indices": indices,
                 "row_count": row_count,
                 "column_statistics": column_stats,
-                "collected_at": datetime.datetime.now(datetime.timezone.utc).isoformat()
+                "collected_at": datetime.now(timezone.utc).isoformat()
             }
 
             logger.info(f"Successfully collected metadata for table {table_name}")
@@ -169,7 +169,7 @@ class MetadataCollector:
             return {
                 "table_name": table_name,
                 "error": str(e),
-                "collected_at": datetime.datetime.now(datetime.timezone.utc).isoformat()
+                "collected_at": datetime.now(timezone.utc).isoformat()
             }
 
     def _collect_column_statistics(self, table_name, column_name, column_type):
@@ -289,20 +289,20 @@ class MetadataCollector:
                         "access_count": result[0][0],
                         "last_accessed": result[0][1].isoformat() if hasattr(result[0][1], 'isoformat') else str(
                             result[0][1]),
-                        "collected_at": datetime.datetime.now(datetime.timezone.utc).isoformat()
+                        "collected_at": datetime.now(timezone.utc).isoformat()
                     }
 
             # Default empty result if not supported or no data
             return {
                 "access_count": 0,
                 "last_accessed": None,
-                "collected_at": datetime.datetime.now(datetime.timezone.utc).isoformat()
+                "collected_at": datetime.now(timezone.utc).isoformat()
             }
         except Exception as e:
             logger.warning(f"Error collecting usage patterns for {table_name}: {str(e)}")
             return {
                 "error": str(e),
-                "collected_at": datetime.datetime.now(datetime.timezone.utc).isoformat()
+                "collected_at": datetime.now(timezone.utc).isoformat()
             }
 
     def collect_comprehensive_metadata(self, table_limit=50, depth="medium"):
@@ -339,7 +339,7 @@ class MetadataCollector:
                 "connection_id": self.connection_id,
                 "tables_found": len(tables),
                 "tables_processed": len(tables_to_process),
-                "start_time": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                "start_time": datetime.now(timezone.utc).isoformat(),
                 "depth": depth
             }
         }
@@ -409,7 +409,7 @@ class MetadataCollector:
                 # Continue with next table
 
         # Collection completion timestamp
-        results["collection_metadata"]["end_time"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        results["collection_metadata"]["end_time"] = datetime.now(timezone.utc).isoformat()
         duration = datetime.fromisoformat(results["collection_metadata"]["end_time"]) - \
                    datetime.fromisoformat(results["collection_metadata"]["start_time"])
         results["collection_metadata"]["duration_seconds"] = duration.total_seconds()
@@ -464,7 +464,7 @@ class MetadataCollector:
         if last_refreshed:
             try:
                 refresh_date = datetime.fromisoformat(last_refreshed.replace('Z', '+00:00'))
-                now = datetime.datetime.now(datetime.timezone.utc).isoformat()
+                now = datetime.now(timezone.utc).isoformat()
 
                 # If refreshed within the last day, lower priority
                 if (now - refresh_date).total_seconds() < 86400:
@@ -527,7 +527,7 @@ class MetadataCollector:
                 "columns": columns,
                 "primary_keys": primary_keys,
                 "row_count": row_count,
-                "collected_at": datetime.datetime.now(datetime.timezone.utc).isoformat()
+                "collected_at": datetime.now(timezone.utc).isoformat()
             }
 
             logger.info(f"Successfully collected metadata for table {table_name}")
@@ -537,5 +537,5 @@ class MetadataCollector:
             return {
                 "table_name": table_name,
                 "error": str(e),
-                "collected_at": datetime.datetime.now(datetime.timezone.utc).isoformat()
+                "collected_at": datetime.now(timezone.utc).isoformat()
             }

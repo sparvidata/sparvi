@@ -1,6 +1,6 @@
 import json
 import logging
-import datetime
+from datetime import datetime, timezone
 from typing import Dict, List, Any, Optional
 from dotenv import load_dotenv
 from supabase import create_client
@@ -38,7 +38,7 @@ class MetadataStorageService:
                 "connection_id": connection_id,
                 "metadata_type": "tables",
                 "metadata": metadata,
-                "collected_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                "collected_at": datetime.now(timezone.utc).isoformat(),
                 "refresh_frequency": "1 day"  # Consider if this should be set differently or removed
             }).execute()
 
@@ -68,7 +68,7 @@ class MetadataStorageService:
                 "connection_id": connection_id,
                 "metadata_type": "columns",
                 "metadata": metadata,
-                "collected_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                "collected_at": datetime.now(timezone.utc).isoformat(),
                 "refresh_frequency": "1 day" # Consider if this should be set differently or removed
             }).execute()
 
@@ -115,7 +115,7 @@ class MetadataStorageService:
                 "connection_id": connection_id,
                 "metadata_type": "statistics",
                 "metadata": metadata,
-                "collected_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                "collected_at": datetime.now(timezone.utc).isoformat(),
                 "refresh_frequency": "1 day" # Consider if this should be set differently or removed
             }).execute()
 

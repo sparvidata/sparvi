@@ -2,6 +2,7 @@ import logging
 import atexit
 import signal
 import sys
+import traceback
 from typing import Optional
 
 logger = logging.getLogger(__name__)
@@ -219,6 +220,9 @@ def integrate_with_metadata_system():
 
     except Exception as e:
         logger.error(f"Error integrating automation with metadata system: {str(e)}")
+        logger.error(traceback.format_exc())  # Add full traceback
+        # Don't fail the entire startup - just log and continue
+        logger.warning("Continuing automation startup without metadata integration")
         return False
 
 
