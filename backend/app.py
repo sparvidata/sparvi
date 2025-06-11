@@ -53,6 +53,20 @@ from enum import Enum
 from dataclasses import dataclass
 from typing import Dict, Any, List, Optional
 import time
+import logging
+
+# Suppress noisy HTTP/networking libraries
+logging.getLogger('httpcore').setLevel(logging.WARNING)
+logging.getLogger('hpack').setLevel(logging.WARNING)
+logging.getLogger('httpx').setLevel(logging.WARNING)
+logging.getLogger('urllib3').setLevel(logging.WARNING)
+logging.getLogger('schedule').setLevel(logging.WARNING)
+logging.getLogger('concurrent.futures').setLevel(logging.WARNING)
+
+# Keep your application logs at INFO level
+logging.getLogger('core').setLevel(logging.INFO)
+logging.getLogger('supabase_manager').setLevel(logging.INFO)
+logging.getLogger('root').setLevel(logging.INFO)
 
 
 class ConnectionPoolManager:
