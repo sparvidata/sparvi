@@ -22,7 +22,8 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
 // Enhanced session cache with validation
 let sessionCache = null;
 let sessionCacheTimestamp = 0;
-const SESSION_CACHE_TTL = 5 * 60 * 1000; // 5 minutes cache TTL (increased from 30 seconds)
+let sessionRefreshInProgress = false; // Add lock to prevent race conditions
+const SESSION_CACHE_TTL = 10 * 60 * 1000; // Increase to 10 minutes for more stability
 const SESSION_REFRESH_THRESHOLD = 5 * 60; // 5 minutes before expiry
 
 // Debug toggle - set to false to reduce console noise
@@ -73,6 +74,12 @@ const isValidSession = (session) => {
 
 // Clear session cache
 const clearSessionCache = () => {
+  // Don't clear cache if a refresh is in progress
+  if (sessionRefreshInProgress) {
+    logDebug('Not clearing cache - refresh in progress');
+    return;
+  }
+
   sessionCache = null;
   sessionCacheTimestamp = 0;
   logDebug('Session cache cleared');
@@ -249,13 +256,13 @@ export const getSession = async () => {
     const now = Date.now();
 
     // Check if we have a valid cached session
-    if (sessionCache && sessionCacheTimestamp > 0) {
+    if (sessionCache && sessionCacheTimestamp > 0 && !sessionRefreshInProgress) {
       const cacheAge = now - sessionCacheTimestamp;
 
-      // If cache is still fresh and session is valid, return it
+      // If cache is still fresh and session is valid, return it immediately
       if (cacheAge < SESSION_CACHE_TTL && isValidSession(sessionCache)) {
-        // Only log cache hits occasionally (every 10th call or so)
-        if (Math.random() < 0.1) {
+        // Only log cache hits occasionally (every 50th call or so)
+        if (Math.random() < 0.02) {
           logDebug('Using cached session', { cacheAge, cacheValid: true }, 'verbose');
         }
         return sessionCache;
@@ -270,74 +277,95 @@ export const getSession = async () => {
       }
     }
 
-    logDebug('Fetching fresh session from Supabase');
-
-    const { data, error } = await supabase.auth.getSession();
-
-    if (error) {
-      logDebug('Get session error', error);
-      clearSessionCache();
-      return null;
-    }
-
-    logDebug('Get session response', {
-      hasData: !!data,
-      hasSession: !!data?.session,
-      hasToken: !!data?.session?.access_token,
-      hasUser: !!data?.session?.user
-    });
-
-    const session = data?.session;
-
-    if (!session) {
-      logDebug('No session in response');
-      clearSessionCache();
-      return null;
-    }
-
-    // Validate the session
-    if (!isValidSession(session)) {
-      logDebug('Invalid session received');
-      clearSessionCache();
-      return null;
-    }
-
-    // Check if token needs refresh soon
-    if (session.expires_at) {
-      const nowUTC = getCurrentUTCSeconds();
-      const timeUntilExpiry = session.expires_at - nowUTC;
-
-      if (timeUntilExpiry <= SESSION_REFRESH_THRESHOLD) {
-        logDebug('Token expiring soon, attempting refresh', { timeUntilExpiry });
-
-        try {
-          const { data: refreshData, error: refreshError } = await supabase.auth.refreshSession();
-
-          if (refreshError) {
-            logDebug('Session refresh failed', refreshError);
-            // Continue with current session if refresh fails
-          } else if (refreshData?.session && isValidSession(refreshData.session)) {
-            logDebug('Session refreshed successfully');
-            sessionCache = refreshData.session;
-            sessionCacheTimestamp = Date.now();
-            return refreshData.session;
-          }
-        } catch (refreshError) {
-          logDebug('Session refresh exception', refreshError);
-          // Continue with current session if refresh fails
-        }
+    // If another refresh is in progress, wait for it and return the result
+    if (sessionRefreshInProgress) {
+      logDebug('Session refresh already in progress, waiting...');
+      // Wait a bit and check again
+      await new Promise(resolve => setTimeout(resolve, 100));
+      if (sessionCache && isValidSession(sessionCache)) {
+        return sessionCache;
       }
     }
 
-    // Cache the valid session
-    sessionCache = session;
-    sessionCacheTimestamp = Date.now();
+    // Set the refresh lock
+    sessionRefreshInProgress = true;
 
-    logDebug('Session cached successfully');
-    return session;
+    try {
+      logDebug('Fetching fresh session from Supabase');
+
+      const { data, error } = await supabase.auth.getSession();
+
+      if (error) {
+        logDebug('Get session error', error);
+        clearSessionCache();
+        return null;
+      }
+
+      logDebug('Get session response', {
+        hasData: !!data,
+        hasSession: !!data?.session,
+        hasToken: !!data?.session?.access_token,
+        hasUser: !!data?.session?.user
+      });
+
+      const session = data?.session;
+
+      if (!session) {
+        logDebug('No session in response');
+        clearSessionCache();
+        return null;
+      }
+
+      // Validate the session
+      if (!isValidSession(session)) {
+        logDebug('Invalid session received');
+        clearSessionCache();
+        return null;
+      }
+
+      // Check if token needs refresh soon (but don't do it during busy operations)
+      if (session.expires_at) {
+        const nowUTC = getCurrentUTCSeconds();
+        const timeUntilExpiry = session.expires_at - nowUTC;
+
+        // Only refresh if REALLY close to expiry (1 minute) to avoid disrupting operations
+        if (timeUntilExpiry <= 60) {
+          logDebug('Token expiring very soon, attempting refresh', { timeUntilExpiry });
+
+          try {
+            const { data: refreshData, error: refreshError } = await supabase.auth.refreshSession();
+
+            if (refreshError) {
+              logDebug('Session refresh failed', refreshError);
+              // Continue with current session if refresh fails
+            } else if (refreshData?.session && isValidSession(refreshData.session)) {
+              logDebug('Session refreshed successfully');
+              sessionCache = refreshData.session;
+              sessionCacheTimestamp = Date.now();
+              return refreshData.session;
+            }
+          } catch (refreshError) {
+            logDebug('Session refresh exception', refreshError);
+            // Continue with current session if refresh fails
+          }
+        }
+      }
+
+      // Cache the valid session
+      sessionCache = session;
+      sessionCacheTimestamp = Date.now();
+
+      logDebug('Session cached successfully');
+      return session;
+
+    } finally {
+      // Always clear the refresh lock
+      sessionRefreshInProgress = false;
+    }
 
   } catch (err) {
     logDebug('Unexpected error in getSession', err);
+    sessionRefreshInProgress = false;
     clearSessionCache();
     return null;
   }
@@ -354,15 +382,18 @@ export const setupAuthListener = (callback) => {
       hasToken: !!session?.access_token
     });
 
-    // Clear cache on any auth state change
-    clearSessionCache();
-
-    // Cache new session if valid
-    if (session && isValidSession(session)) {
-      sessionCache = session;
-      sessionCacheTimestamp = Date.now();
-      logDebug('New session cached from auth event');
+    // Only clear cache on actual sign out or sign in events
+    if (event === 'SIGNED_OUT') {
+      clearSessionCache();
+    } else if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
+      // Cache new session if valid
+      if (session && isValidSession(session)) {
+        sessionCache = session;
+        sessionCacheTimestamp = Date.now();
+        logDebug('New session cached from auth event');
+      }
     }
+    // Don't clear cache for INITIAL_SESSION events
 
     // Call the callback
     if (callback) {

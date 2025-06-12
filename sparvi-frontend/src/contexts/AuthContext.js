@@ -363,6 +363,7 @@ export const AuthProvider = ({ children }) => {
           updateActivity();
         }
       }
+      // Don't change state for INITIAL_SESSION events if we already have a valid session
 
       setLoading(false);
     });
