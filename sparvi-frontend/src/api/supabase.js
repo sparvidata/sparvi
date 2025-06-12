@@ -1,4 +1,5 @@
 import { createClient } from '@supabase/supabase-js';
+import { getCurrentUTCSeconds } from '../utils/dateUtils';
 
 // Initialize Supabase client
 const supabaseUrl = process.env.REACT_APP_SUPABASE_URL;
@@ -12,28 +13,112 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
   auth: {
     autoRefreshToken: true,
     persistSession: true,
-    storage: localStorage
+    storage: localStorage,
+    detectSessionInUrl: true,
+    flowType: 'pkce'
   }
 });
+
+// Enhanced session cache with validation
+let sessionCache = null;
+let sessionCacheTimestamp = 0;
+const SESSION_CACHE_TTL = 5 * 60 * 1000; // 5 minutes cache TTL (increased from 30 seconds)
+const SESSION_REFRESH_THRESHOLD = 5 * 60; // 5 minutes before expiry
+
+// Debug toggle - set to false to reduce console noise
+const DEBUG_SUPABASE = false;
+
+// Debug logging helper with levels
+const logDebug = (message, data = null, level = 'info') => {
+  if (!DEBUG_SUPABASE) return; // Skip all debug logging if disabled
+
+  // Only log important supabase events in production
+  if (process.env.NODE_ENV === 'production' && level === 'verbose') return;
+
+  // Skip repetitive cache messages unless they're important
+  if (message.includes('Returning cached session') && level !== 'important') return;
+
+  console.log(`[Supabase] ${message}`, data);
+};
+
+// Validate session object
+const isValidSession = (session) => {
+  if (!session) return false;
+
+  if (!session.access_token || !session.user) {
+    logDebug('Invalid session: missing token or user', {
+      hasToken: !!session.access_token,
+      hasUser: !!session.user
+    });
+    return false;
+  }
+
+  // Check token expiration
+  if (session.expires_at) {
+    const nowUTC = getCurrentUTCSeconds();
+    const timeUntilExpiry = session.expires_at - nowUTC;
+
+    if (timeUntilExpiry <= 0) {
+      logDebug('Invalid session: token expired', {
+        nowUTC,
+        expiresAt: session.expires_at,
+        timeUntilExpiry
+      });
+      return false;
+    }
+  }
+
+  return true;
+};
+
+// Clear session cache
+const clearSessionCache = () => {
+  sessionCache = null;
+  sessionCacheTimestamp = 0;
+  logDebug('Session cache cleared');
+};
 
 // Authentication functions
 export const signIn = async (email, password) => {
   try {
+    logDebug('Sign in attempt', { email });
+    clearSessionCache(); // Clear cache before new sign in
+
     const { data, error } = await supabase.auth.signInWithPassword({
       email,
       password,
     });
 
-    if (error) throw error;
+    if (error) {
+      logDebug('Sign in error', error);
+      throw error;
+    }
+
+    logDebug('Sign in successful', {
+      hasUser: !!data.user,
+      hasSession: !!data.session,
+      hasToken: !!data.session?.access_token
+    });
+
+    // Cache the new session
+    if (data.session && isValidSession(data.session)) {
+      sessionCache = data.session;
+      sessionCacheTimestamp = Date.now();
+    }
+
     return { user: data.user, session: data.session };
   } catch (error) {
-    console.error('Error signing in:', error.message);
+    logDebug('Sign in failed', error);
+    clearSessionCache();
     throw error;
   }
 };
 
 export const signUp = async (email, password, userData = {}) => {
   try {
+    logDebug('Sign up attempt', { email });
+    clearSessionCache(); // Clear cache before new sign up
+
     const { data, error } = await supabase.auth.signUp({
       email,
       password,
@@ -42,120 +127,253 @@ export const signUp = async (email, password, userData = {}) => {
       },
     });
 
-    if (error) throw error;
+    if (error) {
+      logDebug('Sign up error', error);
+      throw error;
+    }
+
+    logDebug('Sign up successful', {
+      hasUser: !!data.user,
+      hasSession: !!data.session,
+      emailConfirmationRequired: !data.session
+    });
+
+    // Cache the new session if available
+    if (data.session && isValidSession(data.session)) {
+      sessionCache = data.session;
+      sessionCacheTimestamp = Date.now();
+    }
+
     return { user: data.user, session: data.session };
   } catch (error) {
-    console.error('Error signing up:', error.message);
+    logDebug('Sign up failed', error);
+    clearSessionCache();
     throw error;
   }
 };
 
 export const signOut = async () => {
-  const { error } = await supabase.auth.signOut();
-  if (error) {
-    console.error('Error signing out:', error.message);
+  try {
+    logDebug('Sign out attempt');
+    clearSessionCache(); // Clear cache immediately
+
+    const { error } = await supabase.auth.signOut();
+
+    if (error) {
+      logDebug('Sign out error', error);
+      throw error;
+    }
+
+    logDebug('Sign out successful');
+
+    // Reset auth ready state - use dynamic import to avoid circular dependency
+    try {
+      const { resetAuthReady } = await import('../api/enhancedApiService');
+      resetAuthReady();
+      logDebug('Auth ready state reset');
+    } catch (importError) {
+      logDebug('Could not reset auth ready state', importError);
+    }
+
+  } catch (error) {
+    logDebug('Sign out failed', error);
+    // Still clear cache even if signOut fails
+    clearSessionCache();
     throw error;
   }
 };
 
 export const resetPassword = async (email) => {
-  const { error } = await supabase.auth.resetPasswordForEmail(email, {
-    redirectTo: `${window.location.origin}/reset-password`,
-  });
+  try {
+    logDebug('Password reset request', { email });
 
-  if (error) {
-    console.error('Error resetting password:', error.message);
+    const { error } = await supabase.auth.resetPasswordForEmail(email, {
+      redirectTo: `${window.location.origin}/reset-password`,
+    });
+
+    if (error) {
+      logDebug('Password reset error', error);
+      throw error;
+    }
+
+    logDebug('Password reset email sent');
+  } catch (error) {
+    logDebug('Password reset failed', error);
     throw error;
   }
 };
 
 export const updatePassword = async (newPassword) => {
-  const { error } = await supabase.auth.updateUser({
-    password: newPassword,
-  });
+  try {
+    logDebug('Password update attempt');
 
-  if (error) {
-    console.error('Error updating password:', error.message);
+    const { error } = await supabase.auth.updateUser({
+      password: newPassword,
+    });
+
+    if (error) {
+      logDebug('Password update error', error);
+      throw error;
+    }
+
+    logDebug('Password updated successfully');
+    // Clear cache to force refresh of session
+    clearSessionCache();
+  } catch (error) {
+    logDebug('Password update failed', error);
     throw error;
   }
 };
 
 export const getCurrentUser = async () => {
-  const { data, error } = await supabase.auth.getUser();
-  if (error) {
-    console.error('Error getting current user:', error.message);
+  try {
+    logDebug('Get current user attempt');
+
+    const { data, error } = await supabase.auth.getUser();
+
+    if (error) {
+      logDebug('Get current user error', error);
+      return null;
+    }
+
+    logDebug('Get current user successful', { hasUser: !!data?.user });
+    return data?.user || null;
+  } catch (error) {
+    logDebug('Get current user failed', error);
     return null;
   }
-  return data?.user || null;
 };
 
 export const getSession = async () => {
   try {
-    // Use a timestamp to prevent multiple calls within a short time
     const now = Date.now();
-    const lastCheck = window._lastSessionCheck || 0;
 
-    // Throttle checks (no more than once every 5 seconds)
-    if (now - lastCheck < 5000) {
-      // Get from cache if available
-      if (window._sessionCache) {
-        return window._sessionCache;
+    // Check if we have a valid cached session
+    if (sessionCache && sessionCacheTimestamp > 0) {
+      const cacheAge = now - sessionCacheTimestamp;
+
+      // If cache is still fresh and session is valid, return it
+      if (cacheAge < SESSION_CACHE_TTL && isValidSession(sessionCache)) {
+        // Only log cache hits occasionally (every 10th call or so)
+        if (Math.random() < 0.1) {
+          logDebug('Using cached session', { cacheAge, cacheValid: true }, 'verbose');
+        }
+        return sessionCache;
+      } else {
+        logDebug('Cached session needs refresh', {
+          cacheAge,
+          ttl: SESSION_CACHE_TTL,
+          isValid: isValidSession(sessionCache),
+          reason: cacheAge >= SESSION_CACHE_TTL ? 'cache_expired' : 'session_invalid'
+        });
+        // Don't clear cache immediately - try to refresh first
       }
     }
 
-    // Update last check time
-    window._lastSessionCheck = now;
+    logDebug('Fetching fresh session from Supabase');
 
     const { data, error } = await supabase.auth.getSession();
 
     if (error) {
-      console.error('Error getting session:', error);
-      window._sessionCache = null;
+      logDebug('Get session error', error);
+      clearSessionCache();
       return null;
     }
 
-    // Check if session exists
-    if (!data?.session) {
-      console.log('No active session found');
-      window._sessionCache = null;
+    logDebug('Get session response', {
+      hasData: !!data,
+      hasSession: !!data?.session,
+      hasToken: !!data?.session?.access_token,
+      hasUser: !!data?.session?.user
+    });
+
+    const session = data?.session;
+
+    if (!session) {
+      logDebug('No session in response');
+      clearSessionCache();
       return null;
     }
 
-    // Cache the session
-    window._sessionCache = data.session;
+    // Validate the session
+    if (!isValidSession(session)) {
+      logDebug('Invalid session received');
+      clearSessionCache();
+      return null;
+    }
 
-    // Proactively refresh if token is close to expiring
-    if (data.session && data.session.expires_at) {
-      const nowSeconds = Math.floor(Date.now() / 1000);
-      const expiresIn = data.session.expires_at - nowSeconds;
+    // Check if token needs refresh soon
+    if (session.expires_at) {
+      const nowUTC = getCurrentUTCSeconds();
+      const timeUntilExpiry = session.expires_at - nowUTC;
 
-      if (expiresIn < 300 && expiresIn > 0) {  // Refresh if expiring in less than 5 minutes
+      if (timeUntilExpiry <= SESSION_REFRESH_THRESHOLD) {
+        logDebug('Token expiring soon, attempting refresh', { timeUntilExpiry });
+
         try {
-          console.log('Token expiring soon, refreshing...');
           const { data: refreshData, error: refreshError } = await supabase.auth.refreshSession();
-          if (refreshError) throw refreshError;
-          console.log('Token refreshed successfully');
 
-          // Update cache
-          window._sessionCache = refreshData.session;
-          return refreshData.session;
+          if (refreshError) {
+            logDebug('Session refresh failed', refreshError);
+            // Continue with current session if refresh fails
+          } else if (refreshData?.session && isValidSession(refreshData.session)) {
+            logDebug('Session refreshed successfully');
+            sessionCache = refreshData.session;
+            sessionCacheTimestamp = Date.now();
+            return refreshData.session;
+          }
         } catch (refreshError) {
-          console.error('Session refresh failed:', refreshError);
+          logDebug('Session refresh exception', refreshError);
+          // Continue with current session if refresh fails
         }
       }
     }
 
-    return data.session;
+    // Cache the valid session
+    sessionCache = session;
+    sessionCacheTimestamp = Date.now();
+
+    logDebug('Session cached successfully');
+    return session;
+
   } catch (err) {
-    console.error('Unexpected error in getSession:', err);
+    logDebug('Unexpected error in getSession', err);
+    clearSessionCache();
     return null;
   }
 };
 
 // Setup auth state change listener
 export const setupAuthListener = (callback) => {
-  return supabase.auth.onAuthStateChange((event, session) => {
-    console.log('Auth state change detected:', event);
-    callback(event, session);
+  logDebug('Setting up auth state listener');
+
+  const authListener = supabase.auth.onAuthStateChange((event, session) => {
+    logDebug('Auth state change event', {
+      event,
+      hasSession: !!session,
+      hasToken: !!session?.access_token
+    });
+
+    // Clear cache on any auth state change
+    clearSessionCache();
+
+    // Cache new session if valid
+    if (session && isValidSession(session)) {
+      sessionCache = session;
+      sessionCacheTimestamp = Date.now();
+      logDebug('New session cached from auth event');
+    }
+
+    // Call the callback
+    if (callback) {
+      try {
+        callback(event, session);
+      } catch (callbackError) {
+        logDebug('Error in auth state callback', callbackError);
+      }
+    }
   });
+
+  logDebug('Auth state listener setup complete');
+  return authListener;
 };

@@ -3,6 +3,7 @@ import {getSession, signOut, supabase} from './supabase';
 import { getCacheItem, setCacheItem, clearCacheItem } from '../utils/cacheUtils';
 import { getRequestAbortController, requestCompleted } from '../utils/requestUtils';
 
+// Debug session checking on load
 (async () => {
   try {
     console.log("Checking auth session structure...");
@@ -49,16 +50,18 @@ const apiClient = axios.create({
   },
 });
 
-// Create an auth ready state
+// Enhanced auth ready state management
 let authReady = false;
 let authReadyPromise = null;
 let authReadyResolve = null;
+let authReadyReject = null;
 
 // Initialize the auth ready promise
 const initAuthReadyPromise = () => {
   if (!authReadyPromise) {
-    authReadyPromise = new Promise(resolve => {
+    authReadyPromise = new Promise((resolve, reject) => {
       authReadyResolve = resolve;
+      authReadyReject = reject;
     });
   }
   return authReadyPromise;
@@ -70,157 +73,198 @@ const isCancelledRequest = (error) => {
          error.cancelled === true;
 };
 
-// Function to check if auth is ready
+// Enhanced function to check if auth is ready
 export const waitForAuth = async (timeoutMs = 5000) => {
-  if (authReady) return true;
+  if (authReady) {
+    console.log('[Auth] Auth already ready');
+    return true;
+  }
 
   // Initialize the promise if it doesn't exist
   const promise = initAuthReadyPromise();
 
   // Add timeout
   const timeoutPromise = new Promise((_, reject) => {
-    setTimeout(() => reject(new Error('Auth ready timeout')), timeoutMs);
+    setTimeout(() => {
+      console.log(`[Auth] Timeout waiting for auth (${timeoutMs}ms)`);
+      reject(new Error('Auth ready timeout'));
+    }, timeoutMs);
   });
 
   try {
+    console.log(`[Auth] Waiting for auth to be ready (timeout: ${timeoutMs}ms)`);
     await Promise.race([promise, timeoutPromise]);
+    console.log('[Auth] Auth is ready');
     return true;
   } catch (error) {
-    console.warn('Timed out waiting for auth to be ready');
+    console.warn('[Auth] Timed out or failed waiting for auth to be ready:', error.message);
+
+    // Try to check session directly as fallback
+    try {
+      const session = await getSession();
+      if (session?.access_token) {
+        console.log('[Auth] Found valid session during fallback check');
+        setAuthReady(); // Set it ready now
+        return true;
+      }
+    } catch (sessionError) {
+      console.warn('[Auth] Fallback session check failed:', sessionError);
+    }
+
     return false;
   }
 };
 
-// Function to set auth as ready
+// Enhanced function to set auth as ready
 export const setAuthReady = () => {
+  console.log('[Auth] Setting auth as ready');
   authReady = true;
   if (authReadyResolve) {
     authReadyResolve(true);
+    // Reset the promise for future use
+    authReadyPromise = null;
+    authReadyResolve = null;
+    authReadyReject = null;
   }
 };
 
-// Check auth on module load and set it ready if possible
+// Function to reset auth ready state (e.g., on logout)
+export const resetAuthReady = () => {
+  console.log('[Auth] Resetting auth ready state');
+  authReady = false;
+  if (authReadyReject) {
+    authReadyReject(new Error('Auth reset'));
+  }
+  authReadyPromise = null;
+  authReadyResolve = null;
+  authReadyReject = null;
+};
+
+// Enhanced auth initialization with better error handling
 (async () => {
   try {
     const session = await getSession();
+
     if (session?.access_token) {
+      console.log("[Auth] Auth initialized with valid token");
       setAuthReady();
-      console.log("Auth initialized with valid token");
     } else {
-      console.log("No valid auth token found on initialization");
+      console.log("[Auth] No valid auth token found on initialization");
+      // Don't set auth as ready if no token
     }
   } catch (e) {
-    console.error("Error initializing auth:", e);
+    console.error("[Auth] Error initializing auth:", e);
+    // Don't set auth as ready on error
   }
 })();
 
-// const debugAuth = async () => {
-//   try {
-//     const session = await getSession();
-//     console.log("Auth check: Session exists:", !!session);
-//
-//     // Check different possible token locations
-//     const token = session?.access_token ||
-//                  session?.token ||
-//                  session?.accessToken ||
-//                  (session?.user?.token) ||
-//                  (session?.data?.access_token);
-//
-//     console.log("Auth check: Token exists:", !!token);
-//     if (token) {
-//       console.log("Auth check: Token preview:", `${token.substring(0, 10)}...`);
-//     } else {
-//       // If no token found, log the session structure to help debug
-//       console.log("Auth check: Session structure:", JSON.stringify(session, null, 2));
-//     }
-//     return !!token;
-//   } catch (e) {
-//     console.error("Error in debugAuth:", e);
-//     return false;
-//   }
-// };
-
+// Enhanced request interceptor with better token handling
 apiClient.interceptors.request.use(
   async (config) => {
     try {
       const session = await getSession();
-      console.log("Full Session Object:", session);
 
-      const token =
-        session?.access_token ||
-        session?.token ||
-        session?.accessToken ||
-        (session?.user?.token) ||
-        (session?.data?.access_token);
+      // Debug: Log session info (but not the full token for security)
+      console.log("[API Request] Session status:", {
+        hasSession: !!session,
+        hasToken: !!session?.access_token,
+        hasUser: !!session?.user,
+        url: config.url
+      });
 
-      console.log("Token being sent:", token ? token.substring(0, 20) + '...' : 'No token');
+      const token = session?.access_token;
 
       if (token) {
         config.headers.Authorization = `Bearer ${token}`;
+        console.log(`[API Request] Token attached for ${config.url}`);
+      } else {
+        console.warn(`[API Request] No token available for ${config.url}`);
       }
     } catch (err) {
-      console.error('Error adding auth token to request:', err);
+      console.error('[API Request] Error adding auth token:', err);
     }
     return config;
   },
   (error) => Promise.reject(error)
 );
 
-// Response interceptor for error handling
+
+// Enhanced response interceptor for error handling
 apiClient.interceptors.response.use(
   (response) => response,
   async (error) => {
     // Don't treat cancelled requests as errors
     if (axios.isCancel(error)) {
+      console.log('[API Response] Request was cancelled');
       return Promise.reject({ cancelled: true });
     }
 
     // Handle specific error codes
     if (error.response) {
-      if (error.response.status === 401) {
-        console.error('Unauthorized access. Redirecting to login...');
+      const { status, config } = error.response;
+
+      console.log(`[API Response] Error ${status} for ${config?.url}`);
+
+      if (status === 401) {
+        console.error('[API Response] Unauthorized access detected');
 
         // Prevent multiple redirects
         if (!window._redirectingToLogin) {
           window._redirectingToLogin = true;
 
           try {
+            console.log('[API Response] Forcing logout due to 401');
+
+            // Clear session cache
+            if (window._sessionCache) {
+              window._sessionCache = null;
+            }
+
+            // Reset auth ready state
+            resetAuthReady();
+
             // Force signout from Supabase
             await signOut();
-
-            // Clear any cached session data
-            window._sessionCache = null;
 
             // Clear session storage
             sessionStorage.removeItem('activeConnectionId');
 
-            // Redirect to login with current location
-            const returnPath = window.location.pathname;
-            window.location.href = `/login?returnTo=${encodeURIComponent(returnPath)}`;
+            // Small delay to ensure cleanup completes
+            setTimeout(() => {
+              // Redirect to login with current location
+              const returnPath = window.location.pathname;
+              window.location.href = `/login?returnTo=${encodeURIComponent(returnPath)}`;
+            }, 100);
+
           } catch (e) {
-            console.error('Error during forced logout:', e);
+            console.error('[API Response] Error during forced logout:', e);
             // Still redirect to login as fallback
-            window.location.href = '/login';
+            setTimeout(() => {
+              window.location.href = '/login';
+            }, 100);
           }
         }
 
         return Promise.reject(error);
       }
 
-      if (error.response.status === 403) {
-        console.error('Forbidden access. You do not have permission to access this resource.');
+      if (status === 403) {
+        console.error('[API Response] Forbidden access - insufficient permissions');
       }
+
+      if (status >= 500) {
+        console.error('[API Response] Server error detected');
+      }
+    } else if (error.request) {
+      console.error('[API Response] Network error - no response received');
+    } else {
+      console.error('[API Response] Request setup error:', error.message);
     }
 
     return Promise.reject(error);
   }
 );
 
-/**
- * Enhanced API request function with caching, abort control, and error handling
- * @param {Object} options - Request options
- * @returns {Promise} Promise resolving to the response data
- */
 /**
  * Enhanced API request function with caching, abort control, and error handling
  * @param {Object} options - Request options
@@ -1303,7 +1347,6 @@ export const analyticsAPI = {
     });
   }
 };
-
 
 // Enhanced Anomaly API
 export const anomalyAPI = {

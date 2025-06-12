@@ -24,17 +24,28 @@ export const useAutomationJobCount = () => {
         }
       } catch (error) {
         console.error('Error loading job count:', error);
-        setActiveJobCount(0);
+
+        // Don't treat auth errors as fatal - just set count to 0
+        if (error?.response?.status === 401) {
+          console.log('Auth error loading job count, skipping update');
+        } else {
+          setActiveJobCount(0);
+        }
       } finally {
         setLoading(false);
       }
     };
 
-    loadJobCount();
+    // Initial load with a small delay to let auth settle
+    const initialTimeout = setTimeout(loadJobCount, 1000);
 
-    // Poll for job count updates every 30 seconds
-    const interval = setInterval(loadJobCount, 30000);
-    return () => clearInterval(interval);
+    // Poll for job count updates every 60 seconds (increased from 30)
+    const interval = setInterval(loadJobCount, 60000);
+
+    return () => {
+      clearTimeout(initialTimeout);
+      clearInterval(interval);
+    };
   }, []);
 
   return {

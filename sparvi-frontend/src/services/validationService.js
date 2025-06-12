@@ -265,4 +265,5 @@ class ValidationService {
   }
 }
 
-export default new ValidationService();
+const validationService = new ValidationService();
+export default validationService;
