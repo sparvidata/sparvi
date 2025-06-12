@@ -809,8 +809,8 @@ def initialize_anomaly_detection():
         logger.info("Anomaly detection scheduler service started")
 
 
-
 def init_metadata_task_manager():
+    """Initialize metadata task manager - UPDATED VERSION"""
     global metadata_task_manager
     try:
         if metadata_task_manager is None:
@@ -820,6 +820,7 @@ def init_metadata_task_manager():
             storage_service = MetadataStorageService()
             supabase_mgr = SupabaseManager()
 
+            # Use your existing ImprovedTaskManager
             metadata_task_manager = ImprovedTaskManager.get_instance(storage_service, supabase_mgr)
             logger.info("Improved metadata task manager initialized successfully")
 
@@ -839,17 +840,26 @@ def init_metadata_task_manager():
                 logger.warning("Could not import event publisher, using stub implementation")
             except Exception as e:
                 logger.error(f"Error connecting to event system: {str(e)}")
+
+        return metadata_task_manager
+
     except Exception as e:
         logger.error(f"Error initializing improved metadata task manager: {str(e)}")
         logger.error(traceback.format_exc())
         metadata_task_manager = None  # Ensure it's set to None if initialization fails
+        return None
 
 
 def init_automation_system():
-    """Initialize the automation system with detailed logging"""
+    """Initialize the automation system - UPDATED VERSION"""
     logger.info("Starting automation system initialization...")
 
     try:
+        # Import the app_hooks functions you're already using
+        from core.utils.app_hooks import initialize_automation_system, integrate_with_metadata_system
+        from core.automation.events import set_event_handler_supabase
+        from core.storage.supabase_manager import SupabaseManager
+
         logger.info("Calling initialize_automation_system()...")
         automation_success = initialize_automation_system()
 
@@ -857,6 +867,15 @@ def init_automation_system():
 
         if automation_success:
             logger.info("Automation system started successfully")
+
+            # Set up event handler with Supabase (this was missing before)
+            logger.info("Setting up automation event handler...")
+            try:
+                supabase_manager = SupabaseManager()
+                set_event_handler_supabase(supabase_manager)
+                logger.info("Automation event handler configured")
+            except Exception as event_error:
+                logger.error(f"Error setting up event handler: {str(event_error)}")
 
             # Integrate with existing metadata system
             logger.info("Integrating automation with metadata system...")
@@ -866,18 +885,75 @@ def init_automation_system():
                 logger.info("Automation integrated with metadata system")
             else:
                 logger.warning("Automation metadata integration failed")
+
+            return True
         else:
             logger.error("Automation system failed to start")
+            return False
 
     except ImportError as e:
         logger.error(f"Import error in automation system: {str(e)}")
         logger.error("This usually means missing dependencies or module path issues")
         logger.error(traceback.format_exc())
+        return False
     except Exception as e:
         logger.error(f"Unexpected error initializing automation system: {str(e)}")
         logger.error(traceback.format_exc())
+        return False
 
-    logger.info("Automation system initialization complete")
+    finally:
+        logger.info("Automation system initialization complete")
+
+
+def delayed_initialization():
+    """Initialize services with proper error handling and dependencies - UPDATED VERSION"""
+    try:
+        logger.info("Starting delayed initialization of background services...")
+
+        # Step 1: Initialize metadata task manager first (required by automation)
+        logger.info("Step 1: Initializing metadata task manager...")
+        metadata_manager = init_metadata_task_manager()
+
+        if metadata_manager:
+            logger.info("Metadata task manager ready")
+        else:
+            logger.error("Metadata task manager failed to initialize")
+            # Continue anyway - automation might still work without it
+
+        # Small delay between services
+        time.sleep(2)
+
+        # Step 2: Initialize automation system
+        logger.info("Step 2: Initializing automation system...")
+        automation_success = init_automation_system()
+
+        if automation_success:
+            logger.info("Automation system ready")
+        else:
+            logger.error("Automation system failed to initialize")
+
+        # Step 3: Apply performance optimizations (if available)
+        logger.info("Step 3: Applying performance optimizations...")
+        try:
+            from core.utils.performance_optimizations import apply_performance_optimizations
+            optimized_classes = apply_performance_optimizations()
+            logger.info("Performance optimizations applied")
+        except ImportError:
+            logger.info("Performance optimizations not available, skipping")
+        except Exception as opt_error:
+            logger.warning(f"Performance optimizations failed: {str(opt_error)}")
+
+        logger.info("Background services initialization complete")
+
+        # Log final status
+        if automation_success:
+            logger.info("Automation system is running and ready")
+        else:
+            logger.warning("Automation system is not running - check logs above")
+
+    except Exception as e:
+        logger.error(f"Error in delayed initialization: {str(e)}")
+        logger.error(traceback.format_exc())
 
 
 def setup_comprehensive_logging():
@@ -1050,41 +1126,17 @@ app.config["SECRET_KEY"] = os.getenv("SECRET_KEY", "default_secret_key")
 
 # Initialize Supabase validation manager
 validation_manager = SupabaseValidationManager()
-
 run_validations_after_profile = True  # Set to True to automatically run validations after profiling
-
 metadata_storage = MetadataStorage()
-
 task_executor = ThreadPoolExecutor(max_workers=5)
 metadata_task_queue = queue.Queue()
 
-def delayed_initialization():
-    """Initialize services with proper error handling"""
-    try:
-        # Initialize metadata task manager first
-        init_metadata_task_manager()
-
-        # Small delay between services
-        time.sleep(2)
-
-        # Initialize automation system
-        init_automation_system()
-
-        logger.info("All background services initialized successfully")
-    except Exception as e:
-        logger.error(f"Error in delayed initialization: {str(e)}")
-        logger.error(traceback.format_exc())
-
-
-# Start with longer delay
-threading.Timer(10.0, delayed_initialization).start()
-
-# Initialize automation with a delay to ensure other services are ready
-logger.info("Initializing automation system...")
-init_automation_system()
-
 optimized_classes = apply_performance_optimizations()
 
+logger.info("Scheduling delayed initialization in 15 seconds...")
+threading.Timer(15.0, delayed_initialization).start()
+
+logger.info("Flask app initialization complete, background services will start shortly...")
 
 @app.route('/health')
 def health_check():
@@ -1127,11 +1179,54 @@ def health_check():
             "error": str(e)
         }), 503
 
+
 @app.route('/health/automation')
 def automation_health():
     """Health check endpoint for automation system"""
-    health_result, status_code = automation_health_endpoint()
-    return jsonify(health_result), status_code
+    try:
+        from core.utils.app_hooks import get_automation_health
+
+        health = get_automation_health()
+        status_code = 200 if health["healthy"] else 503
+
+        return jsonify(health), status_code
+
+    except Exception as e:
+        return jsonify({
+            "healthy": False,
+            "error": str(e),
+            "message": "Automation health check failed"
+        }), 503
+
+
+# Add admin endpoint to restart automation
+@app.route('/api/admin/automation/restart', methods=['POST'])
+@token_required
+def restart_automation(current_user, organization_id):
+    """Admin endpoint to restart automation system"""
+    try:
+        # Check if user is admin
+        supabase = SupabaseManager()
+        user_role = supabase.get_user_role(current_user)
+
+        if user_role not in ['admin', 'owner']:
+            return jsonify({"error": "Insufficient permissions"}), 403
+
+        from core.utils.app_hooks import restart_automation_system
+
+        logger.info(f"Admin {current_user} requested automation restart")
+
+        # Restart the service
+        success = restart_automation_system()
+
+        return jsonify({
+            "success": success,
+            "message": "Automation system restarted" if success else "Failed to restart automation system"
+        }), 200
+
+    except Exception as e:
+        logger.error(f"Error restarting automation: {str(e)}")
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route('/health/automation/detailed')

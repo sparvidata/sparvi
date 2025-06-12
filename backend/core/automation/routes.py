@@ -1,7 +1,7 @@
 from flask import Blueprint, request, jsonify
 import logging
 from datetime import datetime, timezone
-
+from .events import get_automation_events, get_automation_event_stats
 from .api import AutomationAPI
 
 logger = logging.getLogger(__name__)
@@ -534,3 +534,291 @@ def register_automation_routes(app, token_required):
         except Exception as e:
             logger.error(f"Error getting enhanced automation status: {str(e)}")
             return jsonify({"error": str(e)}), 500
+
+    @app.route("/api/automation/runs", methods=["GET"])
+    @token_required
+    def get_automation_runs(current_user, organization_id):
+        """Get automation runs for the organization"""
+        try:
+            connection_id = request.args.get("connection_id")
+            status = request.args.get("status")
+            limit = int(request.args.get("limit", 50))
+
+            # Build query
+            query = automation_api.supabase.supabase.table("automation_runs").select("""
+                *,
+                automation_jobs!inner(connection_id, job_type),
+                database_connections!inner(name, organization_id)
+            """)
+
+            # Filter by organization
+            query = query.eq("database_connections.organization_id", organization_id)
+
+            if connection_id:
+                query = query.eq("connection_id", connection_id)
+
+            if status:
+                query = query.eq("status", status)
+
+            response = query.order("created_at", desc=True).limit(limit).execute()
+
+            runs = response.data if response.data else []
+
+            # Clean up the data structure
+            for run in runs:
+                if 'automation_jobs' in run:
+                    run['job_type'] = run['automation_jobs']['job_type']
+                    del run['automation_jobs']
+                if 'database_connections' in run:
+                    run['connection_name'] = run['database_connections']['name']
+                    del run['database_connections']
+
+            return jsonify({
+                "runs": runs,
+                "count": len(runs)
+            }), 200
+
+        except Exception as e:
+            logger.error(f"Error getting automation runs: {str(e)}")
+            return jsonify({"error": str(e)}), 500
+
+    @app.route("/api/automation/runs/<run_id>", methods=["GET"])
+    @token_required
+    def get_automation_run_details(current_user, organization_id, run_id):
+        """Get detailed information about a specific automation run"""
+        try:
+            response = automation_api.supabase.supabase.table("automation_runs") \
+                .select("""
+                    *,
+                    automation_jobs!inner(connection_id, job_type, job_config),
+                    database_connections!inner(name, organization_id)
+                """) \
+                .eq("id", run_id) \
+                .eq("database_connections.organization_id", organization_id) \
+                .single() \
+                .execute()
+
+            if not response.data:
+                return jsonify({"error": "Run not found"}), 404
+
+            run = response.data
+
+            # Clean up the data structure
+            if 'automation_jobs' in run:
+                run['job_type'] = run['automation_jobs']['job_type']
+                run['job_config'] = run['automation_jobs']['job_config']
+                del run['automation_jobs']
+            if 'database_connections' in run:
+                run['connection_name'] = run['database_connections']['name']
+                del run['database_connections']
+
+            return jsonify({"run": run}), 200
+
+        except Exception as e:
+            logger.error(f"Error getting automation run details: {str(e)}")
+            return jsonify({"error": str(e)}), 500
+
+    @app.route("/api/automation/events", methods=["GET"])
+    @token_required
+    def get_automation_events_endpoint(current_user, organization_id):
+        """Get automation events for the organization"""
+        try:
+            connection_id = request.args.get("connection_id")
+            event_type = request.args.get("event_type")
+            limit = int(request.args.get("limit", 50))
+
+            events = get_automation_events(
+                connection_id=connection_id,
+                organization_id=organization_id,
+                event_type=event_type,
+                limit=limit
+            )
+
+            return jsonify({
+                "events": events,
+                "count": len(events)
+            }), 200
+
+        except Exception as e:
+            logger.error(f"Error getting automation events: {str(e)}")
+            return jsonify({"error": str(e)}), 500
+
+    @app.route("/api/automation/events/stats", methods=["GET"])
+    @token_required
+    def get_automation_event_stats_endpoint(current_user, organization_id):
+        """Get automation event statistics for the organization"""
+        try:
+            days = int(request.args.get("days", 7))
+
+            stats = get_automation_event_stats(organization_id, days)
+
+            return jsonify({"stats": stats}), 200
+
+        except Exception as e:
+            logger.error(f"Error getting automation event stats: {str(e)}")
+            return jsonify({"error": str(e)}), 500
+
+    @app.route("/api/automation/dashboard/monitoring", methods=["GET"])
+    @token_required
+    def get_automation_monitoring_dashboard(current_user, organization_id):
+        """Get comprehensive monitoring dashboard data"""
+        try:
+            connection_id = request.args.get("connection_id")
+
+            # Get recent runs
+            runs_query = automation_api.supabase.supabase.table("automation_runs") \
+                .select("""
+                    *,
+                    automation_jobs!inner(connection_id, job_type),
+                    database_connections!inner(name, organization_id)
+                """) \
+                .eq("database_connections.organization_id", organization_id)
+
+            if connection_id:
+                runs_query = runs_query.eq("connection_id", connection_id)
+
+            recent_runs = runs_query.order("created_at", desc=True).limit(10).execute()
+
+            # Get recent events
+            recent_events = get_automation_events(
+                connection_id=connection_id,
+                organization_id=organization_id,
+                limit=20
+            )
+
+            # Get event stats
+            event_stats = get_automation_event_stats(organization_id, days=7)
+
+            # Calculate run statistics
+            runs = recent_runs.data if recent_runs.data else []
+            run_stats = {
+                "total_runs": len(runs),
+                "successful_runs": len([r for r in runs if r["status"] == "completed"]),
+                "failed_runs": len([r for r in runs if r["status"] == "failed"]),
+                "running_runs": len([r for r in runs if r["status"] == "running"]),
+                "runs_by_type": {}
+            }
+
+            # Count runs by type
+            for run in runs:
+                if 'automation_jobs' in run:
+                    job_type = run['automation_jobs']['job_type']
+                    if job_type not in run_stats["runs_by_type"]:
+                        run_stats["runs_by_type"][job_type] = {"total": 0, "successful": 0, "failed": 0}
+                    run_stats["runs_by_type"][job_type]["total"] += 1
+                    if run["status"] == "completed":
+                        run_stats["runs_by_type"][job_type]["successful"] += 1
+                    elif run["status"] == "failed":
+                        run_stats["runs_by_type"][job_type]["failed"] += 1
+
+            # Clean up runs data
+            for run in runs:
+                if 'automation_jobs' in run:
+                    run['job_type'] = run['automation_jobs']['job_type']
+                    del run['automation_jobs']
+                if 'database_connections' in run:
+                    run['connection_name'] = run['database_connections']['name']
+                    del run['database_connections']
+
+            dashboard_data = {
+                "recent_runs": runs,
+                "recent_events": recent_events,
+                "run_statistics": run_stats,
+                "event_statistics": event_stats,
+                "summary": {
+                    "automation_health": "healthy" if run_stats["failed_runs"] < run_stats[
+                        "successful_runs"] else "warning",
+                    "recent_activity": len(recent_events),
+                    "active_automations": run_stats["running_runs"]
+                }
+            }
+
+            return jsonify({"dashboard": dashboard_data}), 200
+
+        except Exception as e:
+            logger.error(f"Error getting automation monitoring dashboard: {str(e)}")
+            return jsonify({"error": str(e)}), 500
+
+    @app.route("/api/automation/runs/<run_id>/logs", methods=["GET"])
+    @token_required
+    def get_automation_run_logs(current_user, organization_id, run_id):
+        """Get logs for a specific automation run"""
+        try:
+            # Verify the run belongs to the organization
+            run_response = automation_api.supabase.supabase.table("automation_runs") \
+                .select("""
+                    id,
+                    database_connections!inner(organization_id)
+                """) \
+                .eq("id", run_id) \
+                .eq("database_connections.organization_id", organization_id) \
+                .single() \
+                .execute()
+
+            if not run_response.data:
+                return jsonify({"error": "Run not found"}), 404
+
+            # Get related automation job for additional context
+            job_response = automation_api.supabase.supabase.table("automation_jobs") \
+                .select("*") \
+                .eq("id", run_response.data["id"]) \
+                .single() \
+                .execute()
+
+            # For now, return the job data as "logs" since we don't have separate log storage
+            # In a full implementation, you'd have a separate logs table
+            logs = {
+                "run_id": run_id,
+                "job_details": job_response.data if job_response.data else None,
+                "message": "Detailed logging not yet implemented. Check job details and results for information."
+            }
+
+            return jsonify({"logs": logs}), 200
+
+        except Exception as e:
+            logger.error(f"Error getting automation run logs: {str(e)}")
+            return jsonify({"error": str(e)}), 500
+
+    # Add trigger endpoint for manual runs with better error handling
+    @app.route("/api/automation/trigger-immediate/<connection_id>", methods=["POST"])
+    @token_required
+    def trigger_immediate_automation(current_user, organization_id, connection_id):
+        """Trigger immediate automation run with detailed response"""
+        try:
+            # Verify connection belongs to organization
+            connection_response = automation_api.supabase.supabase.table("database_connections") \
+                .select("id, name") \
+                .eq("id", connection_id) \
+                .eq("organization_id", organization_id) \
+                .execute()
+
+            if not connection_response.data:
+                return jsonify({"error": "Connection not found"}), 404
+
+            data = request.json or {}
+            automation_type = data.get("automation_type")  # metadata_refresh, schema_detection, validation_run
+
+            # Trigger the automation
+            result = automation_api.trigger_automation(connection_id, automation_type, current_user)
+
+            if "error" in result:
+                return jsonify({"error": result["error"]}), 500
+
+            # Get the connection name for response
+            connection_name = connection_response.data[0]["name"]
+
+            return jsonify({
+                "success": True,
+                "message": f"Automation triggered successfully for {connection_name}",
+                "connection_id": connection_id,
+                "connection_name": connection_name,
+                "automation_type": automation_type or "all",
+                "triggered_by": current_user,
+                "result": result
+            }), 200
+
+        except Exception as e:
+            logger.error(f"Error triggering immediate automation: {str(e)}")
+            return jsonify({"error": str(e)}), 500
+
+    logger.info("Automation monitoring routes registered successfully")
