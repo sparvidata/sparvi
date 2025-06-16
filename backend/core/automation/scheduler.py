@@ -265,7 +265,7 @@ class AutomationScheduler:
             logger.error(f"Error scheduling validation run: {str(e)}")
 
     def _execute_metadata_refresh(self, job_id: str, connection_id: str, config: Dict[str, Any]):
-        """Execute a metadata refresh job - FIXED VERSION"""
+        """Execute a metadata refresh job - FIXED VERSION with proper storage"""
         run_id = None
         try:
             # Update job status to running
@@ -274,80 +274,56 @@ class AutomationScheduler:
             # Create automation run record
             run_id = self._create_automation_run(job_id, connection_id, "metadata_refresh")
 
-            # Get your existing metadata task manager (use the global instance)
-            # Try to get the global metadata_task_manager first
-            task_manager = None
-            try:
-                # Import the global metadata_task_manager from your app
-                import app
-                if hasattr(app, 'metadata_task_manager') and app.metadata_task_manager:
-                    task_manager = app.metadata_task_manager
-                    logger.info("Using global metadata_task_manager from app")
-            except (ImportError, AttributeError):
-                pass
+            # Get connection details
+            connection = self.supabase.get_connection(connection_id)
+            if not connection:
+                raise Exception(f"Connection not found: {connection_id}")
 
-            # Fallback: try to create/get an instance
-            if not task_manager:
-                try:
-                    # Try your ImprovedTaskManager first
-                    from core.metadata.improved_task_manager import ImprovedTaskManager
-                    from core.metadata.storage_service import MetadataStorageService
+            # Initialize services properly
+            from core.metadata.storage_service import MetadataStorageService
+            from core.metadata.connector_factory import ConnectorFactory
+            from core.metadata.collector import MetadataCollector
 
-                    storage_service = MetadataStorageService()
-                    task_manager = ImprovedTaskManager.get_instance(storage_service, self.supabase)
-                    logger.info("Created ImprovedTaskManager instance")
-                except ImportError:
-                    # Fallback to standard MetadataTaskManager
-                    from core.metadata.manager import MetadataTaskManager
-                    from core.metadata.storage_service import MetadataStorageService
+            storage_service = MetadataStorageService()
+            connector_factory = ConnectorFactory(self.supabase)
 
-                    storage_service = MetadataStorageService()
-                    task_manager = MetadataTaskManager.get_instance(storage_service, self.supabase)
-                    logger.info("Created standard MetadataTaskManager instance")
+            # Create connector and collector
+            connector = connector_factory.create_connector(connection)
+            collector = MetadataCollector(connection_id, connector)
 
             # Determine what types of metadata to refresh
             refresh_types = config.get("types", ["tables", "columns", "statistics"])
-
             results = {}
 
-            # ALTERNATIVE APPROACH: Directly call the metadata collection instead of relying on task manager
-            logger.info("Attempting direct metadata collection...")
+            logger.info(f"Starting metadata refresh for types: {refresh_types}")
 
-            try:
-                from core.metadata.collector import MetadataCollector
-                from core.metadata.connector_factory import ConnectorFactory
-                from core.metadata.storage_service import MetadataStorageService
+            for refresh_type in refresh_types:
+                logger.info(f"Collecting {refresh_type} metadata")
 
-                # Create connector and collector directly
-                connector_factory = ConnectorFactory(self.supabase)
-                storage_service = MetadataStorageService()
-
-                # Get connection details
-                connection_details = self.supabase.get_connection(connection_id)
-                if not connection_details:
-                    raise Exception(f"Connection not found: {connection_id}")
-
-                # Create connector
-                connector = connector_factory.create_connector(connection_details)
-                collector = MetadataCollector(connection_id, connector)
-
-                # Collect metadata directly
-                for refresh_type in refresh_types:
-                    logger.info(f"Directly collecting {refresh_type} metadata")
-
+                try:
                     if refresh_type == "tables":
-                        # Collect tables and store them
+                        # Collect tables
                         tables = collector.collect_table_list()
                         if tables:
-                            # Convert to proper format for storage
-                            tables_metadata = [{"name": table} for table in tables[:100]]  # Limit to 100
+                            # Convert to proper format and store
+                            tables_metadata = [{"name": table} for table in tables[:100]]
                             success = storage_service.store_tables_metadata(connection_id, tables_metadata)
-                            results[refresh_type] = {
-                                "status": "completed" if success else "failed",
-                                "count": len(tables_metadata),
-                                "method": "direct_collection"
-                            }
-                            logger.info(f"Stored {len(tables_metadata)} tables directly")
+
+                            # Verify storage
+                            if success:
+                                stored_tables = storage_service.get_tables_metadata(connection_id)
+                                if stored_tables and len(stored_tables) > 0:
+                                    results[refresh_type] = {
+                                        "status": "completed",
+                                        "count": len(tables_metadata),
+                                        "stored_count": len(stored_tables),
+                                        "method": "automation_collection"
+                                    }
+                                    logger.info(f"Successfully stored {len(tables_metadata)} tables")
+                                else:
+                                    raise Exception("Tables were not properly stored")
+                            else:
+                                raise Exception("Failed to store tables metadata")
                         else:
                             results[refresh_type] = {"status": "failed", "error": "No tables found"}
 
@@ -356,7 +332,7 @@ class AutomationScheduler:
                         tables = collector.collect_table_list()
                         if tables:
                             columns_by_table = {}
-                            for table_name in tables[:50]:  # Limit to 50 tables for columns
+                            for table_name in tables[:50]:  # Limit for automation
                                 try:
                                     columns = connector.get_columns(table_name)
                                     if columns:
@@ -366,12 +342,28 @@ class AutomationScheduler:
 
                             if columns_by_table:
                                 success = storage_service.store_columns_metadata(connection_id, columns_by_table)
-                                results[refresh_type] = {
-                                    "status": "completed" if success else "failed",
-                                    "count": len(columns_by_table),
-                                    "method": "direct_collection"
-                                }
-                                logger.info(f"Stored columns for {len(columns_by_table)} tables directly")
+
+                                # Verify storage
+                                if success:
+                                    # Sample verification - check a few tables
+                                    verification_count = 0
+                                    for table_name in list(columns_by_table.keys())[:3]:
+                                        stored_columns = storage_service.get_columns_metadata(connection_id, table_name)
+                                        if stored_columns:
+                                            verification_count += 1
+
+                                    if verification_count > 0:
+                                        results[refresh_type] = {
+                                            "status": "completed",
+                                            "count": len(columns_by_table),
+                                            "verified_tables": verification_count,
+                                            "method": "automation_collection"
+                                        }
+                                        logger.info(f"Successfully stored columns for {len(columns_by_table)} tables")
+                                    else:
+                                        raise Exception("Columns were not properly stored")
+                                else:
+                                    raise Exception("Failed to store columns metadata")
                             else:
                                 results[refresh_type] = {"status": "failed", "error": "No columns found"}
                         else:
@@ -382,7 +374,7 @@ class AutomationScheduler:
                         tables = collector.collect_table_list()
                         if tables:
                             stats_by_table = {}
-                            for table_name in tables[:25]:  # Limit to 25 tables for stats
+                            for table_name in tables[:25]:  # Limit for automation
                                 try:
                                     stats = collector.collect_table_statistics(table_name)
                                     if stats:
@@ -392,46 +384,37 @@ class AutomationScheduler:
 
                             if stats_by_table:
                                 success = storage_service.store_statistics_metadata(connection_id, stats_by_table)
-                                results[refresh_type] = {
-                                    "status": "completed" if success else "failed",
-                                    "count": len(stats_by_table),
-                                    "method": "direct_collection"
-                                }
-                                logger.info(f"Stored statistics for {len(stats_by_table)} tables directly")
+
+                                # Verify storage
+                                if success:
+                                    # Sample verification
+                                    verification_count = 0
+                                    for table_name in list(stats_by_table.keys())[:3]:
+                                        stored_stats = storage_service.get_statistics_metadata(connection_id,
+                                                                                               table_name)
+                                        if stored_stats:
+                                            verification_count += 1
+
+                                    if verification_count > 0:
+                                        results[refresh_type] = {
+                                            "status": "completed",
+                                            "count": len(stats_by_table),
+                                            "verified_tables": verification_count,
+                                            "method": "automation_collection"
+                                        }
+                                        logger.info(f"Successfully stored statistics for {len(stats_by_table)} tables")
+                                    else:
+                                        raise Exception("Statistics were not properly stored")
+                                else:
+                                    raise Exception("Failed to store statistics metadata")
                             else:
                                 results[refresh_type] = {"status": "failed", "error": "No statistics found"}
                         else:
                             results[refresh_type] = {"status": "failed", "error": "No tables for statistics"}
 
-                logger.info("Direct metadata collection completed successfully")
-
-            except Exception as direct_error:
-                logger.error(f"Direct metadata collection failed: {str(direct_error)}")
-                logger.error(traceback.format_exc())
-
-                # Fallback to task manager approach
-                logger.info("Falling back to task manager approach...")
-                for refresh_type in refresh_types:
-                    logger.info(f"Submitting {refresh_type} task to task manager")
-
-                    if refresh_type == "tables":
-                        task_id = task_manager.submit_collection_task(
-                            connection_id, {"depth": "low", "table_limit": 100}, "high"
-                        )
-                    elif refresh_type == "columns":
-                        task_id = task_manager.submit_collection_task(
-                            connection_id, {"depth": "medium", "table_limit": 50}, "medium"
-                        )
-                    elif refresh_type == "statistics":
-                        task_id = task_manager.submit_collection_task(
-                            connection_id, {"depth": "high", "table_limit": 25}, "low"
-                        )
-
-                    if task_id:
-                        results[refresh_type] = {"task_id": task_id, "status": "submitted", "method": "task_manager"}
-                        logger.info(f"Submitted {refresh_type} collection task: {task_id}")
-                    else:
-                        results[refresh_type] = {"status": "failed", "error": "Task submission failed"}
+                except Exception as type_error:
+                    logger.error(f"Error processing {refresh_type}: {str(type_error)}")
+                    results[refresh_type] = {"status": "failed", "error": str(type_error)}
 
             # Update job status to completed
             self._update_job_status(
@@ -475,7 +458,7 @@ class AutomationScheduler:
                 del self.active_jobs[job_id]
 
     def _execute_schema_detection(self, job_id: str, connection_id: str, config: Dict[str, Any]):
-        """Execute a schema change detection job - FIXED VERSION"""
+        """Execute a schema change detection job - FIXED VERSION with proper storage"""
         run_id = None
         try:
             # Update job status to running
@@ -494,14 +477,31 @@ class AutomationScheduler:
             detector = SchemaChangeDetector(storage_service)
             connector_factory = ConnectorFactory(self.supabase)
 
-            # Detect changes
+            # Detect changes - this should store changes in schema_changes table
             changes, important_changes = detector.detect_changes_for_connection(
                 connection_id, connector_factory, self.supabase
             )
 
+            # Verify changes were stored by checking the schema_changes table
+            stored_changes_count = 0
+            if changes:
+                try:
+                    # Check if changes were stored in the database
+                    recent_changes_response = self.supabase.supabase.table("schema_changes") \
+                        .select("id") \
+                        .eq("connection_id", connection_id) \
+                        .gte("detected_at", (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat()) \
+                        .execute()
+
+                    stored_changes_count = len(recent_changes_response.data) if recent_changes_response.data else 0
+                    logger.info(f"Verified {stored_changes_count} changes were stored in database")
+                except Exception as verify_error:
+                    logger.warning(f"Could not verify stored changes: {str(verify_error)}")
+
             results = {
                 "changes_detected": len(changes),
                 "important_changes": important_changes,
+                "changes_stored": stored_changes_count,
                 "auto_acknowledged": 0
             }
 
@@ -545,11 +545,13 @@ class AutomationScheduler:
             if important_changes:
                 publish_automation_event(
                     event_type=AutomationEventType.SCHEMA_CHANGES_DETECTED,
-                    data={"job_id": job_id, "changes": len(changes), "important": important_changes},
+                    data={"job_id": job_id, "changes": len(changes), "important": important_changes,
+                          "stored": stored_changes_count},
                     connection_id=connection_id
                 )
 
-            logger.info(f"Completed schema detection job {job_id}, found {len(changes)} changes")
+            logger.info(
+                f"Completed schema detection job {job_id}, found {len(changes)} changes, stored {stored_changes_count}")
 
         except Exception as e:
             error_msg = str(e)
@@ -567,7 +569,7 @@ class AutomationScheduler:
                 del self.active_jobs[job_id]
 
     def _execute_validation_run(self, job_id: str, connection_id: str, config: Dict[str, Any]):
-        """Execute a validation automation job - FIXED VERSION"""
+        """Execute a validation automation job - FIXED VERSION with proper storage"""
         run_id = None
         try:
             # Update job status to running
@@ -599,7 +601,8 @@ class AutomationScheduler:
                 "total_rules": 0,
                 "passed_rules": 0,
                 "failed_rules": 0,
-                "tables_with_failures": []
+                "tables_with_failures": [],
+                "validation_results_stored": 0
             }
 
             # If no table-specific configs, check connection-level config
@@ -618,12 +621,23 @@ class AutomationScheduler:
                 # Build connection string
                 connection_string = self._build_connection_string(connection)
 
+                # Track validation results before execution
+                pre_execution_count = 0
+                try:
+                    pre_execution_response = self.supabase.supabase.table("validation_results") \
+                        .select("id", count="exact") \
+                        .eq("connection_id", connection_id) \
+                        .execute()
+                    pre_execution_count = pre_execution_response.count or 0
+                except Exception:
+                    pass
+
                 for table_name in tables_to_validate:
                     # Execute validation rules for this table
                     try:
                         logger.info(f"Running validations for table: {table_name}")
 
-                        # Execute rules
+                        # Execute rules - this should store results in validation_results table
                         validation_results = validation_manager.execute_rules(
                             organization_id, connection_string, table_name, connection_id
                         )
@@ -653,6 +667,19 @@ class AutomationScheduler:
                             "error": str(table_error)
                         })
 
+                # Verify validation results were stored
+                try:
+                    post_execution_response = self.supabase.supabase.table("validation_results") \
+                        .select("id", count="exact") \
+                        .eq("connection_id", connection_id) \
+                        .gte("run_at", (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat()) \
+                        .execute()
+                    post_execution_count = post_execution_response.count or 0
+                    results["validation_results_stored"] = post_execution_count - pre_execution_count
+                    logger.info(f"Stored {results['validation_results_stored']} new validation results")
+                except Exception as verify_error:
+                    logger.warning(f"Could not verify stored validation results: {str(verify_error)}")
+
             # Update job status to completed
             self._update_job_status(
                 job_id, "completed",
@@ -669,11 +696,13 @@ class AutomationScheduler:
                 publish_automation_event(
                     event_type=AutomationEventType.VALIDATION_FAILURES_DETECTED,
                     data={"job_id": job_id, "failed_rules": results["failed_rules"],
-                          "tables": results["tables_with_failures"]},
+                          "tables": results["tables_with_failures"],
+                          "stored_results": results["validation_results_stored"]},
                     connection_id=connection_id
                 )
 
-            logger.info(f"Completed validation job {job_id}: {results['failed_rules']} failures")
+            logger.info(
+                f"Completed validation job {job_id}: {results['failed_rules']} failures, {results['validation_results_stored']} results stored")
 
         except Exception as e:
             error_msg = str(e)

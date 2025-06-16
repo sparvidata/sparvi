@@ -1,6 +1,8 @@
 import json
 import logging
 import traceback
+import uuid
+import datetime
 from typing import Dict, List, Any, Optional
 from sqlalchemy import create_engine, text
 import os
@@ -166,7 +168,7 @@ class SupabaseValidationManager:
 
     def execute_rules(self, organization_id: str, connection_string: str, table_name: str, connection_id: str = None) -> \
             List[Dict[str, Any]]:
-        """Execute all validation rules for a table against the specified database"""
+        """Execute all validation rules for a table against the specified database - FIXED VERSION"""
         # Get all rules for this table
         rules = self.get_rules(organization_id, table_name, connection_id)
         results = []
@@ -181,6 +183,9 @@ class SupabaseValidationManager:
             # Create database engine - do this once for all rules
             logger.info(f"Creating database engine with connection string: {connection_string}")
             engine = create_engine(connection_string, pool_recycle=600, pool_pre_ping=True)
+
+            # Track how many results we store
+            stored_results_count = 0
 
             # Process rules in smaller batches to reduce memory pressure
             batch_size = 5
@@ -221,19 +226,24 @@ class SupabaseValidationManager:
 
                             results.append(validation_result)
 
-                            # Store result in Supabase - pass connection_id
+                            # Store result in Supabase using the fixed store method
                             try:
                                 logger.info(f"Storing result in Supabase for rule: {rule['rule_name']}")
-                                self.supabase.store_validation_result(
-                                    organization_id,
-                                    rule['id'],
-                                    is_valid,
-                                    actual_value,
-                                    connection_id=connection_id  # Pass connection_id
+                                result_id = self.store_validation_result(
+                                    organization_id=organization_id,
+                                    rule_id=rule['id'],
+                                    is_valid=is_valid,
+                                    actual_value=actual_value,
+                                    connection_id=connection_id
                                 )
-                                logger.info(f"Result stored successfully")
+                                if result_id:
+                                    stored_results_count += 1
+                                    logger.info(f"Result stored successfully with ID: {result_id}")
+                                else:
+                                    logger.error(f"Failed to store validation result for rule {rule['rule_name']}")
                             except Exception as storage_error:
                                 logger.error(f"Error storing validation result: {str(storage_error)}")
+                                logger.error(traceback.format_exc())
                                 # Continue execution even if storage fails
 
                             # Publish automation event for validation failures
@@ -266,6 +276,7 @@ class SupabaseValidationManager:
                 import gc
                 gc.collect()
 
+            logger.info(f"Validation execution complete. Stored {stored_results_count} results out of {len(results)} total results.")
             return results
 
         except Exception as e:
@@ -379,22 +390,13 @@ class SupabaseValidationManager:
             rule_id,
             is_valid,
             actual_value=None,
-            connection_id=None,  # Add default value
+            connection_id=None,
             profile_history_id=None
     ):
-        """Store validation result in Supabase"""
+        """Store validation result in Supabase - FIXED VERSION"""
         try:
             logger.info(
                 f"Storing validation result with connection_id: {connection_id} and profile_history_id: {profile_history_id}")
-
-            # Import what we need
-            import uuid
-            import json
-            import datetime
-            from ..storage.supabase_manager import SupabaseManager
-
-            # Get a Supabase client instance
-            supabase_mgr = SupabaseManager()
 
             # Create a record to insert - including connection_id
             validation_result = {
@@ -408,14 +410,16 @@ class SupabaseValidationManager:
                 "profile_history_id": profile_history_id
             }
 
-            # Use the Supabase client from the manager, not the manager itself
-            response = supabase_mgr.supabase.table("validation_results").insert(validation_result).execute()
+            # Use the Supabase client directly for storage
+            response = self.supabase.supabase.table("validation_results").insert(validation_result).execute()
 
             if not response.data or len(response.data) == 0:
-                logger.error("Failed to store validation result")
+                logger.error("Failed to store validation result: No data returned")
                 return None
 
-            return response.data[0].get("id")
+            result_id = response.data[0].get("id")
+            logger.debug(f"Successfully stored validation result with ID: {result_id}")
+            return result_id
 
         except Exception as e:
             logger.error(f"Error storing validation result: {str(e)}")

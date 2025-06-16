@@ -2,6 +2,7 @@ import datetime
 import os
 import secrets
 import traceback
+import uuid  # Added missing import
 from typing import Dict, List, Any, Optional, Union
 import json
 from dotenv import load_dotenv
@@ -329,24 +330,32 @@ class SupabaseManager:
 
     def store_validation_result(self, organization_id: str, rule_id: str, is_valid: bool, actual_value: Any,
                                 connection_id: str = None, profile_history_id: str = None) -> str:
-        """Store a validation result"""
+        """Store a validation result - FIXED VERSION"""
         try:
-            # Ensure actual_value is stored as a JSON string
-            actual_value_str = json.dumps(actual_value) if actual_value is not None else None
-
             # Log what parameters we're using
             logger.info(
                 f"Storing validation result with connection_id: {connection_id} and profile_history_id: {profile_history_id}")
 
-            # Pass both parameters to the supabase manager's store_validation_result method
-            result_id = self.supabase.store_validation_result(
-                organization_id=organization_id,
-                rule_id=rule_id,
-                is_valid=is_valid,
-                actual_value=actual_value,
-                connection_id=connection_id,  # Pass connection_id
-                profile_history_id=profile_history_id
-            )
+            # Create a record to insert - including connection_id
+            validation_result = {
+                "id": str(uuid.uuid4()),
+                "organization_id": organization_id,
+                "rule_id": rule_id,
+                "is_valid": is_valid,
+                "run_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                "actual_value": json.dumps(actual_value) if actual_value is not None else None,
+                "connection_id": connection_id,  # Include connection_id
+                "profile_history_id": profile_history_id
+            }
+
+            # Use the Supabase client directly for storage
+            response = self.supabase.table("validation_results").insert(validation_result).execute()
+
+            if not response.data or len(response.data) == 0:
+                logger.error("Failed to store validation result: No data returned")
+                return None
+
+            result_id = response.data[0].get("id")
 
             # Track validation metrics for historical tracking
             try:

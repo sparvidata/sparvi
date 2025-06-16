@@ -2,7 +2,7 @@ import logging
 import traceback
 from typing import Dict, List, Any, Optional, Set, Tuple
 import json
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -612,7 +612,7 @@ class SchemaChangeDetector:
             important_changes = any(c["type"] in important_change_types for c in changes)
             logger.info(f"Important changes detected: {important_changes}")
 
-            # If changes detected, store the new schema
+            # If changes detected, store the new schema AND the changes
             if changes:
                 logger.info(f"Storing updated schema after detecting {len(changes)} changes")
                 if self.storage_service:
@@ -626,8 +626,8 @@ class SchemaChangeDetector:
 
                     # Store the actual changes in the database
                     if supabase_manager:
-                        self._store_schema_changes(connection_id, changes, supabase_manager)
-                        logger.info(f"Stored {len(changes)} schema changes in database")
+                        stored_count = self._store_schema_changes(connection_id, changes, supabase_manager)
+                        logger.info(f"Stored {stored_count} schema changes in database")
 
             return changes, important_changes
 
@@ -639,7 +639,7 @@ class SchemaChangeDetector:
     def _store_schema_changes(self,
                               connection_id: str,
                               changes: List[Dict[str, Any]],
-                              supabase_manager=None):
+                              supabase_manager=None) -> int:
         """
         Store detected schema changes in the database.
 
@@ -647,10 +647,13 @@ class SchemaChangeDetector:
             connection_id: Connection ID
             changes: List of detected changes
             supabase_manager: Supabase manager for database operations
+
+        Returns:
+            Number of changes stored
         """
         if not supabase_manager:
             logger.warning("No Supabase manager provided, cannot store schema changes.")
-            return
+            return 0
 
         try:
             # Get organization ID from connection details
@@ -661,11 +664,11 @@ class SchemaChangeDetector:
                     organization_id = connection['organization_id']
             except Exception as e:
                 logger.warning(f"Could not get organization ID: {str(e)}")
-                return
+                return 0
 
             if not organization_id:
                 logger.warning("No organization ID found, cannot store schema changes.")
-                return
+                return 0
 
             current_time = datetime.now(timezone.utc).isoformat()
             stored_count = 0
@@ -736,10 +739,12 @@ class SchemaChangeDetector:
                     # Continue with next change
 
             logger.info(f"Schema changes processed: Stored {stored_count}, Skipped {skipped_count} duplicates")
+            return stored_count
 
         except Exception as e:
             logger.error(f"Error in schema change storage: {str(e)}")
             logger.error(traceback.format_exc())
+            return 0
 
     def force_schema_refresh(self, connection_id: str, connector_factory, supabase_manager=None) -> bool:
         """
@@ -849,39 +854,44 @@ class SchemaChangeDetector:
             List of task IDs created
         """
         # Import here to avoid circular imports
-        from .events import MetadataEventType, publish_metadata_event
+        try:
+            from .events import MetadataEventType, publish_metadata_event
 
-        task_ids = []
+            task_ids = []
 
-        # Process changes by table
-        changes_by_table = {}
+            # Process changes by table
+            changes_by_table = {}
 
-        for change in changes:
-            table_name = change.get("table")
-            if table_name:
-                if table_name not in changes_by_table:
-                    changes_by_table[table_name] = []
-                changes_by_table[table_name].append(change)
+            for change in changes:
+                table_name = change.get("table")
+                if table_name:
+                    if table_name not in changes_by_table:
+                        changes_by_table[table_name] = []
+                    changes_by_table[table_name].append(change)
 
-        # Publish a schema change event for each affected table
-        for table_name, table_changes in changes_by_table.items():
-            # Get summary of changes for this table
-            change_types = [c["type"] for c in table_changes]
+            # Publish a schema change event for each affected table
+            for table_name, table_changes in changes_by_table.items():
+                # Get summary of changes for this table
+                change_types = [c["type"] for c in table_changes]
 
-            # Publish event
-            task_id = publish_metadata_event(
-                event_type=MetadataEventType.SCHEMA_CHANGE,
-                connection_id=connection_id,
-                details={
-                    "table_name": table_name,
-                    "changes": change_types,
-                    "change_count": len(table_changes)
-                },
-                organization_id=organization_id,
-                user_id=user_id
-            )
+                # Publish event
+                task_id = publish_metadata_event(
+                    event_type=MetadataEventType.SCHEMA_CHANGE,
+                    connection_id=connection_id,
+                    details={
+                        "table_name": table_name,
+                        "changes": change_types,
+                        "change_count": len(table_changes)
+                    },
+                    organization_id=organization_id,
+                    user_id=user_id
+                )
 
-            if task_id:
-                task_ids.append(task_id)
+                if task_id:
+                    task_ids.append(task_id)
 
-        return task_ids
+            return task_ids
+
+        except ImportError:
+            logger.warning("Events module not available")
+            return []

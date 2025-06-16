@@ -27,6 +27,8 @@ class MetadataStorageService:
     def store_tables_metadata(self, connection_id: str, tables_metadata: List[Dict]) -> bool:
         """Store table list and basic table metadata"""
         try:
+            logger.info(f"Storing tables metadata for connection {connection_id}: {len(tables_metadata)} tables")
+
             # Format data for storage
             metadata = {
                 "tables": tables_metadata,
@@ -39,11 +41,11 @@ class MetadataStorageService:
                 "metadata_type": "tables",
                 "metadata": metadata,
                 "collected_at": datetime.now(timezone.utc).isoformat(),
-                "refresh_frequency": "1 day"  # Consider if this should be set differently or removed
+                "refresh_frequency": "1 day"
             }).execute()
 
             if response.data:
-                logger.info(f"Stored metadata for {len(tables_metadata)} tables")
+                logger.info(f"Successfully stored metadata for {len(tables_metadata)} tables")
                 return True
 
             logger.error("Failed to store tables metadata: No data returned")
@@ -51,11 +53,15 @@ class MetadataStorageService:
 
         except Exception as e:
             logger.error(f"Error storing tables metadata: {str(e)}")
+            import traceback
+            logger.error(traceback.format_exc())
             return False
 
     def store_columns_metadata(self, connection_id: str, columns_by_table: Dict[str, List[Dict]]) -> bool:
         """Store column metadata grouped by table"""
         try:
+            logger.info(f"Storing columns metadata for connection {connection_id}: {len(columns_by_table)} tables")
+
             # Format data for storage
             metadata = {
                 "columns_by_table": columns_by_table,
@@ -69,18 +75,20 @@ class MetadataStorageService:
                 "metadata_type": "columns",
                 "metadata": metadata,
                 "collected_at": datetime.now(timezone.utc).isoformat(),
-                "refresh_frequency": "1 day" # Consider if this should be set differently or removed
+                "refresh_frequency": "1 day"
             }).execute()
 
             if not response.data:
                 logger.error("Failed to store columns metadata")
                 return False
 
-            logger.info(f"Stored metadata for columns across {len(columns_by_table)} tables")
+            logger.info(f"Successfully stored metadata for columns across {len(columns_by_table)} tables")
             return True
 
         except Exception as e:
             logger.error(f"Error storing columns metadata: {str(e)}")
+            import traceback
+            logger.error(traceback.format_exc())
             return False
 
     def store_statistics_metadata(self, connection_id: str, stats_by_table: Dict[str, Dict]) -> bool:
@@ -116,18 +124,20 @@ class MetadataStorageService:
                 "metadata_type": "statistics",
                 "metadata": metadata,
                 "collected_at": datetime.now(timezone.utc).isoformat(),
-                "refresh_frequency": "1 day" # Consider if this should be set differently or removed
+                "refresh_frequency": "1 day"
             }).execute()
 
             if not response.data:
                 logger.error("Failed to store statistics metadata")
                 return False
 
-            logger.info(f"Stored statistics metadata for {len(stats_by_table)} tables")
+            logger.info(f"Successfully stored statistics metadata for {len(stats_by_table)} tables")
             return True
 
         except Exception as e:
             logger.error(f"Error storing statistics metadata: {str(e)}")
+            import traceback
+            logger.error(traceback.format_exc())
             return False
 
     def get_metadata(self, connection_id: str, metadata_type: str) -> Optional[Dict]:
@@ -158,12 +168,82 @@ class MetadataStorageService:
             logger.error(f"Error getting {metadata_type} metadata: {str(e)}")
             return None
 
+    def get_tables_metadata(self, connection_id: str) -> Optional[List[Dict]]:
+        """Get tables metadata for verification"""
+        try:
+            metadata_result = self.get_metadata(connection_id, "tables")
+            if metadata_result and "metadata" in metadata_result:
+                return metadata_result["metadata"].get("tables", [])
+            return None
+        except Exception as e:
+            logger.error(f"Error getting tables metadata: {str(e)}")
+            return None
+
+    def get_columns_metadata(self, connection_id: str, table_name: str = None) -> Optional[Dict]:
+        """Get columns metadata for verification"""
+        try:
+            metadata_result = self.get_metadata(connection_id, "columns")
+            if metadata_result and "metadata" in metadata_result:
+                columns_by_table = metadata_result["metadata"].get("columns_by_table", {})
+                if table_name:
+                    return columns_by_table.get(table_name, [])
+                return columns_by_table
+            return None
+        except Exception as e:
+            logger.error(f"Error getting columns metadata: {str(e)}")
+            return None
+
+    def get_statistics_metadata(self, connection_id: str, table_name: str = None) -> Optional[Dict]:
+        """Get statistics metadata for verification"""
+        try:
+            metadata_result = self.get_metadata(connection_id, "statistics")
+            if metadata_result and "metadata" in metadata_result:
+                stats_by_table = metadata_result["metadata"].get("statistics_by_table", {})
+                if table_name:
+                    return stats_by_table.get(table_name, {})
+                return stats_by_table
+            return None
+        except Exception as e:
+            logger.error(f"Error getting statistics metadata: {str(e)}")
+            return None
+
+    def verify_tables_stored(self, connection_id: str) -> bool:
+        """Verify that tables metadata was actually stored"""
+        try:
+            tables = self.get_tables_metadata(connection_id)
+            return tables is not None and len(tables) > 0
+        except Exception:
+            return False
+
+    def verify_columns_stored(self, connection_id: str, table_name: str = None) -> bool:
+        """Verify that columns metadata was actually stored"""
+        try:
+            columns = self.get_columns_metadata(connection_id, table_name)
+            if table_name:
+                return columns is not None and len(columns) > 0
+            else:
+                return columns is not None and len(columns) > 0
+        except Exception:
+            return False
+
+    def verify_statistics_stored(self, connection_id: str, table_name: str = None) -> bool:
+        """Verify that statistics metadata was actually stored"""
+        try:
+            stats = self.get_statistics_metadata(connection_id, table_name)
+            if table_name:
+                return stats is not None and len(stats) > 0
+            else:
+                return stats is not None and len(stats) > 0
+        except Exception:
+            return False
+
     def _calculate_freshness(self, collected_at: str) -> Dict:
         """Calculate metadata freshness"""
         if not collected_at:
             return {"status": "unknown", "age_seconds": None}
 
         try:
+            import datetime
             now = datetime.datetime.now(datetime.timezone.utc)
             collected = datetime.datetime.fromisoformat(collected_at.replace('Z', '+00:00'))
 
