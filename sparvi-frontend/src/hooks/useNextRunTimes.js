@@ -2,14 +2,14 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { automationAPI } from '../api/enhancedApiService';
 
 /**
- * Hook to manage next run times for automation
+ * Hook to manage next run times for automation - FIXED VERSION
  * @param {string} connectionId - Connection ID (optional, if null gets all connections)
  * @param {object} options - Hook options
  * @returns {object} Next run times data and methods
  */
 export const useNextRunTimes = (connectionId = null, options = {}) => {
   const {
-    refreshInterval = 60000, // 1 minute default
+    refreshInterval = 120000, // Increased to 2 minutes to reduce load
     enabled = true,
     onError = null
   } = options;
@@ -19,36 +19,59 @@ export const useNextRunTimes = (connectionId = null, options = {}) => {
   const [error, setError] = useState(null);
   const [lastUpdated, setLastUpdated] = useState(null);
 
-  // Use ref to track the current request to avoid race conditions
-  const currentRequestRef = useRef(null);
+  // Use refs to track state and prevent race conditions
   const mountedRef = useRef(true);
+  const currentRequestRef = useRef(null);
+  const refreshTimeoutRef = useRef(null);
+  const lastSuccessfulFetchRef = useRef(0);
+  const failureCountRef = useRef(0);
 
-  // Load next run times with improved error handling
+  // Minimum time between requests (prevent spam)
+  const MIN_REQUEST_INTERVAL = 30000; // 30 seconds
+
+  // Load next run times with improved error handling and rate limiting
   const loadNextRuns = useCallback(async (forceFresh = false) => {
-    if (!enabled || !mountedRef.current) return;
+    if (!enabled || !mountedRef.current) {
+      return;
+    }
+
+    // Rate limiting - don't make requests too frequently
+    const now = Date.now();
+    const timeSinceLastFetch = now - lastSuccessfulFetchRef.current;
+
+    if (!forceFresh && timeSinceLastFetch < MIN_REQUEST_INTERVAL) {
+      console.log(`Skipping request - too soon since last fetch (${timeSinceLastFetch}ms < ${MIN_REQUEST_INTERVAL}ms)`);
+      return;
+    }
+
+    // Cancel any existing request
+    if (currentRequestRef.current) {
+      currentRequestRef.current = null;
+    }
+
+    // Create a new request identifier
+    const requestId = `${connectionId || 'all'}-${Date.now()}`;
+    currentRequestRef.current = requestId;
 
     try {
       setError(null);
 
-      // Cancel any existing request
-      if (currentRequestRef.current) {
-        currentRequestRef.current = null;
-      }
-
-      // Create a new request identifier
-      const requestId = Date.now();
-      currentRequestRef.current = requestId;
+      console.log(`Loading next run times for ${connectionId ? `connection: ${connectionId}` : 'all connections'}`);
 
       let response;
       if (connectionId) {
-        console.log(`Loading next run times for connection: ${connectionId}`);
-        response = await automationAPI.getNextRunTimes(connectionId, { forceFresh });
+        response = await automationAPI.getNextRunTimes(connectionId, {
+          forceFresh,
+          requestId: `next-runs-${connectionId}`
+        });
       } else {
-        console.log('Loading next run times for all connections');
-        response = await automationAPI.getAllNextRunTimes({ forceFresh });
+        response = await automationAPI.getAllNextRunTimes({
+          forceFresh,
+          requestId: 'next-runs-all'
+        });
       }
 
-      // Check if this request is still current (not cancelled)
+      // Check if this request is still current
       if (currentRequestRef.current !== requestId || !mountedRef.current) {
         console.log('Request was cancelled or component unmounted, ignoring response');
         return;
@@ -57,9 +80,9 @@ export const useNextRunTimes = (connectionId = null, options = {}) => {
       // Handle null or undefined response
       if (!response) {
         console.warn('Received null/undefined response from next run times API');
-        // Don't treat this as an error - just use empty state
         setNextRuns({});
         setLastUpdated(new Date());
+        lastSuccessfulFetchRef.current = now;
         return;
       }
 
@@ -67,13 +90,14 @@ export const useNextRunTimes = (connectionId = null, options = {}) => {
       if (response.error) {
         console.error('API returned error:', response.error);
 
-        // Only set error if it's not a "not found" type error
-        if (!response.error.includes('not found')) {
+        // Only treat as real error if it's not a "not found" type
+        if (!response.error.toLowerCase().includes('not found') &&
+            !response.error.toLowerCase().includes('no automation')) {
           throw new Error(response.error);
         } else {
-          // For "not found" errors, just use empty state
           setNextRuns({});
           setLastUpdated(new Date());
+          lastSuccessfulFetchRef.current = now;
           return;
         }
       }
@@ -84,34 +108,37 @@ export const useNextRunTimes = (connectionId = null, options = {}) => {
       if (connectionId) {
         // Single connection response
         normalizedRuns = response.next_runs || {};
-        console.log(`Loaded next runs for connection ${connectionId}:`, normalizedRuns);
+        console.log(`Loaded next runs for connection ${connectionId}:`, Object.keys(normalizedRuns).length, 'automation types');
       } else {
         // All connections response
         normalizedRuns = response.next_runs_by_connection || {};
-        console.log('Loaded next runs for all connections:', Object.keys(normalizedRuns));
+        console.log('Loaded next runs for all connections:', Object.keys(normalizedRuns).length, 'connections');
       }
 
       setNextRuns(normalizedRuns);
       setLastUpdated(new Date());
+      lastSuccessfulFetchRef.current = now;
+      failureCountRef.current = 0; // Reset failure count on success
 
     } catch (err) {
       // Only handle error if this request is still current
-      if (currentRequestRef.current === null || !mountedRef.current) {
+      if (currentRequestRef.current !== requestId || !mountedRef.current) {
         console.log('Ignoring error from cancelled request');
         return;
       }
 
-      console.error('Error loading next run times:', err);
+      failureCountRef.current += 1;
+      console.error('Error loading next run times (attempt', failureCountRef.current, '):', err);
 
       // Categorize the error
       let errorMessage = 'Unknown error loading next run times';
 
-      if (err?.message) {
-        if (err.message.includes('cancelled') || err.message.includes('aborted')) {
-          // Request was cancelled - don't set error state
-          console.log('Request was cancelled, not setting error state');
-          return;
-        } else if (err.message.includes('network') || err.message.includes('fetch')) {
+      if (err?.cancelled || err?.name === 'CanceledError') {
+        // Request was cancelled - don't set error state
+        console.log('Request was cancelled, not setting error state');
+        return;
+      } else if (err?.message) {
+        if (err.message.includes('network') || err.message.includes('fetch')) {
           errorMessage = 'Network error - unable to connect to automation service';
         } else if (err.message.includes('timeout')) {
           errorMessage = 'Request timeout - automation service may be busy';
@@ -120,8 +147,11 @@ export const useNextRunTimes = (connectionId = null, options = {}) => {
         }
       }
 
-      setError(errorMessage);
-      if (onError) onError(err);
+      // Only set error state if we've had multiple failures
+      if (failureCountRef.current >= 2) {
+        setError(errorMessage);
+        if (onError) onError(err);
+      }
 
       // Set empty state on error to prevent UI crashes
       setNextRuns({});
@@ -139,27 +169,66 @@ export const useNextRunTimes = (connectionId = null, options = {}) => {
       return;
     }
 
+    // Clear any existing timeout
+    if (refreshTimeoutRef.current) {
+      clearTimeout(refreshTimeoutRef.current);
+    }
+
     // Small delay to let other components settle before making requests
-    const initialTimeout = setTimeout(() => {
+    refreshTimeoutRef.current = setTimeout(() => {
       if (mountedRef.current) {
         loadNextRuns();
       }
-    }, 100);
+    }, 1000); // Increased delay to 1 second
 
-    return () => clearTimeout(initialTimeout);
+    return () => {
+      if (refreshTimeoutRef.current) {
+        clearTimeout(refreshTimeoutRef.current);
+      }
+    };
   }, [loadNextRuns, enabled]);
 
-  // Set up refresh interval with better cleanup
+  // Set up refresh interval with better cleanup and exponential backoff
   useEffect(() => {
     if (!enabled || !refreshInterval) return;
 
-    const interval = setInterval(() => {
-      if (mountedRef.current) {
-        loadNextRuns(true); // Force fresh data on interval
+    const startInterval = () => {
+      // Clear any existing interval
+      if (refreshTimeoutRef.current) {
+        clearTimeout(refreshTimeoutRef.current);
       }
-    }, refreshInterval);
 
-    return () => clearInterval(interval);
+      const scheduleNext = () => {
+        if (!mountedRef.current) return;
+
+        // Calculate delay with exponential backoff on failures
+        let delay = refreshInterval;
+        if (failureCountRef.current > 0) {
+          delay = Math.min(refreshInterval * Math.pow(2, failureCountRef.current - 1), 300000); // Max 5 minutes
+          console.log(`Using exponential backoff: ${delay}ms due to ${failureCountRef.current} failures`);
+        }
+
+        refreshTimeoutRef.current = setTimeout(() => {
+          if (mountedRef.current) {
+            loadNextRuns(true).finally(() => {
+              scheduleNext(); // Schedule the next refresh
+            });
+          }
+        }, delay);
+      };
+
+      scheduleNext();
+    };
+
+    // Start the interval after initial load
+    const initialTimer = setTimeout(startInterval, 5000); // Wait 5 seconds after mount
+
+    return () => {
+      clearTimeout(initialTimer);
+      if (refreshTimeoutRef.current) {
+        clearTimeout(refreshTimeoutRef.current);
+      }
+    };
   }, [loadNextRuns, refreshInterval, enabled]);
 
   // Cleanup on unmount
@@ -167,14 +236,19 @@ export const useNextRunTimes = (connectionId = null, options = {}) => {
     return () => {
       mountedRef.current = false;
       currentRequestRef.current = null;
+      if (refreshTimeoutRef.current) {
+        clearTimeout(refreshTimeoutRef.current);
+      }
     };
   }, []);
 
   // Refresh function for manual refresh
-  const refresh = useCallback(() => {
+  const refresh = useCallback(async () => {
     if (!enabled || !mountedRef.current) return Promise.resolve();
 
     setLoading(true);
+    setError(null);
+    failureCountRef.current = 0; // Reset failure count on manual refresh
     return loadNextRuns(true);
   }, [loadNextRuns, enabled]);
 
@@ -182,14 +256,19 @@ export const useNextRunTimes = (connectionId = null, options = {}) => {
   const getNextRun = useCallback((automationType, targetConnectionId = null) => {
     const connId = targetConnectionId || connectionId;
 
-    if (connectionId) {
-      // Single connection mode
-      return nextRuns[automationType] || null;
-    } else {
-      // Multi-connection mode
-      if (connId && nextRuns[connId]) {
-        return nextRuns[connId].next_runs?.[automationType] || null;
+    try {
+      if (connectionId) {
+        // Single connection mode
+        return nextRuns[automationType] || null;
+      } else {
+        // Multi-connection mode
+        if (connId && nextRuns[connId]) {
+          return nextRuns[connId].next_runs?.[automationType] || null;
+        }
+        return null;
       }
+    } catch (err) {
+      console.error('Error in getNextRun:', err);
       return null;
     }
   }, [nextRuns, connectionId]);
@@ -295,7 +374,10 @@ export const useNextRunTimes = (connectionId = null, options = {}) => {
  * @returns {object} Single automation next run data
  */
 export const useAutomationNextRun = (connectionId, automationType, options = {}) => {
-  const { nextRuns, loading, error, refresh } = useNextRunTimes(connectionId, options);
+  const { nextRuns, loading, error, refresh } = useNextRunTimes(connectionId, {
+    ...options,
+    refreshInterval: options.refreshInterval || 180000 // 3 minutes for single automation
+  });
 
   const nextRun = nextRuns[automationType] || null;
 

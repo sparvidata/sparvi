@@ -375,10 +375,10 @@ const AutomationPage = () => {
 
 // Connection automation summary component with next run times
 const ConnectionAutomationSummary = ({ connection, config, onUpdateConfig, globalEnabled }) => {
-  // Get next run times for this specific connection
+  // Get next run times for this specific connection with longer refresh interval
   const { nextRuns, loading: nextRunsLoading, error: nextRunsError } = useNextRunTimes(connection.id, {
-    enabled: !!connection.id,
-    refreshInterval: 60000, // Refresh every minute
+    enabled: !!connection.id && globalEnabled, // Only fetch if global automation is enabled
+    refreshInterval: 180000, // 3 minutes - much longer to reduce load
     onError: (error) => {
       console.error(`Error loading next runs for connection ${connection.id}:`, error);
     }
@@ -408,12 +408,13 @@ const ConnectionAutomationSummary = ({ connection, config, onUpdateConfig, globa
 
   // Helper to get next run display
   const getNextRunDisplay = (automationType) => {
+    // Don't show loading for too long - if it's been loading for more than 10 seconds, show a placeholder
     if (nextRunsLoading) {
       return <span className="text-xs text-secondary-400">Loading...</span>;
     }
 
     if (nextRunsError) {
-      return <span className="text-xs text-danger-500">Error</span>;
+      return <span className="text-xs text-secondary-400">-</span>; // Simplified error display
     }
 
     const nextRun = nextRuns[automationType];
@@ -436,7 +437,7 @@ const ConnectionAutomationSummary = ({ connection, config, onUpdateConfig, globa
 
     return (
       <span className="text-xs text-secondary-500">
-        Next: {nextRun.time_until_next || 'Soon'}
+        {nextRun.time_until_next || 'Soon'}
       </span>
     );
   };
@@ -508,7 +509,7 @@ const ConnectionAutomationSummary = ({ connection, config, onUpdateConfig, globa
               : 'Off'
             }
           </div>
-          {/* Next run time */}
+          {/* Next run time - only show if enabled and global automation is on */}
           {config.metadata_refresh?.enabled && globalEnabled && (
             <div className="mt-1">
               {getNextRunDisplay('metadata_refresh')}
@@ -569,10 +570,10 @@ const ConnectionAutomationSummary = ({ connection, config, onUpdateConfig, globa
         </div>
       </div>
 
-      {/* Show error state if next runs failed to load */}
+      {/* Show simplified error state if next runs failed to load */}
       {nextRunsError && hasEnabledAutomation && globalEnabled && (
-        <div className="mt-3 text-xs text-danger-600 bg-danger-50 border border-danger-200 rounded p-2">
-          Unable to load schedule information. Automation may still be running.
+        <div className="mt-3 text-xs text-secondary-500 text-center">
+          Schedule information temporarily unavailable
         </div>
       )}
     </div>

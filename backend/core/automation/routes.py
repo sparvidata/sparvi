@@ -3,6 +3,8 @@ import logging
 from datetime import datetime, timezone
 from .events import get_automation_events, get_automation_event_stats
 from .api import AutomationAPI
+import time
+from functools import wraps
 
 logger = logging.getLogger(__name__)
 
@@ -456,8 +458,28 @@ def register_automation_routes(app, token_required):
 
     logger.info("Automation routes registered successfully")
 
-    # Add these routes to backend/core/automation/routes.py
+    _rate_limit_cache = {}
 
+    def rate_limit(seconds=30):
+        def decorator(f):
+            @wraps(f)
+            def decorated_function(*args, **kwargs):
+                # Get client identifier (could be IP + user)
+                client_id = f"{request.remote_addr}_{kwargs.get('connection_id', 'unknown')}"
+                now = time.time()
+
+                if client_id in _rate_limit_cache:
+                    if now - _rate_limit_cache[client_id] < seconds:
+                        return jsonify({"error": "Rate limit exceeded"}), 429
+
+                _rate_limit_cache[client_id] = now
+                return f(*args, **kwargs)
+
+            return decorated_function
+
+        return decorator
+
+    @rate_limit(30)  # Add this decorator
     @app.route("/api/automation/connections/<connection_id>/next-runs", methods=["GET"])
     @token_required
     def get_connection_next_runs(current_user, organization_id, connection_id):
