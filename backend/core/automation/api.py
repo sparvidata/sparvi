@@ -1,4 +1,5 @@
 import logging
+import traceback
 import uuid
 from typing import Dict, Any, List, Optional
 from datetime import datetime, timedelta, timezone
@@ -433,17 +434,17 @@ class AutomationAPI:
             logger.error(f"Error cancelling job: {str(e)}")
             return {"error": str(e)}
 
-    # ENHANCED VERSION - Replace the get_next_run_times method in backend/core/automation/api.py
-
     def get_next_run_times(self, organization_id: str, connection_id: str) -> Dict[str, Any]:
         """
         Get next estimated run times for all automation types for a connection
-        Enhanced to calculate from enable time when no job history exists
+        Enhanced with better error handling and logging
         """
         try:
+            logger.info(f"Getting next run times for connection {connection_id} in organization {organization_id}")
+
             # First verify the connection exists and belongs to the organization
             connection_response = self.supabase.supabase.table("database_connections") \
-                .select("id") \
+                .select("id, name") \
                 .eq("id", connection_id) \
                 .eq("organization_id", organization_id) \
                 .execute()
@@ -456,7 +457,10 @@ class AutomationAPI:
                     "error": "Connection not found"
                 }
 
-            # Get connection config WITH metadata about when each automation was enabled
+            connection_name = connection_response.data[0]["name"]
+            logger.info(f"Found connection: {connection_name}")
+
+            # Get connection config
             config_response = self.supabase.supabase.table("automation_connection_configs") \
                 .select("*") \
                 .eq("connection_id", connection_id) \
@@ -466,11 +470,13 @@ class AutomationAPI:
                 logger.info(f"No automation configuration found for connection {connection_id}")
                 return {
                     "connection_id": connection_id,
+                    "connection_name": connection_name,
                     "next_runs": {},
                     "message": "No automation configuration found"
                 }
 
             config = config_response.data[0]
+            logger.info(f"Found automation config for connection {connection_id}")
 
             # Get recent jobs to determine last run times
             try:
@@ -490,13 +496,12 @@ class AutomationAPI:
                             if job_type not in jobs_by_type:
                                 jobs_by_type[job_type] = []
                             jobs_by_type[job_type].append(job)
+
+                logger.info(f"Found {len(recent_jobs_response.data or [])} recent jobs for connection {connection_id}")
+
             except Exception as jobs_error:
                 logger.warning(f"Error fetching recent jobs for connection {connection_id}: {str(jobs_error)}")
                 jobs_by_type = {}
-
-            # Also check for automation enable/disable history
-            # This would help us know WHEN each automation was last enabled
-            automation_history = self._get_automation_enable_history(connection_id)
 
             # Calculate next run times for each automation type
             next_runs = {}
@@ -511,37 +516,132 @@ class AutomationAPI:
                     automation_config = config.get(config_key, {})
 
                     if automation_config and automation_config.get("enabled", False):
-                        # Get the enable time for this specific automation type
-                        enable_time = automation_history.get(job_type, {}).get("enabled_at")
-                        if not enable_time:
-                            # Fall back to overall config update time
-                            enable_time = config.get("updated_at") or config.get("created_at")
+                        logger.info(f"Calculating next run for {job_type}")
 
-                        next_run_info = self._calculate_next_run_enhanced(
+                        next_run_info = self._calculate_next_run_simple(
                             automation_config,
                             jobs_by_type.get(job_type, []),
-                            job_type,
-                            enable_time
+                            job_type
                         )
-                        if next_run_info:  # Only add if calculation succeeded
+
+                        if next_run_info:
                             next_runs[job_type] = next_run_info
+                            logger.info(f"Next run for {job_type}: {next_run_info.get('time_until_next', 'unknown')}")
+                    else:
+                        logger.info(f"Automation {job_type} is disabled for connection {connection_id}")
+
                 except Exception as calc_error:
                     logger.error(f"Error calculating next run for {job_type}: {str(calc_error)}")
+                    # Continue with other automation types
                     continue
 
-            return {
+            result = {
                 "connection_id": connection_id,
+                "connection_name": connection_name,
                 "next_runs": next_runs,
                 "generated_at": datetime.now(timezone.utc).isoformat()
             }
 
+            logger.info(
+                f"Successfully calculated next runs for connection {connection_id}: {len(next_runs)} automation types")
+            return result
+
         except Exception as e:
             logger.error(f"Error getting next run times for connection {connection_id}: {str(e)}")
+            logger.error(f"Full traceback: {traceback.format_exc()}")
             return {
                 "connection_id": connection_id,
                 "next_runs": {},
                 "error": str(e)
             }
+
+    def _calculate_next_run_simple(self, config: Dict[str, Any], recent_jobs: List[Dict[str, Any]],
+                                   job_type: str) -> Dict[str, Any]:
+        """
+        Simplified calculation for next run times with better error handling
+        """
+        try:
+            if not config or not isinstance(config, dict):
+                logger.warning(f"Invalid config for job type {job_type}")
+                return None
+
+            interval_hours = config.get("interval_hours", 24)
+            if not isinstance(interval_hours, (int, float)) or interval_hours <= 0:
+                logger.warning(f"Invalid interval_hours for job type {job_type}: {interval_hours}")
+                interval_hours = 24
+
+            interval_seconds = interval_hours * 3600
+            now = datetime.now(timezone.utc)
+
+            next_run_info = {
+                "enabled": True,
+                "interval_hours": interval_hours,
+                "next_run_timestamp": None,
+                "next_run_iso": None,
+                "time_until_next": None,
+                "is_overdue": False,
+                "last_run": None,
+                "last_run_status": None,
+                "currently_running": False,
+                "calculation_method": None
+            }
+
+            # Find running jobs
+            running_jobs = [job for job in recent_jobs if job.get("status") == "running"]
+            if running_jobs:
+                next_run_info["currently_running"] = True
+                # Estimate next run after current job completes
+                next_run_time = now + timedelta(minutes=10) + timedelta(seconds=interval_seconds)
+                next_run_info.update({
+                    "next_run_timestamp": next_run_time.timestamp(),
+                    "next_run_iso": next_run_time.isoformat(),
+                    "time_until_next": self._format_time_until(next_run_time, now),
+                    "calculation_method": "from_running_job"
+                })
+                return next_run_info
+
+            # Find completed jobs
+            completed_jobs = [job for job in recent_jobs if job.get("status") in ["completed", "failed"]]
+            if completed_jobs:
+                # Use most recent completed job
+                last_job = completed_jobs[0]
+                last_run_time_str = last_job.get("completed_at") or last_job.get("created_at")
+
+                if last_run_time_str:
+                    try:
+                        last_run_time = datetime.fromisoformat(last_run_time_str.replace('Z', '+00:00'))
+                        next_run_time = last_run_time + timedelta(seconds=interval_seconds)
+
+                        is_overdue = next_run_time < now
+
+                        next_run_info.update({
+                            "next_run_timestamp": next_run_time.timestamp(),
+                            "next_run_iso": next_run_time.isoformat(),
+                            "time_until_next": self._format_time_until(next_run_time, now),
+                            "is_overdue": is_overdue,
+                            "last_run": last_run_time_str,
+                            "last_run_status": last_job.get("status"),
+                            "calculation_method": "from_last_completion"
+                        })
+                        return next_run_info
+
+                    except Exception as time_error:
+                        logger.warning(f"Error parsing job completion time for {job_type}: {str(time_error)}")
+
+            # No job history - estimate based on current time
+            next_run_time = now + timedelta(seconds=interval_seconds)
+            next_run_info.update({
+                "next_run_timestamp": next_run_time.timestamp(),
+                "next_run_iso": next_run_time.isoformat(),
+                "time_until_next": self._format_time_until(next_run_time, now),
+                "calculation_method": "current_time_estimate"
+            })
+
+            return next_run_info
+
+        except Exception as e:
+            logger.error(f"Error calculating next run for {job_type}: {str(e)}")
+            return None
 
     def _get_automation_enable_history(self, connection_id: str) -> Dict[str, Any]:
         """
