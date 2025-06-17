@@ -142,7 +142,7 @@ def cache_with_timeout(timeout_seconds: int = 300, prefix: str = None):
     return decorator
 
 
-# Cache for schema metadata (specifically connection metdata)
+# Cache for schema metadata (specifically connection metadata)
 def cached_metadata(func: Callable) -> Callable:
     """
     Specialized cache decorator for metadata methods
@@ -200,53 +200,62 @@ def cached_metadata(func: Callable) -> Callable:
 # Example application to storage service
 def apply_caching_to_storage_service(MetadataStorageService):
     """Apply caching decorators to storage service methods"""
-    # Cache the get_metadata method
-    original_get_metadata = MetadataStorageService.get_metadata
-    MetadataStorageService.get_metadata = cached_metadata(original_get_metadata)
+    try:
+        # Cache the get_metadata method
+        if hasattr(MetadataStorageService, 'get_metadata'):
+            original_get_metadata = MetadataStorageService.get_metadata
+            MetadataStorageService.get_metadata = cached_metadata(original_get_metadata)
 
-    # Add invalidation methods
-    def invalidate_metadata_cache(self, connection_id: str, metadata_type: str = None):
-        """Invalidate metadata cache for a connection"""
-        prefix = f"metadata:{connection_id}"
-        if metadata_type:
-            prefix += f":{metadata_type}"
-        return metadata_cache.invalidate(prefix)
+        # Add invalidation methods
+        def invalidate_metadata_cache(self, connection_id: str, metadata_type: str = None):
+            """Invalidate metadata cache for a connection"""
+            prefix = f"metadata:{connection_id}"
+            if metadata_type:
+                prefix += f":{metadata_type}"
+            return metadata_cache.invalidate(prefix)
 
-    MetadataStorageService.invalidate_metadata_cache = invalidate_metadata_cache
+        MetadataStorageService.invalidate_metadata_cache = invalidate_metadata_cache
 
-    # Override store methods to invalidate cache after storing
-    original_store_tables = MetadataStorageService.store_tables_metadata
+        # Override store methods to invalidate cache after storing
+        if hasattr(MetadataStorageService, 'store_tables_metadata'):
+            original_store_tables = MetadataStorageService.store_tables_metadata
 
-    @wraps(original_store_tables)
-    def wrapped_store_tables(self, connection_id, tables_metadata):
-        result = original_store_tables(self, connection_id, tables_metadata)
-        # Invalidate the cache for this connection's tables metadata
-        self.invalidate_metadata_cache(connection_id, "tables")
-        return result
+            @wraps(original_store_tables)
+            def wrapped_store_tables(self, connection_id, tables_metadata):
+                result = original_store_tables(self, connection_id, tables_metadata)
+                # Invalidate the cache for this connection's tables metadata
+                self.invalidate_metadata_cache(connection_id, "tables")
+                return result
 
-    MetadataStorageService.store_tables_metadata = wrapped_store_tables
+            MetadataStorageService.store_tables_metadata = wrapped_store_tables
 
-    original_store_columns = MetadataStorageService.store_columns_metadata
+        if hasattr(MetadataStorageService, 'store_columns_metadata'):
+            original_store_columns = MetadataStorageService.store_columns_metadata
 
-    @wraps(original_store_columns)
-    def wrapped_store_columns(self, connection_id, columns_by_table):
-        result = original_store_columns(self, connection_id, columns_by_table)
-        # Invalidate the cache for this connection's columns metadata
-        self.invalidate_metadata_cache(connection_id, "columns")
-        return result
+            @wraps(original_store_columns)
+            def wrapped_store_columns(self, connection_id, columns_by_table):
+                result = original_store_columns(self, connection_id, columns_by_table)
+                # Invalidate the cache for this connection's columns metadata
+                self.invalidate_metadata_cache(connection_id, "columns")
+                return result
 
-    MetadataStorageService.store_columns_metadata = wrapped_store_columns
+            MetadataStorageService.store_columns_metadata = wrapped_store_columns
 
-    original_store_statistics = MetadataStorageService.store_statistics_metadata
+        if hasattr(MetadataStorageService, 'store_statistics_metadata'):
+            original_store_statistics = MetadataStorageService.store_statistics_metadata
 
-    @wraps(original_store_statistics)
-    def wrapped_store_statistics(self, connection_id, stats_by_table):
-        result = original_store_statistics(self, connection_id, stats_by_table)
-        # Invalidate the cache for this connection's statistics metadata
-        self.invalidate_metadata_cache(connection_id, "statistics")
-        return result
+            @wraps(original_store_statistics)
+            def wrapped_store_statistics(self, connection_id, stats_by_table):
+                result = original_store_statistics(self, connection_id, stats_by_table)
+                # Invalidate the cache for this connection's statistics metadata
+                self.invalidate_metadata_cache(connection_id, "statistics")
+                return result
 
-    MetadataStorageService.store_statistics_metadata = wrapped_store_statistics
+            MetadataStorageService.store_statistics_metadata = wrapped_store_statistics
+
+        logger.info("Applied caching to MetadataStorageService")
+    except Exception as e:
+        logger.warning(f"Could not apply caching to MetadataStorageService: {str(e)}")
 
     return MetadataStorageService
 
@@ -254,18 +263,31 @@ def apply_caching_to_storage_service(MetadataStorageService):
 # Apply caching to SchemaChangeDetector
 def apply_caching_to_schema_detector(SchemaChangeDetector):
     """Apply caching to schema change detector methods"""
+    try:
+        # Cache the compare_schemas method with a short timeout
+        if hasattr(SchemaChangeDetector, 'compare_schemas'):
+            original_compare = SchemaChangeDetector.compare_schemas
+            SchemaChangeDetector.compare_schemas = cache_with_timeout(
+                timeout_seconds=60, prefix="schema_compare"
+            )(original_compare)
 
-    # Cache the compare_schemas method with a short timeout
-    original_compare = SchemaChangeDetector.compare_schemas
-    SchemaChangeDetector.compare_schemas = cache_with_timeout(timeout_seconds=60,
-                                                              prefix="schema_compare")(original_compare)
+        # Cache detect_changes_for_connection with a very short timeout since it's important to get fresh results
+        if hasattr(SchemaChangeDetector, 'detect_changes_for_connection'):
+            original_detect = SchemaChangeDetector.detect_changes_for_connection
+            SchemaChangeDetector.detect_changes_for_connection = cache_with_timeout(
+                timeout_seconds=30, prefix="detect_changes"
+            )(original_detect)
 
-    # Don't cache detect_changes_for_connection since it's important to always get fresh results
+        # Only try to cache _extract_tables if it exists
+        if hasattr(SchemaChangeDetector, '_extract_tables'):
+            original_extract = SchemaChangeDetector._extract_tables
+            SchemaChangeDetector._extract_tables = cache_with_timeout(
+                timeout_seconds=30, prefix="extract_tables"
+            )(original_extract)
 
-    # Cache _extract_tables with a short timeout
-    original_extract = SchemaChangeDetector._extract_tables
-    SchemaChangeDetector._extract_tables = cache_with_timeout(timeout_seconds=30,
-                                                              prefix="extract_tables")(original_extract)
+        logger.info("Applied caching to SchemaChangeDetector")
+    except Exception as e:
+        logger.warning(f"Could not apply caching to SchemaChangeDetector: {str(e)}")
 
     return SchemaChangeDetector
 
@@ -273,30 +295,40 @@ def apply_caching_to_schema_detector(SchemaChangeDetector):
 # Apply caching to database connector methods for improved performance
 def apply_caching_to_connector(SnowflakeConnector):
     """Apply caching to database connector methods"""
+    try:
+        # Cache get_tables with a longer timeout
+        if hasattr(SnowflakeConnector, 'get_tables'):
+            original_get_tables = SnowflakeConnector.get_tables
+            SnowflakeConnector.get_tables = cache_with_timeout(
+                timeout_seconds=600, prefix="snowflake_tables"
+            )(original_get_tables)
 
-    # Cache get_tables with a longer timeout
-    original_get_tables = SnowflakeConnector.get_tables
-    SnowflakeConnector.get_tables = cache_with_timeout(timeout_seconds=600,
-                                                       prefix="snowflake_tables")(original_get_tables)
+        # Cache get_columns with a medium timeout
+        if hasattr(SnowflakeConnector, 'get_columns'):
+            original_get_columns = SnowflakeConnector.get_columns
+            SnowflakeConnector.get_columns = cache_with_timeout(
+                timeout_seconds=300, prefix="snowflake_columns"
+            )(original_get_columns)
 
-    # Cache get_columns with a medium timeout
-    original_get_columns = SnowflakeConnector.get_columns
-    SnowflakeConnector.get_columns = cache_with_timeout(timeout_seconds=300,
-                                                        prefix="snowflake_columns")(original_get_columns)
+        # Cache get_primary_keys with a medium timeout
+        if hasattr(SnowflakeConnector, 'get_primary_keys'):
+            original_get_pk = SnowflakeConnector.get_primary_keys
+            SnowflakeConnector.get_primary_keys = cache_with_timeout(
+                timeout_seconds=300, prefix="snowflake_pk"
+            )(original_get_pk)
 
-    # Cache get_primary_keys with a medium timeout
-    original_get_pk = SnowflakeConnector.get_primary_keys
-    SnowflakeConnector.get_primary_keys = cache_with_timeout(timeout_seconds=300,
-                                                             prefix="snowflake_pk")(original_get_pk)
+        # Add cache invalidation method
+        def invalidate_connector_cache(self):
+            """Invalidate all connector caches"""
+            invalidated = metadata_cache.invalidate("snowflake_")
+            logger.info(f"Invalidated {invalidated} connector cache entries")
+            return invalidated
 
-    # Add cache invalidation method
-    def invalidate_connector_cache(self):
-        """Invalidate all connector caches"""
-        invalidated = metadata_cache.invalidate("snowflake_")
-        logger.info(f"Invalidated {invalidated} connector cache entries")
-        return invalidated
+        SnowflakeConnector.invalidate_connector_cache = invalidate_connector_cache
 
-    SnowflakeConnector.invalidate_connector_cache = invalidate_connector_cache
+        logger.info("Applied caching to SnowflakeConnector")
+    except Exception as e:
+        logger.warning(f"Could not apply caching to SnowflakeConnector: {str(e)}")
 
     return SnowflakeConnector
 
@@ -357,45 +389,58 @@ def batch_compare_schemas(connection_id, current_tables, previous_tables,
         logger.info(f"Processing schema comparison batch {batch_idx + 1}: tables {start_idx + 1}-{end_idx}")
 
         # Create detector instance
-        from core.metadata.schema_change_detector import SchemaChangeDetector
-        detector = SchemaChangeDetector()
+        try:
+            from core.metadata.schema_change_detector import SchemaChangeDetector
+            detector = SchemaChangeDetector()
 
-        # Compare each table in the batch
-        for table_name in batch_tables:
-            # Column changes
-            column_changes = detector._compare_table_columns(
-                table_name,
-                current_tables[table_name].get("columns", []),
-                previous_tables[table_name].get("columns", [])
-            )
-            changes.extend(column_changes)
+            # Compare each table in the batch
+            for table_name in batch_tables:
+                try:
+                    # Column changes
+                    if hasattr(detector, '_compare_table_columns'):
+                        column_changes = detector._compare_table_columns(
+                            table_name,
+                            current_tables[table_name].get("columns", []),
+                            previous_tables[table_name].get("columns", [])
+                        )
+                        changes.extend(column_changes)
 
-            # Primary key changes
-            pk_changes = detector._compare_primary_keys(
-                table_name,
-                current_tables[table_name].get("primary_key", []),
-                previous_tables[table_name].get("primary_key", [])
-            )
-            changes.extend(pk_changes)
+                    # Primary key changes
+                    if hasattr(detector, '_compare_primary_keys'):
+                        pk_changes = detector._compare_primary_keys(
+                            table_name,
+                            current_tables[table_name].get("primary_key", []),
+                            previous_tables[table_name].get("primary_key", [])
+                        )
+                        changes.extend(pk_changes)
 
-            # Only process foreign keys and indexes for the first 2 batches
-            # as these are more expensive operations
-            if batch_idx < 2:
-                # Foreign key changes
-                fk_changes = detector._compare_foreign_keys(
-                    table_name,
-                    current_tables[table_name].get("foreign_keys", []),
-                    previous_tables[table_name].get("foreign_keys", [])
-                )
-                changes.extend(fk_changes)
+                    # Only process foreign keys and indexes for the first 2 batches
+                    # as these are more expensive operations
+                    if batch_idx < 2:
+                        # Foreign key changes
+                        if hasattr(detector, '_compare_foreign_keys'):
+                            fk_changes = detector._compare_foreign_keys(
+                                table_name,
+                                current_tables[table_name].get("foreign_keys", []),
+                                previous_tables[table_name].get("foreign_keys", [])
+                            )
+                            changes.extend(fk_changes)
 
-                # Index changes
-                index_changes = detector._compare_indexes(
-                    table_name,
-                    current_tables[table_name].get("indices", []),
-                    previous_tables[table_name].get("indices", [])
-                )
-                changes.extend(index_changes)
+                        # Index changes
+                        if hasattr(detector, '_compare_indexes'):
+                            index_changes = detector._compare_indexes(
+                                table_name,
+                                current_tables[table_name].get("indices", []),
+                                previous_tables[table_name].get("indices", [])
+                            )
+                            changes.extend(index_changes)
+                except Exception as table_error:
+                    logger.warning(f"Error comparing table {table_name}: {str(table_error)}")
+                    continue
+
+        except ImportError:
+            logger.warning("SchemaChangeDetector not available for batch comparison")
+            break
 
     return changes
 
@@ -403,24 +448,58 @@ def batch_compare_schemas(connection_id, current_tables, previous_tables,
 # Function to apply all caching optimizations
 def apply_performance_optimizations():
     """Apply all performance optimizations to the schema change detection system"""
-    # Import necessary classes
-    from core.metadata.storage_service import MetadataStorageService
-    from core.metadata.schema_change_detector import SchemaChangeDetector
-    from core.metadata.connectors import SnowflakeConnector
+    try:
+        logger.info("Starting to apply performance optimizations")
 
-    # Apply caching to all relevant classes
-    MetadataStorageService = apply_caching_to_storage_service(MetadataStorageService)
-    SchemaChangeDetector = apply_caching_to_schema_detector(SchemaChangeDetector)
-    SnowflakeConnector = apply_caching_to_connector(SnowflakeConnector)
+        # Initialize results dict
+        results = {}
 
-    logger.info("Applied performance optimizations to schema change detection system")
+        # Try to import and optimize MetadataStorageService
+        try:
+            from core.metadata.storage_service import MetadataStorageService
+            MetadataStorageService = apply_caching_to_storage_service(MetadataStorageService)
+            results["MetadataStorageService"] = MetadataStorageService
+            logger.info("Applied optimizations to MetadataStorageService")
+        except ImportError as e:
+            logger.warning(f"Could not import MetadataStorageService: {str(e)}")
+        except Exception as e:
+            logger.warning(f"Error optimizing MetadataStorageService: {str(e)}")
 
-    return {
-        "MetadataStorageService": MetadataStorageService,
-        "SchemaChangeDetector": SchemaChangeDetector,
-        "SnowflakeConnector": SnowflakeConnector
-    }
+        # Try to import and optimize SchemaChangeDetector
+        try:
+            from core.metadata.schema_change_detector import SchemaChangeDetector
+            SchemaChangeDetector = apply_caching_to_schema_detector(SchemaChangeDetector)
+            results["SchemaChangeDetector"] = SchemaChangeDetector
+            logger.info("Applied optimizations to SchemaChangeDetector")
+        except ImportError as e:
+            logger.warning(f"Could not import SchemaChangeDetector: {str(e)}")
+        except Exception as e:
+            logger.warning(f"Error optimizing SchemaChangeDetector: {str(e)}")
+
+        # Try to import and optimize SnowflakeConnector
+        try:
+            from core.metadata.connectors import SnowflakeConnector
+            SnowflakeConnector = apply_caching_to_connector(SnowflakeConnector)
+            results["SnowflakeConnector"] = SnowflakeConnector
+            logger.info("Applied optimizations to SnowflakeConnector")
+        except ImportError as e:
+            logger.warning(f"Could not import SnowflakeConnector: {str(e)}")
+        except Exception as e:
+            logger.warning(f"Error optimizing SnowflakeConnector: {str(e)}")
+
+        logger.info(f"Performance optimizations applied successfully to {len(results)} components")
+        return results
+
+    except Exception as e:
+        logger.error(f"Error applying performance optimizations: {str(e)}")
+        return {}
 
 
-# Execute the optimizations during app initialization
-optimized_classes = apply_performance_optimizations()
+# Only apply optimizations when specifically requested, not on import
+def get_optimized_classes():
+    """Get optimized classes - call this when you want to apply optimizations"""
+    return apply_performance_optimizations()
+
+
+# Don't run optimizations on import to avoid startup errors
+logger.info("Performance optimizations module loaded - call get_optimized_classes() to apply optimizations")

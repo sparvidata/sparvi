@@ -32,7 +32,7 @@ from core.validations.supabase_validation_manager import SupabaseValidationManag
 from core.history.supabase_profile_history import SupabaseProfileHistoryManager
 from core.metadata.manager import MetadataTaskManager
 from core.metadata.events import MetadataEventType, publish_metadata_event
-from core.utils.performance_optimizations import apply_performance_optimizations
+from core.utils.performance_optimizations import get_optimized_classes
 from core.anomalies.routes import register_anomaly_routes
 from core.anomalies.scheduler_service import AnomalyDetectionSchedulerService
 from routes import notifications_bp
@@ -790,23 +790,48 @@ anomaly_scheduler_service = None
 def initialize_anomaly_detection():
     global anomaly_scheduler_service
 
-    # Add debug logging
-    logger.info("Registering anomaly detection routes...")
+    try:
+        # Add debug logging
+        logger.info("Starting anomaly detection initialization...")
 
-    # Register routes
-    register_anomaly_routes(app, token_required)
+        # Register routes
+        logger.info("Registering anomaly detection routes...")
+        register_anomaly_routes(app, token_required)
 
-    # Add this to see all registered routes
-    logger.info("All registered routes:")
-    for rule in app.url_map.iter_rules():
-        if 'anomalies' in rule.rule:
+        # Log registered anomaly routes
+        anomaly_routes = [rule for rule in app.url_map.iter_rules() if 'anomalies' in rule.rule]
+        logger.info(f"Registered {len(anomaly_routes)} anomaly detection routes:")
+        for rule in anomaly_routes:
             logger.info(f"  {rule.methods} {rule.rule}")
 
-    # Start scheduler service in production mode
-    if os.environ.get('FLASK_ENV') != 'development':
-        anomaly_scheduler_service = AnomalyDetectionSchedulerService()
-        anomaly_scheduler_service.start()
-        logger.info("Anomaly detection scheduler service started")
+        # Always start the anomaly detection scheduler - no environment checks
+        logger.info("Starting anomaly detection scheduler service...")
+
+        try:
+            from core.anomalies.scheduler_service import AnomalyDetectionSchedulerService
+            anomaly_scheduler_service = AnomalyDetectionSchedulerService()
+            anomaly_scheduler_service.start()
+
+            logger.info("Anomaly detection scheduler service started successfully")
+
+            # Verify it's actually running
+            if hasattr(anomaly_scheduler_service, 'running') and anomaly_scheduler_service.running:
+                logger.info("Verified: Anomaly scheduler is running")
+            else:
+                logger.warning("Warning: Anomaly scheduler may not be running properly")
+
+        except Exception as scheduler_error:
+            logger.error(f"Failed to start anomaly detection scheduler: {str(scheduler_error)}")
+            logger.error(traceback.format_exc())
+            anomaly_scheduler_service = None
+
+        logger.info("Anomaly detection initialization completed")
+        return True
+
+    except Exception as e:
+        logger.error(f"Error initializing anomaly detection: {str(e)}")
+        logger.error(traceback.format_exc())
+        return False
 
 
 def init_metadata_task_manager():
@@ -935,13 +960,11 @@ def delayed_initialization():
         # Step 3: Apply performance optimizations (if available)
         logger.info("Step 3: Applying performance optimizations...")
         try:
-            from core.utils.performance_optimizations import apply_performance_optimizations
-            optimized_classes = apply_performance_optimizations()
-            logger.info("Performance optimizations applied")
-        except ImportError:
-            logger.info("Performance optimizations not available, skipping")
-        except Exception as opt_error:
-            logger.warning(f"Performance optimizations failed: {str(opt_error)}")
+            optimized_classes = get_optimized_classes()
+            logger.info(f"Applied performance optimizations to {len(optimized_classes)} classes")
+        except Exception as e:
+            logger.warning(f"Could not apply performance optimizations: {str(e)}")
+            optimized_classes = {}
 
         logger.info("Background services initialization complete")
 
@@ -1131,7 +1154,12 @@ metadata_storage = MetadataStorage()
 task_executor = ThreadPoolExecutor(max_workers=5)
 metadata_task_queue = queue.Queue()
 
-optimized_classes = apply_performance_optimizations()
+try:
+    optimized_classes = get_optimized_classes()
+    logger.info(f"Applied performance optimizations to {len(optimized_classes)} classes")
+except Exception as e:
+    logger.warning(f"Could not apply performance optimizations: {str(e)}")
+    optimized_classes = {}
 
 logger.info("Scheduling delayed initialization in 15 seconds...")
 threading.Timer(15.0, delayed_initialization).start()
@@ -1242,6 +1270,66 @@ def automation_health_detailed(current_user, organization_id):
     health_result, status_code = automation_health_endpoint()
     return jsonify(health_result), status_code
 
+
+# Add this route to your app.py after the initialize_anomaly_detection() call
+
+@app.route("/api/debug/anomaly-status", methods=["GET"])
+@token_required
+def get_anomaly_debug_status(current_user, organization_id):
+    """Debug endpoint to check anomaly detection status"""
+    try:
+        global anomaly_scheduler_service
+
+        status = {
+            "scheduler_service_exists": anomaly_scheduler_service is not None,
+            "scheduler_running": False,
+            "configs_in_db": 0,
+            "recent_runs": 0,
+            "routes_registered": len([rule for rule in app.url_map.iter_rules() if 'anomalies' in rule.rule]),
+            "scheduler_details": {}
+        }
+
+        if anomaly_scheduler_service:
+            status["scheduler_running"] = getattr(anomaly_scheduler_service, 'running', False)
+            status["scheduler_details"] = {
+                "has_scheduler": hasattr(anomaly_scheduler_service, 'scheduler'),
+                "has_supabase": hasattr(anomaly_scheduler_service, 'supabase'),
+                "class_name": anomaly_scheduler_service.__class__.__name__
+            }
+
+        # Check database for configs and runs
+        try:
+            from core.storage.supabase_manager import SupabaseManager
+            supabase = SupabaseManager()
+
+            configs_response = supabase.supabase.table("anomaly_detection_configs") \
+                .select("id", count="exact") \
+                .eq("organization_id", organization_id) \
+                .execute()
+            status["configs_in_db"] = configs_response.count or 0
+
+            runs_response = supabase.supabase.table("anomaly_detection_runs") \
+                .select("id", count="exact") \
+                .eq("organization_id", organization_id) \
+                .execute()
+            status["recent_runs"] = runs_response.count or 0
+
+            # Get recent runs details
+            recent_runs_response = supabase.supabase.table("anomaly_detection_runs") \
+                .select("*") \
+                .eq("organization_id", organization_id) \
+                .order("started_at", desc=True) \
+                .limit(5) \
+                .execute()
+            status["recent_runs_details"] = recent_runs_response.data or []
+
+        except Exception as db_error:
+            status["db_error"] = str(db_error)
+
+        return jsonify({"status": status}), 200
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 @app.route('/health/automation/persistence')
 @token_required

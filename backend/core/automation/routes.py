@@ -822,3 +822,239 @@ def register_automation_routes(app, token_required):
             return jsonify({"error": str(e)}), 500
 
     logger.info("Automation monitoring routes registered successfully")
+
+    # Add these routes to your backend/core/automation/routes.py file
+
+    # Add these imports at the top of the file:
+    # from core.utils.automation_diagnostics import AutomationDiagnosticUtility
+    # from core.utils.storage_verification import StorageVerificationUtility
+
+    @app.route("/api/automation/diagnostics/<connection_id>", methods=["GET"])
+    @token_required
+    def diagnose_automation_issues(current_user, organization_id, connection_id):
+        """Diagnose automation issues for a specific connection"""
+        try:
+            # Verify connection belongs to organization
+            connection_response = automation_api.supabase.supabase.table("database_connections") \
+                .select("id") \
+                .eq("id", connection_id) \
+                .eq("organization_id", organization_id) \
+                .execute()
+
+            if not connection_response.data:
+                return jsonify({"error": "Connection not found"}), 404
+
+            # Create diagnostic utility
+            from core.utils.automation_diagnostics import AutomationDiagnosticUtility
+            diagnostic_util = AutomationDiagnosticUtility(automation_api.supabase)
+
+            # Get diagnosis parameters
+            days = int(request.args.get("days", 3))
+
+            # Run diagnosis
+            diagnosis = diagnostic_util.diagnose_automation_issues(connection_id, days)
+
+            return jsonify({
+                "diagnosis": diagnosis,
+                "connection_id": connection_id,
+                "organization_id": organization_id
+            }), 200
+
+        except Exception as e:
+            logger.error(f"Error diagnosing automation issues: {str(e)}")
+            return jsonify({"error": str(e)}), 500
+
+    @app.route("/api/automation/test-storage/<connection_id>", methods=["POST"])
+    @token_required
+    def test_automation_storage(current_user, organization_id, connection_id):
+        """Test storage operations for automation"""
+        try:
+            # Verify connection belongs to organization
+            connection_response = automation_api.supabase.supabase.table("database_connections") \
+                .select("id") \
+                .eq("id", connection_id) \
+                .eq("organization_id", organization_id) \
+                .execute()
+
+            if not connection_response.data:
+                return jsonify({"error": "Connection not found"}), 404
+
+            # Create diagnostic utility
+            from core.utils.automation_diagnostics import AutomationDiagnosticUtility
+            diagnostic_util = AutomationDiagnosticUtility(automation_api.supabase)
+
+            # Test storage operations
+            test_results = diagnostic_util.test_storage_operations(connection_id)
+
+            return jsonify({
+                "test_results": test_results,
+                "connection_id": connection_id
+            }), 200
+
+        except Exception as e:
+            logger.error(f"Error testing storage operations: {str(e)}")
+            return jsonify({"error": str(e)}), 500
+
+    @app.route("/api/automation/fix-issues/<connection_id>", methods=["POST"])
+    @token_required
+    def fix_automation_issues(current_user, organization_id, connection_id):
+        """Attempt to fix common automation issues"""
+        try:
+            # Verify connection belongs to organization
+            connection_response = automation_api.supabase.supabase.table("database_connections") \
+                .select("id") \
+                .eq("id", connection_id) \
+                .eq("organization_id", organization_id) \
+                .execute()
+
+            if not connection_response.data:
+                return jsonify({"error": "Connection not found"}), 404
+
+            # Create diagnostic utility
+            from core.utils.automation_diagnostics import AutomationDiagnosticUtility
+            diagnostic_util = AutomationDiagnosticUtility(automation_api.supabase)
+
+            # Attempt fixes
+            fix_results = diagnostic_util.fix_common_issues(connection_id)
+
+            return jsonify({
+                "fix_results": fix_results,
+                "connection_id": connection_id
+            }), 200
+
+        except Exception as e:
+            logger.error(f"Error fixing automation issues: {str(e)}")
+            return jsonify({"error": str(e)}), 500
+
+    @app.route("/api/automation/verify-storage/<connection_id>", methods=["POST"])
+    @token_required
+    def verify_automation_storage(current_user, organization_id, connection_id):
+        """Verify that automation results are being stored properly"""
+        try:
+            # Verify connection belongs to organization
+            connection_response = automation_api.supabase.supabase.table("database_connections") \
+                .select("id") \
+                .eq("id", connection_id) \
+                .eq("organization_id", organization_id) \
+                .execute()
+
+            if not connection_response.data:
+                return jsonify({"error": "Connection not found"}), 404
+
+            # Create verification utility
+            from core.utils.storage_verification import StorageVerificationUtility
+            verification_util = StorageVerificationUtility(automation_api.supabase)
+
+            # Get verification parameters
+            verification_type = request.json.get("type", "all")  # all, metadata, validation, schema
+            expected_count = request.json.get("expected_count")
+
+            results = {}
+
+            if verification_type in ["all", "metadata"]:
+                # Verify metadata storage
+                for metadata_type in ["tables", "columns", "statistics"]:
+                    verification = verification_util.verify_metadata_storage(
+                        connection_id, metadata_type, expected_count
+                    )
+                    results[f"metadata_{metadata_type}"] = verification
+
+            if verification_type in ["all", "validation"]:
+                # Verify validation results storage
+                verification = verification_util.verify_validation_results_storage(
+                    connection_id, expected_count
+                )
+                results["validation_results"] = verification
+
+            if verification_type in ["all", "schema"]:
+                # Verify schema changes storage
+                verification = verification_util.verify_schema_changes_storage(
+                    connection_id, expected_count
+                )
+                results["schema_changes"] = verification
+
+            # Get comprehensive health check
+            health_check = verification_util.comprehensive_storage_health_check(connection_id)
+            results["health_check"] = health_check
+
+            return jsonify({
+                "verification_results": results,
+                "connection_id": connection_id
+            }), 200
+
+        except Exception as e:
+            logger.error(f"Error verifying storage: {str(e)}")
+            return jsonify({"error": str(e)}), 500
+
+    @app.route("/api/automation/comprehensive-report/<connection_id>", methods=["GET"])
+    @token_required
+    def get_comprehensive_automation_report(current_user, organization_id, connection_id):
+        """Get a comprehensive automation diagnostic report"""
+        try:
+            # Verify connection belongs to organization
+            connection_response = automation_api.supabase.supabase.table("database_connections") \
+                .select("id, name") \
+                .eq("id", connection_id) \
+                .eq("organization_id", organization_id) \
+                .execute()
+
+            if not connection_response.data:
+                return jsonify({"error": "Connection not found"}), 404
+
+            connection_name = connection_response.data[0]["name"]
+
+            # Create diagnostic utility
+            from core.utils.automation_diagnostics import AutomationDiagnosticUtility
+            diagnostic_util = AutomationDiagnosticUtility(automation_api.supabase)
+
+            # Generate comprehensive report
+            report = diagnostic_util.create_comprehensive_report(connection_id)
+
+            # Add connection info
+            report["connection_name"] = connection_name
+            report["organization_id"] = organization_id
+
+            return jsonify({
+                "report": report,
+                "connection_id": connection_id,
+                "connection_name": connection_name
+            }), 200
+
+        except Exception as e:
+            logger.error(f"Error generating comprehensive report: {str(e)}")
+            return jsonify({"error": str(e)}), 500
+
+    @app.route("/api/automation/storage-stats/<connection_id>", methods=["GET"])
+    @token_required
+    def get_automation_storage_stats(current_user, organization_id, connection_id):
+        """Get storage statistics for automation"""
+        try:
+            # Verify connection belongs to organization
+            connection_response = automation_api.supabase.supabase.table("database_connections") \
+                .select("id") \
+                .eq("id", connection_id) \
+                .eq("organization_id", organization_id) \
+                .execute()
+
+            if not connection_response.data:
+                return jsonify({"error": "Connection not found"}), 404
+
+            # Create verification utility
+            from core.utils.storage_verification import StorageVerificationUtility
+            verification_util = StorageVerificationUtility(automation_api.supabase)
+
+            # Get parameters
+            days = int(request.args.get("days", 7))
+
+            # Get storage statistics
+            stats = verification_util.get_storage_statistics(connection_id, days)
+
+            return jsonify({
+                "storage_statistics": stats,
+                "connection_id": connection_id,
+                "analysis_period_days": days
+            }), 200
+
+        except Exception as e:
+            logger.error(f"Error getting storage statistics: {str(e)}")
+            return jsonify({"error": str(e)}), 500

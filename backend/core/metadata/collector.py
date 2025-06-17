@@ -539,3 +539,197 @@ class MetadataCollector:
                 "error": str(e),
                 "collected_at": datetime.now(timezone.utc).isoformat()
             }
+
+    # backend/core/metadata/collector.py - ADD THIS METHOD TO EXISTING FILE
+
+    # Add this method to the MetadataCollector class in collector.py:
+
+    def collect_table_statistics(self, table_name):
+        """
+        Collect detailed statistics for a specific table (Tier 5)
+
+        This method was missing from the original collector but is called by automation.
+        It collects row counts, column statistics, and other table-level metrics.
+        """
+        logger.info(f"Collecting statistics for table {table_name}")
+
+        try:
+            # If not already connected, connect
+            if not self.connector.inspector:
+                self.connector.connect()
+
+            # Basic table statistics
+            statistics = {
+                "table_name": table_name,
+                "collected_at": datetime.now(timezone.utc).isoformat()
+            }
+
+            # Row count - use a query
+            try:
+                result = self.connector.execute_query(f"SELECT COUNT(*) FROM {table_name}")
+                if result and len(result) > 0:
+                    statistics["row_count"] = result[0][0]
+            except Exception as e:
+                logger.warning(f"Could not get row count for {table_name}: {str(e)}")
+                statistics["row_count"] = None
+
+            # Table size information (if available)
+            try:
+                # For Snowflake, we can get table size information
+                if hasattr(self.connector, 'get_database_type') and self.connector.get_database_type() == "snowflake":
+                    size_query = f"""
+                        SELECT 
+                            TABLE_CATALOG as database_name,
+                            TABLE_SCHEMA as schema_name,
+                            TABLE_NAME as table_name,
+                            ROW_COUNT,
+                            BYTES,
+                            CLUSTERING_KEY
+                        FROM INFORMATION_SCHEMA.TABLES 
+                        WHERE TABLE_NAME = '{table_name}'
+                        AND TABLE_TYPE = 'BASE TABLE'
+                    """
+                    size_result = self.connector.execute_query(size_query)
+                    if size_result and len(size_result) > 0:
+                        size_info = size_result[0]
+                        statistics["bytes"] = size_info[2] if len(size_info) > 2 else None
+                        statistics["clustering_key"] = size_info[3] if len(size_info) > 3 else None
+            except Exception as e:
+                logger.warning(f"Could not get size information for {table_name}: {str(e)}")
+
+            # Primary keys
+            try:
+                primary_keys = self.connector.get_primary_keys(table_name)
+                statistics["primary_keys"] = primary_keys
+                statistics["has_primary_key"] = len(primary_keys) > 0
+            except Exception as e:
+                logger.warning(f"Could not get primary keys for {table_name}: {str(e)}")
+                statistics["primary_keys"] = []
+                statistics["has_primary_key"] = False
+
+            # Column count and basic column statistics
+            try:
+                columns = self.collect_columns(table_name)
+                statistics["column_count"] = len(columns)
+
+                # Count nullable vs non-nullable columns
+                nullable_count = sum(1 for col in columns if col.get("nullable", True))
+                statistics["nullable_columns"] = nullable_count
+                statistics["non_nullable_columns"] = len(columns) - nullable_count
+
+                # Column types distribution
+                type_distribution = {}
+                for col in columns:
+                    col_type = str(col.get("type", "unknown")).lower()
+                    # Normalize type names
+                    if "int" in col_type or "number" in col_type:
+                        normalized_type = "numeric"
+                    elif "varchar" in col_type or "char" in col_type or "text" in col_type:
+                        normalized_type = "text"
+                    elif "date" in col_type or "time" in col_type:
+                        normalized_type = "datetime"
+                    elif "bool" in col_type:
+                        normalized_type = "boolean"
+                    else:
+                        normalized_type = "other"
+
+                    if normalized_type not in type_distribution:
+                        type_distribution[normalized_type] = 0
+                    type_distribution[normalized_type] += 1
+
+                statistics["column_type_distribution"] = type_distribution
+
+            except Exception as e:
+                logger.warning(f"Could not get column statistics for {table_name}: {str(e)}")
+                statistics["column_count"] = 0
+
+            # Sample some column-level statistics for key columns
+            try:
+                # Limit to first 10 columns to avoid performance issues
+                columns = self.collect_columns(table_name)
+                column_stats = {}
+
+                for column in columns[:10]:
+                    try:
+                        col_name = column["name"]
+                        col_type = column["type"].lower() if isinstance(column["type"], str) else str(
+                            column["type"]).lower()
+
+                        # Only collect statistics for certain data types
+                        if any(type_str in col_type for type_str in
+                               ["int", "float", "num", "dec", "date", "char", "var", "text"]):
+                            stats = self._collect_column_statistics(table_name, col_name, col_type)
+                            if stats:
+                                column_stats[col_name] = stats
+
+                    except Exception as col_error:
+                        logger.warning(f"Error collecting statistics for column {column['name']}: {str(col_error)}")
+
+                statistics["column_statistics"] = column_stats
+
+            except Exception as e:
+                logger.warning(f"Could not collect column-level statistics for {table_name}: {str(e)}")
+                statistics["column_statistics"] = {}
+
+            # Data freshness - when was data last modified (if available)
+            try:
+                # Look for common timestamp columns that might indicate last modification
+                timestamp_columns = ["updated_at", "modified_at", "last_updated", "created_at"]
+                columns = self.collect_columns(table_name)
+
+                for ts_col in timestamp_columns:
+                    matching_cols = [col for col in columns if col["name"].lower() == ts_col]
+                    if matching_cols:
+                        try:
+                            latest_query = f"SELECT MAX({ts_col}) FROM {table_name}"
+                            result = self.connector.execute_query(latest_query)
+                            if result and result[0][0]:
+                                statistics["latest_timestamp"] = result[0][0].isoformat() if hasattr(result[0][0],
+                                                                                                     'isoformat') else str(
+                                    result[0][0])
+                                statistics["latest_timestamp_column"] = ts_col
+                                break
+                        except Exception:
+                            continue
+
+            except Exception as e:
+                logger.warning(f"Could not determine data freshness for {table_name}: {str(e)}")
+
+            # Table health score (basic calculation)
+            try:
+                health_score = 100  # Start with perfect score
+
+                # Deduct points for missing primary key
+                if not statistics.get("has_primary_key", False):
+                    health_score -= 20
+
+                # Deduct points for tables with no rows
+                if statistics.get("row_count", 0) == 0:
+                    health_score -= 30
+
+                # Deduct points for tables with too many nullable columns
+                total_cols = statistics.get("column_count", 1)
+                nullable_ratio = statistics.get("nullable_columns", 0) / total_cols
+                if nullable_ratio > 0.8:  # More than 80% nullable
+                    health_score -= 15
+
+                # Deduct points for very wide tables (might indicate design issues)
+                if total_cols > 50:
+                    health_score -= 10
+
+                statistics["health_score"] = max(0, health_score)
+
+            except Exception as e:
+                logger.warning(f"Could not calculate health score for {table_name}: {str(e)}")
+                statistics["health_score"] = 50  # Default middle score
+
+            logger.info(f"Successfully collected statistics for table {table_name}")
+            return statistics
+
+        except Exception as e:
+            logger.error(f"Error collecting table statistics for {table_name}: {str(e)}")
+            return {
+                "table_name": table_name,
+                "error": str(e),
+                "collected_at": datetime.now(timezone.utc).isoformat()
+            }
