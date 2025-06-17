@@ -301,6 +301,7 @@ class AutomationScheduler:
     def _execute_metadata_refresh(self, job_id: str, connection_id: str, config: Dict[str, Any]):
         """Execute a metadata refresh job with simplified verification"""
         run_id = None
+        connector = None
         try:
             # Update job status to running
             self._update_job_status(job_id, "running", started_at=datetime.now(timezone.utc).isoformat())
@@ -504,6 +505,20 @@ class AutomationScheduler:
             # Clean up active jobs
             if job_id in self.active_jobs:
                 del self.active_jobs[job_id]
+
+            # Clean up connector
+            if connector and hasattr(connector, 'close'):
+                try:
+                    connector.close()
+                    logger.debug(f"Closed connector for job {job_id}")
+                except Exception as cleanup_error:
+                    logger.warning(f"Error closing connector: {str(cleanup_error)}")
+            elif connector and hasattr(connector, 'engine') and hasattr(connector.engine, 'dispose'):
+                try:
+                    connector.engine.dispose()
+                    logger.debug(f"Disposed engine for job {job_id}")
+                except Exception as cleanup_error:
+                    logger.warning(f"Error disposing engine: {str(cleanup_error)}")
 
     def _execute_schema_detection(self, job_id: str, connection_id: str, config: Dict[str, Any]):
         """Execute schema detection with simplified approach"""
