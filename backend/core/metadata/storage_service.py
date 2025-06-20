@@ -1,5 +1,6 @@
 import json
 import logging
+import time
 from datetime import datetime, timezone
 from typing import Dict, List, Any, Optional
 from dotenv import load_dotenv
@@ -10,7 +11,7 @@ load_dotenv()
 
 
 class MetadataStorageService:
-    """Efficient metadata storage service using JSON-based structure"""
+    """Enhanced metadata storage service with verification and retry logic"""
 
     def __init__(self):
         """Initialize with Supabase connection"""
@@ -22,33 +23,93 @@ class MetadataStorageService:
             raise ValueError("Missing Supabase credentials")
 
         self.supabase = create_client(self.supabase_url, self.supabase_key)
-        logger.info("Metadata storage service initialized")
+        logger.info("Enhanced metadata storage service initialized")
 
-    def store_tables_metadata(self, connection_id: str, tables_metadata: List[Dict]) -> bool:
-        """Store table list and basic table metadata"""
+    def store_tables_metadata(self, connection_id: str, tables_metadata: List[Dict],
+                              max_retries: int = 3, verify_storage: bool = True) -> bool:
+        """Store table list and basic table metadata with verification"""
         try:
             logger.info(f"Storing tables metadata for connection {connection_id}: {len(tables_metadata)} tables")
 
+            # Validate input data
+            if not tables_metadata or not isinstance(tables_metadata, list):
+                logger.error("Invalid tables metadata: must be a non-empty list")
+                return False
+
+            # Clean and validate table data
+            cleaned_tables = []
+            for table in tables_metadata:
+                if isinstance(table, dict) and "name" in table:
+                    cleaned_table = {
+                        "name": table["name"],
+                        "id": table.get("id", table["name"]),  # Use name as fallback ID
+                        "column_count": table.get("column_count", 0),
+                        "row_count": table.get("row_count"),
+                        "primary_key": table.get("primary_key", [])
+                    }
+                    # Remove None values
+                    cleaned_table = {k: v for k, v in cleaned_table.items() if v is not None}
+                    cleaned_tables.append(cleaned_table)
+                elif isinstance(table, str):
+                    # Handle case where table is just a name string
+                    cleaned_tables.append({"name": table, "id": table})
+                else:
+                    logger.warning(f"Skipping invalid table metadata: {table}")
+
+            if not cleaned_tables:
+                logger.error("No valid tables found after cleaning")
+                return False
+
             # Format data for storage
             metadata = {
-                "tables": tables_metadata,
-                "count": len(tables_metadata)
+                "tables": cleaned_tables,
+                "count": len(cleaned_tables),
+                "stored_at": datetime.now(timezone.utc).isoformat()
             }
 
-            # Always insert a new record for each collection run
-            response = self.supabase.table("connection_metadata").insert({
-                "connection_id": connection_id,
-                "metadata_type": "tables",
-                "metadata": metadata,
-                "collected_at": datetime.now(timezone.utc).isoformat(),
-                "refresh_frequency": "1 day"
-            }).execute()
+            # Attempt storage with retries
+            for attempt in range(max_retries):
+                try:
+                    logger.info(f"Storage attempt {attempt + 1} for tables metadata")
 
-            if response.data:
-                logger.info(f"Successfully stored metadata for {len(tables_metadata)} tables")
-                return True
+                    # Insert record
+                    response = self.supabase.table("connection_metadata").insert({
+                        "connection_id": connection_id,
+                        "metadata_type": "tables",
+                        "metadata": metadata,
+                        "collected_at": datetime.now(timezone.utc).isoformat(),
+                        "refresh_frequency": "1 day"
+                    }).execute()
 
-            logger.error("Failed to store tables metadata: No data returned")
+                    if response.data and len(response.data) > 0:
+                        record_id = response.data[0].get("id")
+                        logger.info(f"Successfully stored tables metadata with ID: {record_id}")
+
+                        # Verify storage if requested
+                        if verify_storage:
+                            if self._verify_tables_storage(connection_id, len(cleaned_tables), record_id):
+                                logger.info("Tables metadata storage verified successfully")
+                                return True
+                            else:
+                                logger.warning(f"Storage verification failed on attempt {attempt + 1}")
+                                if attempt < max_retries - 1:
+                                    time.sleep(2)  # Wait before retry
+                                    continue
+                        else:
+                            return True
+
+                    else:
+                        logger.error(f"No data returned from storage operation on attempt {attempt + 1}")
+
+                except Exception as storage_error:
+                    logger.error(f"Storage error on attempt {attempt + 1}: {str(storage_error)}")
+                    if attempt < max_retries - 1:
+                        time.sleep(2)  # Wait before retry
+                        continue
+                    else:
+                        raise
+
+            logger.error(f"Failed to store tables metadata after {max_retries} attempts")
             return False
 
         except Exception as e:
@@ -57,33 +118,104 @@ class MetadataStorageService:
             logger.error(traceback.format_exc())
             return False
 
-    def store_columns_metadata(self, connection_id: str, columns_by_table: Dict[str, List[Dict]]) -> bool:
-        """Store column metadata grouped by table"""
+    def store_columns_metadata(self, connection_id: str, columns_by_table: Dict[str, List[Dict]],
+                               max_retries: int = 3, verify_storage: bool = True) -> bool:
+        """Store column metadata grouped by table with verification"""
         try:
             logger.info(f"Storing columns metadata for connection {connection_id}: {len(columns_by_table)} tables")
 
-            # Format data for storage
-            metadata = {
-                "columns_by_table": columns_by_table,
-                "table_count": len(columns_by_table),
-                "total_columns": sum(len(cols) for cols in columns_by_table.values())
-            }
-
-            # Always insert a new record
-            response = self.supabase.table("connection_metadata").insert({
-                "connection_id": connection_id,
-                "metadata_type": "columns",
-                "metadata": metadata,
-                "collected_at": datetime.now(timezone.utc).isoformat(),
-                "refresh_frequency": "1 day"
-            }).execute()
-
-            if not response.data:
-                logger.error("Failed to store columns metadata")
+            # Validate input data
+            if not columns_by_table or not isinstance(columns_by_table, dict):
+                logger.error("Invalid columns metadata: must be a non-empty dictionary")
                 return False
 
-            logger.info(f"Successfully stored metadata for columns across {len(columns_by_table)} tables")
-            return True
+            # Clean and validate column data
+            cleaned_columns = {}
+            total_columns = 0
+
+            for table_name, columns in columns_by_table.items():
+                if not isinstance(columns, list):
+                    logger.warning(f"Skipping invalid columns for table {table_name}: not a list")
+                    continue
+
+                cleaned_table_columns = []
+                for column in columns:
+                    if isinstance(column, dict) and "name" in column:
+                        cleaned_column = {
+                            "name": column["name"],
+                            "type": str(column.get("type", "unknown")),
+                            "nullable": column.get("nullable", True)
+                        }
+                        # Add optional fields if present
+                        if "default" in column:
+                            cleaned_column["default"] = str(column["default"])
+                        if "primary_key" in column:
+                            cleaned_column["primary_key"] = bool(column["primary_key"])
+
+                        cleaned_table_columns.append(cleaned_column)
+                    else:
+                        logger.warning(f"Skipping invalid column in table {table_name}: {column}")
+
+                if cleaned_table_columns:
+                    cleaned_columns[table_name] = cleaned_table_columns
+                    total_columns += len(cleaned_table_columns)
+
+            if not cleaned_columns:
+                logger.error("No valid columns found after cleaning")
+                return False
+
+            # Format data for storage
+            metadata = {
+                "columns_by_table": cleaned_columns,
+                "table_count": len(cleaned_columns),
+                "total_columns": total_columns,
+                "stored_at": datetime.now(timezone.utc).isoformat()
+            }
+
+            # Attempt storage with retries
+            for attempt in range(max_retries):
+                try:
+                    logger.info(f"Storage attempt {attempt + 1} for columns metadata")
+
+                    # Insert record
+                    response = self.supabase.table("connection_metadata").insert({
+                        "connection_id": connection_id,
+                        "metadata_type": "columns",
+                        "metadata": metadata,
+                        "collected_at": datetime.now(timezone.utc).isoformat(),
+                        "refresh_frequency": "1 day"
+                    }).execute()
+
+                    if response.data and len(response.data) > 0:
+                        record_id = response.data[0].get("id")
+                        logger.info(f"Successfully stored columns metadata with ID: {record_id}")
+
+                        # Verify storage if requested
+                        if verify_storage:
+                            if self._verify_columns_storage(connection_id, len(cleaned_columns), record_id):
+                                logger.info("Columns metadata storage verified successfully")
+                                return True
+                            else:
+                                logger.warning(f"Storage verification failed on attempt {attempt + 1}")
+                                if attempt < max_retries - 1:
+                                    time.sleep(2)  # Wait before retry
+                                    continue
+                        else:
+                            return True
+
+                    else:
+                        logger.error(f"No data returned from storage operation on attempt {attempt + 1}")
+
+                except Exception as storage_error:
+                    logger.error(f"Storage error on attempt {attempt + 1}: {str(storage_error)}")
+                    if attempt < max_retries - 1:
+                        time.sleep(2)  # Wait before retry
+                        continue
+                    else:
+                        raise
+
+            logger.error(f"Failed to store columns metadata after {max_retries} attempts")
+            return False
 
         except Exception as e:
             logger.error(f"Error storing columns metadata: {str(e)}")
@@ -91,48 +223,126 @@ class MetadataStorageService:
             logger.error(traceback.format_exc())
             return False
 
-    def store_statistics_metadata(self, connection_id: str, stats_by_table: Dict[str, Dict]) -> bool:
-        """Store statistical metadata for tables"""
+    def store_statistics_metadata(self, connection_id: str, stats_by_table: Dict[str, Dict],
+                                  max_retries: int = 3, verify_storage: bool = True) -> bool:
+        """Store statistical metadata for tables with verification"""
         try:
             logger.info(f"Storing statistics for {len(stats_by_table)} tables for connection {connection_id}")
 
-            # Format data for storage
-            metadata = {
-                "statistics_by_table": stats_by_table,
-                "table_count": len(stats_by_table)
-            }
-
-            # Convert Decimal objects to float for JSON serialization
-            import decimal
-            import json
-
-            class CustomJSONEncoder(json.JSONEncoder):
-                def default(self, obj):
-                    if isinstance(obj, decimal.Decimal):
-                        return float(obj)
-                    if hasattr(obj, 'isoformat'):  # Handle datetime objects
-                        return obj.isoformat()
-                    return super(CustomJSONEncoder, self).default(obj)
-
-            # First convert to JSON string with custom encoder, then parse back to dict
-            metadata_json = json.dumps(metadata, cls=CustomJSONEncoder)
-            metadata = json.loads(metadata_json)
-
-            # Always insert a new record
-            response = self.supabase.table("connection_metadata").insert({
-                "connection_id": connection_id,
-                "metadata_type": "statistics",
-                "metadata": metadata,
-                "collected_at": datetime.now(timezone.utc).isoformat(),
-                "refresh_frequency": "1 day"
-            }).execute()
-
-            if not response.data:
-                logger.error("Failed to store statistics metadata")
+            # Validate input data
+            if not stats_by_table or not isinstance(stats_by_table, dict):
+                logger.error("Invalid statistics metadata: must be a non-empty dictionary")
                 return False
 
-            logger.info(f"Successfully stored statistics metadata for {len(stats_by_table)} tables")
-            return True
+            # Clean and validate statistics data
+            cleaned_stats = {}
+
+            for table_name, stats in stats_by_table.items():
+                if not isinstance(stats, dict):
+                    logger.warning(f"Skipping invalid statistics for table {table_name}: not a dictionary")
+                    continue
+
+                # Clean the stats data
+                cleaned_table_stats = {}
+
+                # Handle common statistical fields
+                for field in ["table_name", "row_count", "column_count", "collected_at"]:
+                    if field in stats:
+                        value = stats[field]
+                        # Convert Decimal objects to float for JSON serialization
+                        if hasattr(value, '__float__'):
+                            cleaned_table_stats[field] = float(value)
+                        elif hasattr(value, 'isoformat'):  # Handle datetime objects
+                            cleaned_table_stats[field] = value.isoformat()
+                        else:
+                            cleaned_table_stats[field] = value
+
+                # Handle nested statistics like column_statistics
+                if "column_statistics" in stats and isinstance(stats["column_statistics"], dict):
+                    cleaned_column_stats = {}
+                    for col_name, col_stats in stats["column_statistics"].items():
+                        if isinstance(col_stats, dict):
+                            cleaned_col_stats = {}
+                            for stat_name, stat_value in col_stats.items():
+                                # Convert Decimal objects to float
+                                if hasattr(stat_value, '__float__'):
+                                    cleaned_col_stats[stat_name] = float(stat_value)
+                                elif hasattr(stat_value, 'isoformat'):
+                                    cleaned_col_stats[stat_name] = stat_value.isoformat()
+                                else:
+                                    cleaned_col_stats[stat_name] = stat_value
+                            cleaned_column_stats[col_name] = cleaned_col_stats
+                    cleaned_table_stats["column_statistics"] = cleaned_column_stats
+
+                # Add any other fields that weren't specifically handled
+                for field, value in stats.items():
+                    if field not in cleaned_table_stats:
+                        try:
+                            # Try to JSON serialize to check if it's valid
+                            json.dumps(value)
+                            cleaned_table_stats[field] = value
+                        except (TypeError, ValueError):
+                            # Skip fields that can't be serialized
+                            logger.warning(f"Skipping non-serializable field {field} in table {table_name}")
+
+                if cleaned_table_stats:
+                    cleaned_stats[table_name] = cleaned_table_stats
+
+            if not cleaned_stats:
+                logger.error("No valid statistics found after cleaning")
+                return False
+
+            # Format data for storage
+            metadata = {
+                "statistics_by_table": cleaned_stats,
+                "table_count": len(cleaned_stats),
+                "stored_at": datetime.now(timezone.utc).isoformat()
+            }
+
+            # Attempt storage with retries
+            for attempt in range(max_retries):
+                try:
+                    logger.info(f"Storage attempt {attempt + 1} for statistics metadata")
+
+                    # Insert record
+                    response = self.supabase.table("connection_metadata").insert({
+                        "connection_id": connection_id,
+                        "metadata_type": "statistics",
+                        "metadata": metadata,
+                        "collected_at": datetime.now(timezone.utc).isoformat(),
+                        "refresh_frequency": "1 day"
+                    }).execute()
+
+                    if response.data and len(response.data) > 0:
+                        record_id = response.data[0].get("id")
+                        logger.info(f"Successfully stored statistics metadata with ID: {record_id}")
+
+                        # Verify storage if requested
+                        if verify_storage:
+                            if self._verify_statistics_storage(connection_id, len(cleaned_stats), record_id):
+                                logger.info("Statistics metadata storage verified successfully")
+                                return True
+                            else:
+                                logger.warning(f"Storage verification failed on attempt {attempt + 1}")
+                                if attempt < max_retries - 1:
+                                    time.sleep(2)  # Wait before retry
+                                    continue
+                        else:
+                            return True
+
+                    else:
+                        logger.error(f"No data returned from storage operation on attempt {attempt + 1}")
+
+                except Exception as storage_error:
+                    logger.error(f"Storage error on attempt {attempt + 1}: {str(storage_error)}")
+                    if attempt < max_retries - 1:
+                        time.sleep(2)  # Wait before retry
+                        continue
+                    else:
+                        raise
+
+            logger.error(f"Failed to store statistics metadata after {max_retries} attempts")
+            return False
 
         except Exception as e:
             logger.error(f"Error storing statistics metadata: {str(e)}")
@@ -140,10 +350,102 @@ class MetadataStorageService:
             logger.error(traceback.format_exc())
             return False
 
+    def _verify_tables_storage(self, connection_id: str, expected_count: int, record_id: str = None) -> bool:
+        """Verify that tables metadata was actually stored"""
+        try:
+            time.sleep(1)  # Brief wait for database consistency
+
+            query = self.supabase.table("connection_metadata") \
+                .select("metadata") \
+                .eq("connection_id", connection_id) \
+                .eq("metadata_type", "tables")
+
+            if record_id:
+                query = query.eq("id", record_id)
+
+            response = query.order("collected_at", desc=True).limit(1).execute()
+
+            if response.data and len(response.data) > 0:
+                metadata = response.data[0].get("metadata", {})
+                stored_tables = metadata.get("tables", [])
+                stored_count = len(stored_tables)
+
+                logger.info(f"Verification: Expected {expected_count} tables, found {stored_count}")
+                return stored_count >= expected_count
+
+            logger.warning("Verification failed: No metadata found")
+            return False
+
+        except Exception as e:
+            logger.error(f"Error verifying tables storage: {str(e)}")
+            return False
+
+    def _verify_columns_storage(self, connection_id: str, expected_table_count: int, record_id: str = None) -> bool:
+        """Verify that columns metadata was actually stored"""
+        try:
+            time.sleep(1)  # Brief wait for database consistency
+
+            query = self.supabase.table("connection_metadata") \
+                .select("metadata") \
+                .eq("connection_id", connection_id) \
+                .eq("metadata_type", "columns")
+
+            if record_id:
+                query = query.eq("id", record_id)
+
+            response = query.order("collected_at", desc=True).limit(1).execute()
+
+            if response.data and len(response.data) > 0:
+                metadata = response.data[0].get("metadata", {})
+                columns_by_table = metadata.get("columns_by_table", {})
+                stored_table_count = len(columns_by_table)
+
+                logger.info(
+                    f"Verification: Expected {expected_table_count} tables with columns, found {stored_table_count}")
+                return stored_table_count >= expected_table_count
+
+            logger.warning("Verification failed: No columns metadata found")
+            return False
+
+        except Exception as e:
+            logger.error(f"Error verifying columns storage: {str(e)}")
+            return False
+
+    def _verify_statistics_storage(self, connection_id: str, expected_table_count: int, record_id: str = None) -> bool:
+        """Verify that statistics metadata was actually stored"""
+        try:
+            time.sleep(1)  # Brief wait for database consistency
+
+            query = self.supabase.table("connection_metadata") \
+                .select("metadata") \
+                .eq("connection_id", connection_id) \
+                .eq("metadata_type", "statistics")
+
+            if record_id:
+                query = query.eq("id", record_id)
+
+            response = query.order("collected_at", desc=True).limit(1).execute()
+
+            if response.data and len(response.data) > 0:
+                metadata = response.data[0].get("metadata", {})
+                stats_by_table = metadata.get("statistics_by_table", {})
+                stored_table_count = len(stats_by_table)
+
+                logger.info(
+                    f"Verification: Expected {expected_table_count} tables with statistics, found {stored_table_count}")
+                return stored_table_count >= expected_table_count
+
+            logger.warning("Verification failed: No statistics metadata found")
+            return False
+
+        except Exception as e:
+            logger.error(f"Error verifying statistics storage: {str(e)}")
+            return False
+
+    # Keep all existing methods from the original file
     def get_metadata(self, connection_id: str, metadata_type: str) -> Optional[Dict]:
         """Get the most recent metadata of a specific type for a connection"""
         try:
-            # Select id, metadata, and collected_at, order by collected_at descending, limit 1
             response = self.supabase.table("connection_metadata") \
                 .select("id, metadata, collected_at") \
                 .eq("connection_id", connection_id) \
@@ -153,15 +455,12 @@ class MetadataStorageService:
                 .maybe_single() \
                 .execute()
 
-            # maybe_single() returns None if no rows found, or the single row dict
             if not response.data:
                 logger.info(f"No {metadata_type} metadata found for connection {connection_id}")
                 return None
 
-            # Result includes id, metadata, collected_at
             result = response.data
             result["freshness"] = self._calculate_freshness(result.get("collected_at"))
-            # The 'id' is already included in the result dict from the select statement
             return result
 
         except Exception as e:

@@ -46,15 +46,30 @@ class MetadataCollector:
         }
 
     def collect_table_list(self):
-        """Collect list of tables (Tier 1)"""
+        """Collect list of tables (Tier 1) with proper connection handling"""
         logger.info(f"Collecting table list for connection {self.connection_id}")
         try:
+            # Ensure we're connected to the database
+            if not hasattr(self.connector, 'inspector') or self.connector.inspector is None:
+                logger.info("Database not connected, attempting to connect...")
+                self.connector.connect()
+                logger.info("Database connection established")
+
             tables = self.connector.get_tables()
             logger.info(f"Found {len(tables)} tables")
             return tables
         except Exception as e:
             logger.error(f"Error collecting table list: {str(e)}")
-            return []
+            # Try to reconnect once
+            try:
+                logger.info("Attempting to reconnect to database...")
+                self.connector.connect()
+                tables = self.connector.get_tables()
+                logger.info(f"Found {len(tables)} tables after reconnection")
+                return tables
+            except Exception as retry_error:
+                logger.error(f"Error after reconnection attempt: {str(retry_error)}")
+                return []
 
     def collect_columns(self, table_name):
         """Collect column metadata for a specific table (Tier 2)"""
