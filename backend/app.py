@@ -5822,7 +5822,7 @@ def get_metadata_tasks(current_user, organization_id, connection_id):
 @app.route("/api/connections/<connection_id>/metadata/refresh", methods=["POST"])
 @token_required
 def refresh_metadata(current_user, organization_id, connection_id):
-    """Trigger a metadata refresh based on event or user request"""
+    """Trigger a metadata refresh using unified service"""
     try:
         # Check access to connection
         connection = connection_access_check(connection_id, organization_id)
@@ -5833,75 +5833,60 @@ def refresh_metadata(current_user, organization_id, connection_id):
         data = request.get_json() or {}
         metadata_type = data.get("metadata_type", "schema")
         table_name = data.get("table_name")
+        priority = data.get("priority", "high")  # Manual requests are high priority
 
-        # Make sure task manager is initialized
-        if metadata_task_manager is None:
-            init_metadata_task_manager()
+        # Use the unified refresh service
+        from core.metadata.unified_refresh_service import get_unified_refresh_service, RefreshTrigger
 
-        # Submit appropriate task based on metadata type
-        task_id = None
+        unified_service = get_unified_refresh_service()
 
-        if metadata_type == "schema":
-            if table_name:
-                # Refresh a specific table's schema
-                task_id = metadata_task_manager.submit_table_metadata_task(connection_id, table_name, "high")
-                message = f"Scheduled schema refresh for table {table_name}"
-            else:
-                # Refresh all tables (limited)
-                params = {"depth": "light", "table_limit": 100}
-                task_id = metadata_task_manager.submit_collection_task(connection_id, params, "high")
-                message = "Scheduled schema refresh for all tables"
+        # Submit refresh using unified service
+        result = unified_service.refresh_metadata(
+            connection_id=connection_id,
+            metadata_type=metadata_type,
+            table_name=table_name,
+            trigger=RefreshTrigger.MANUAL_USER,
+            user_id=current_user,
+            organization_id=organization_id,
+            priority=priority
+        )
 
-        elif metadata_type == "statistics":
-            if table_name:
-                # Refresh statistics for a specific table
-                task_id = metadata_task_manager.submit_statistics_refresh_task(connection_id, table_name, "high")
-                message = f"Scheduled statistics refresh for table {table_name}"
-            else:
-                # Refresh statistics for recently accessed tables
-                params = {"depth": "medium", "table_limit": 20, "focus": "statistics"}
-                task_id = metadata_task_manager.submit_collection_task(connection_id, params, "high")
-                message = "Scheduled statistics refresh for recently accessed tables"
-
-        elif metadata_type == "full":
-            # Comprehensive refresh
-            params = {"depth": "deep", "table_limit": 50}
-            task_id = metadata_task_manager.submit_collection_task(connection_id, params, "high")
-            message = "Scheduled comprehensive metadata refresh"
-
-        else:
-            return jsonify({"error": f"Unknown metadata type: {metadata_type}"}), 400
-
-        if task_id:
-            # Also create a USER_REQUEST event for the event system
-            try:
-                publish_metadata_event(
-                    event_type=MetadataEventType.USER_REQUEST,
-                    connection_id=connection_id,
-                    details={
-                        "metadata_type": metadata_type,
-                        "table_name": table_name
-                    },
-                    organization_id=organization_id,
-                    user_id=current_user
-                )
-            except Exception as e:
-                logger.warning(f"Failed to publish event, but task was still created: {str(e)}")
-
+        if result.get("success"):
             return jsonify({
-                "task_id": task_id,
-                "status": "scheduled",
-                "message": message
+                "refresh_id": result.get("refresh_id"),
+                "task_id": result.get("task_id"),
+                "status": result.get("status"),
+                "message": result.get("message"),
+                "estimated_completion": result.get("estimated_completion")
             })
         else:
-            return jsonify({
-                "status": "no_action",
-                "message": "No refresh action needed at this time"
-            })
+            return jsonify({"error": result.get("error", "Unknown error")}), 500
 
     except Exception as e:
         logger.error(f"Error refreshing metadata: {str(e)}")
         logger.error(traceback.format_exc())
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/api/connections/<connection_id>/metadata/refresh/<refresh_id>/status", methods=["GET"])
+@token_required
+def get_refresh_status(current_user, organization_id, connection_id, refresh_id):
+    """Get status of a metadata refresh operation"""
+    try:
+        # Check access to connection
+        connection = connection_access_check(connection_id, organization_id)
+        if not connection:
+            return jsonify({"error": "Connection not found or access denied"}), 404
+
+        # Get status using unified service
+        from core.metadata.unified_refresh_service import get_unified_refresh_service
+
+        unified_service = get_unified_refresh_service()
+        status = unified_service.get_refresh_status(refresh_id=refresh_id)
+
+        return jsonify(status)
+
+    except Exception as e:
+        logger.error(f"Error getting refresh status: {str(e)}")
         return jsonify({"error": str(e)}), 500
 
 

@@ -41,7 +41,7 @@ class MetadataTask:
             "connection_id": self.connection_id,
             "params": self.params,
             "priority": self.priority,
-            "created_at": self.created_at.isoformat(),
+            "created_at": self.created_at if isinstance(self.created_at, str) else self.created_at.isoformat(),
             "status": self.status
         }
 
@@ -188,14 +188,33 @@ class PriorityTaskQueue:
             self.medium_priority.task_done()
 
     def get_stats(self):
-        """Get statistics about the queue"""
+        """Get worker statistics"""
         with self.lock:
-            return {
-                "high": self.counts["high"],
-                "medium": self.counts["medium"],
-                "low": self.counts["low"],
-                "total": sum(self.counts.values())
-            }
+            stats = self.stats.copy()
+
+            # Add queue stats
+            stats["queue"] = self.task_queue.get_stats()
+
+            # Calculate uptime - FIX: Check if start_time is string or datetime
+            if stats["start_time"]:
+                try:
+                    # Parse start_time if it's a string
+                    if isinstance(stats["start_time"], str):
+                        start_time = datetime.fromisoformat(stats["start_time"].replace('Z', '+00:00'))
+                    else:
+                        start_time = stats["start_time"]
+
+                    # Calculate uptime
+                    uptime = datetime.now(timezone.utc) - start_time
+                    stats["uptime_seconds"] = uptime.total_seconds()
+                except Exception as e:
+                    logger.warning(f"Could not calculate uptime: {str(e)}")
+                    stats["uptime_seconds"] = 0
+
+            # Add active workers
+            stats["active_workers"] = len(self.workers)
+
+            return stats
 
     def empty(self):
         """Check if all queues are empty"""
@@ -525,7 +544,15 @@ class MetadataWorker:
         with self.lock:
             # Add to history
             self.task_history[task.id] = {
-                "task": task.to_dict(),
+                "task": {
+                    "id": task.id,
+                    "task_type": task.task_type,
+                    "connection_id": task.connection_id,
+                    "params": task.params,
+                    "priority": task.priority,
+                    "created_at": task.created_at if isinstance(task.created_at, str) else task.created_at.isoformat(),
+                    "status": task.status
+                },
                 "result": task.result,
                 "error": task.error,
                 "completed_at": datetime.now(timezone.utc).isoformat()

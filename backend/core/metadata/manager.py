@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 
 class MetadataTaskManager:
-    """Manages metadata tasks and the worker pool"""
+    """Enhanced metadata task manager with automation integration"""
 
     _instance = None
     _lock = threading.Lock()
@@ -26,18 +26,15 @@ class MetadataTaskManager:
                 if storage_service is None:
                     # Try different import strategies to find the storage service
                     try:
-                        # Try direct import first
                         from .storage_service import MetadataStorageService
                         storage_service = MetadataStorageService()
                         logger.info("Imported MetadataStorageService from local module")
                     except ImportError:
                         try:
-                            # Try absolute import with 'core'
                             from core.metadata.storage_service import MetadataStorageService
                             storage_service = MetadataStorageService()
                             logger.info("Imported MetadataStorageService from core.metadata")
                         except ImportError:
-                            # Try with parent directory import
                             current_dir = os.path.dirname(os.path.abspath(__file__))
                             parent_dir = os.path.dirname(current_dir)
                             grand_parent_dir = os.path.dirname(parent_dir)
@@ -46,13 +43,11 @@ class MetadataTaskManager:
                                 sys.path.append(grand_parent_dir)
 
                             try:
-                                # Try to import from the parent directory structure
                                 from core.metadata.storage_service import MetadataStorageService
                                 storage_service = MetadataStorageService()
                                 logger.info("Imported MetadataStorageService using modified path")
                             except ImportError as e:
                                 logger.error(f"Failed to import MetadataStorageService: {e}")
-                                logger.error("Please provide a storage_service instance")
                                 raise ImportError(
                                     "Could not import MetadataStorageService. Please provide a storage_service instance.")
 
@@ -71,14 +66,7 @@ class MetadataTaskManager:
             return cls._instance
 
     def __init__(self, storage_service, supabase_manager=None):
-        """
-        Initialize the task manager
-
-        Args:
-            storage_service: Storage service for metadata
-            supabase_manager: Supabase manager for database operations
-        """
-        # Import locally to avoid circular imports
+        """Initialize the task manager"""
         from .worker import PriorityTaskQueue, MetadataWorker
         from .connector_factory import ConnectorFactory
 
@@ -118,76 +106,235 @@ class MetadataTaskManager:
         )
         self.scheduled_refresh_thread.start()
 
-        logger.info("MetadataTaskManager initialized")
+        logger.info("MetadataTaskManager initialized with automation integration")
 
     def _get_connection_details(self, connection_id):
         """Get connection details from Supabase"""
         if not self.supabase_manager:
             raise ValueError("supabase_manager is required to get connection details")
 
-        # Get connection details
         connection = self.supabase_manager.get_connection(connection_id)
         if not connection:
             raise ValueError(f"Connection not found: {connection_id}")
 
         return connection
 
-    def submit_collection_task(self, connection_id, params=None, priority="medium"):
+    # Enhanced collection methods for automation integration
+    def submit_automation_metadata_refresh(self, connection_id: str, metadata_types: List[str] = None,
+                                           priority: str = "medium", automation_job_id: str = None) -> str:
         """
-        Submit a comprehensive metadata collection task
+        Submit metadata refresh task for automation system with enhanced tracking
 
         Args:
             connection_id: Connection ID
-            params: Additional parameters (table_limit, depth, etc.)
+            metadata_types: List of metadata types to refresh (tables, columns, statistics)
             priority: Task priority
+            automation_job_id: ID of the automation job that triggered this
 
         Returns:
             Task ID
         """
+        try:
+            if not metadata_types:
+                metadata_types = ["tables", "columns"]
+
+            # Map metadata types to collection depth
+            if "statistics" in metadata_types:
+                depth = "high"
+                table_limit = 25  # Reduced for automation performance
+            elif "columns" in metadata_types:
+                depth = "medium"
+                table_limit = 50
+            else:
+                depth = "low"
+                table_limit = 100
+
+            # Enhanced parameters for automation
+            params = {
+                "depth": depth,
+                "table_limit": table_limit,
+                "automation_trigger": True,
+                "automation_job_id": automation_job_id,
+                "metadata_types": metadata_types,
+                "verify_storage": True,  # Always verify for automation
+                "max_retries": 3  # Retry failed operations
+            }
+
+            task_id = self.submit_collection_task(connection_id, params, priority)
+
+            logger.info(f"Submitted automation metadata refresh task {task_id} for connection {connection_id}")
+            return task_id
+
+        except Exception as e:
+            logger.error(f"Error submitting automation metadata refresh: {str(e)}")
+            raise
+
+    def get_metadata_collection_status_for_automation(self, connection_id: str) -> Dict[str, Any]:
+        """
+        Get comprehensive metadata collection status for automation system
+
+        Args:
+            connection_id: Connection ID
+
+        Returns:
+            Enhanced status dictionary for automation
+        """
+        try:
+            # Get base status
+            base_status = self.get_metadata_collection_status(connection_id)
+
+            # Add automation-specific information
+            automation_status = {
+                **base_status,
+                "automation_ready": False,
+                "last_automation_run": None,
+                "automation_job_history": []
+            }
+
+            # Check for recent automation jobs
+            try:
+                if self.supabase_manager:
+                    recent_jobs = self.supabase_manager.supabase.table("automation_jobs") \
+                        .select("id, job_type, status, completed_at, result_summary") \
+                        .eq("connection_id", connection_id) \
+                        .eq("job_type", "metadata_refresh") \
+                        .order("scheduled_at", desc=True) \
+                        .limit(5) \
+                        .execute()
+
+                    if recent_jobs.data:
+                        automation_status["automation_job_history"] = recent_jobs.data
+
+                        # Find last successful automation run
+                        for job in recent_jobs.data:
+                            if job.get("status") == "completed":
+                                automation_status["last_automation_run"] = job.get("completed_at")
+                                break
+
+                        # Check if metadata is ready for automation (has recent successful collection)
+                        recent_successful = any(
+                            job.get("status") == "completed"
+                            for job in recent_jobs.data[:2]  # Check last 2 jobs
+                        )
+
+                        automation_status["automation_ready"] = (
+                                automation_status["overall_status"] in ["fresh", "recent"] and
+                                recent_successful
+                        )
+
+            except Exception as job_error:
+                logger.warning(f"Error getting automation job history: {str(job_error)}")
+
+            return automation_status
+
+        except Exception as e:
+            logger.error(f"Error getting automation metadata status: {str(e)}")
+            return {
+                "connection_id": connection_id,
+                "overall_status": "error",
+                "automation_ready": False,
+                "error": str(e)
+            }
+
+    def wait_for_task_completion_sync(self, task_id: str, timeout_minutes: int = 30) -> Dict[str, Any]:
+        """
+        Synchronously wait for a task to complete (for automation use)
+
+        Args:
+            task_id: Task ID to wait for
+            timeout_minutes: Maximum time to wait
+
+        Returns:
+            Task completion status and results
+        """
+        try:
+            timeout_seconds = timeout_minutes * 60
+            poll_interval = 2  # Check every 2 seconds
+            elapsed = 0
+
+            logger.info(f"Waiting for task {task_id} to complete (timeout: {timeout_minutes}m)")
+
+            while elapsed < timeout_seconds:
+                task_status = self.get_task_status(task_id)
+
+                if "error" in task_status:
+                    # Check if error is "Task not found" - might still be processing
+                    if "Task not found" in str(task_status.get("error", "")):
+                        logger.debug(f"Task {task_id} not yet in history, continuing to wait...")
+                    else:
+                        return {
+                            "completed": False,
+                            "success": False,
+                            "error": task_status.get("error"),
+                            "elapsed_seconds": elapsed
+                        }
+
+                else:
+                    task_info = task_status.get("task", {})
+                    status = task_info.get("status", "unknown")
+
+                    if status == "completed":
+                        return {
+                            "completed": True,
+                            "success": True,
+                            "result": task_status.get("result"),
+                            "elapsed_seconds": elapsed,
+                            "task_info": task_info
+                        }
+                    elif status == "failed":
+                        return {
+                            "completed": True,
+                            "success": False,
+                            "error": task_info.get("error", "Task failed"),
+                            "elapsed_seconds": elapsed,
+                            "task_info": task_info
+                        }
+
+                # Task still running or not found yet, wait
+                time.sleep(poll_interval)
+                elapsed += poll_interval
+
+                # Log progress every 30 seconds
+                if elapsed % 30 == 0:
+                    logger.info(
+                        f"Task {task_id} still waiting after {elapsed}s (status: {status if 'status' in locals() else 'unknown'})")
+
+            # Timeout reached
+            logger.warning(f"Task {task_id} did not complete within {timeout_minutes} minutes")
+            return {
+                "completed": False,
+                "success": False,
+                "error": f"Task timeout after {timeout_minutes} minutes",
+                "elapsed_seconds": elapsed,
+                "final_status": status if 'status' in locals() else "unknown"
+            }
+
+        except Exception as e:
+            logger.error(f"Error waiting for task completion: {str(e)}")
+            return {
+                "completed": False,
+                "success": False,
+                "error": str(e),
+                "elapsed_seconds": elapsed if 'elapsed' in locals() else 0
+            }
+
+    # Keep all existing methods and add automation enhancements
+    def submit_collection_task(self, connection_id, params=None, priority="medium"):
+        """Submit a comprehensive metadata collection task"""
         return self.worker.submit_task("full_collection", connection_id, params or {}, priority)
 
     def submit_table_metadata_task(self, connection_id, table_name, priority="medium"):
-        """
-        Submit a task to collect metadata for a specific table
-
-        Args:
-            connection_id: Connection ID
-            table_name: Table name
-            priority: Task priority
-
-        Returns:
-            Task ID
-        """
+        """Submit a task to collect metadata for a specific table"""
         params = {"table_name": table_name}
         return self.worker.submit_task("table_metadata", connection_id, params, priority)
 
     def submit_statistics_refresh_task(self, connection_id, table_name, priority="low"):
-        """
-        Submit a task to refresh statistics for a specific table
-
-        Args:
-            connection_id: Connection ID
-            table_name: Table name
-            priority: Task priority
-
-        Returns:
-            Task ID
-        """
+        """Submit a task to refresh statistics for a specific table"""
         params = {"table_name": table_name}
         return self.worker.submit_task("refresh_statistics", connection_id, params, priority)
 
     def submit_usage_update_task(self, connection_id, table_name, priority="low"):
-        """
-        Submit a task to update usage patterns for a specific table
-
-        Args:
-            connection_id: Connection ID
-            table_name: Table name
-            priority: Task priority
-
-        Returns:
-            Task ID
-        """
+        """Submit a task to update usage patterns for a specific table"""
         params = {"table_name": table_name}
         return self.worker.submit_task("update_usage", connection_id, params, priority)
 
@@ -204,17 +351,7 @@ class MetadataTaskManager:
         return self.worker.get_task_history(limit)
 
     def handle_metadata_event(self, event_type, connection_id, details=None):
-        """
-        Process events that might trigger metadata updates
-
-        Args:
-            event_type: Type of event (string or enum)
-            connection_id: Connection ID
-            details: Additional event details
-
-        Returns:
-            Task ID if a task was submitted, None otherwise
-        """
+        """Process events that might trigger metadata updates"""
         logger.info(f"Processing metadata event: {event_type} for connection {connection_id}")
 
         if not hasattr(self, 'worker') or not self.worker:
@@ -224,39 +361,30 @@ class MetadataTaskManager:
         # Import here to avoid circular imports
         try:
             from .events import MetadataEventType
-            # Convert string event type to enum if needed
             if isinstance(event_type, str):
                 try:
                     event_type = getattr(MetadataEventType, event_type)
                 except (AttributeError, TypeError):
-                    # Keep it as a string if not found in enum
                     pass
         except ImportError:
-            # Continue with string event types if events module not available
             pass
 
         # Process validation failure events
         if (hasattr(event_type,
                     'name') and event_type.name == "VALIDATION_FAILURE") or event_type == "VALIDATION_FAILURE":
-            # Check for schema mismatch reason
             reason = details.get("reason") if details else None
 
             if reason == "schema_mismatch":
-                # Schema mismatch detected, refresh schema metadata
                 table_name = details.get("table_name") if details else None
                 if table_name:
-                    # Refresh specific table
                     return self.submit_table_metadata_task(connection_id, table_name, "high")
                 else:
-                    # Refresh all tables
                     return self.submit_collection_task(
                         connection_id,
                         {"depth": "low", "table_limit": 100},
                         "high"
                     )
 
-            # General validation failure - could be a data issue
-            # Refresh statistics for the affected table
             table_name = details.get("table_name") if details else None
             if table_name:
                 return self.submit_statistics_refresh_task(connection_id, table_name, "medium")
@@ -264,28 +392,20 @@ class MetadataTaskManager:
         # Profile completion events
         elif (hasattr(event_type,
                       'name') and event_type.name == "PROFILE_COMPLETION") or event_type == "PROFILE_COMPLETION":
-            # Profile completed, update statistics
             table_name = details.get("table_name") if details else None
 
             if table_name:
-                # First check if schema metadata exists
                 if not self.check_metadata_freshness(connection_id, "tables", 24):
-                    # Collect table metadata first
                     return self.submit_table_metadata_task(connection_id, table_name, "high")
-
-                # Then refresh statistics
                 return self.submit_statistics_refresh_task(connection_id, table_name, "medium")
 
         # Schema change events
         elif (hasattr(event_type, 'name') and event_type.name == "SCHEMA_CHANGE") or event_type == "SCHEMA_CHANGE":
-            # Schema change detected, refresh schema metadata
             table_name = details.get("table_name") if details else None
 
             if table_name:
-                # Refresh specific table
                 return self.submit_table_metadata_task(connection_id, table_name, "high")
             else:
-                # Refresh all tables
                 return self.submit_collection_task(
                     connection_id,
                     {"depth": "low", "table_limit": 100},
@@ -294,10 +414,8 @@ class MetadataTaskManager:
 
         # User requests
         elif (hasattr(event_type, 'name') and event_type.name == "USER_REQUEST") or event_type == "USER_REQUEST":
-            # User manually requested refresh
             metadata_type = details.get("metadata_type") if details else None
 
-            # If no specific type requested, collect everything
             if not metadata_type:
                 return self.submit_collection_task(
                     connection_id,
@@ -306,16 +424,13 @@ class MetadataTaskManager:
                 )
 
             if metadata_type == "schema":
-                # Refresh schema
                 if details and details.get("table_name"):
-                    # Refresh specific table
                     return self.submit_table_metadata_task(
                         connection_id,
                         details.get("table_name"),
                         "high"
                     )
                 else:
-                    # Refresh all tables
                     return self.submit_collection_task(
                         connection_id,
                         {"depth": "low", "table_limit": 100},
@@ -323,16 +438,13 @@ class MetadataTaskManager:
                     )
 
             elif metadata_type == "statistics":
-                # Refresh statistics
                 if details and details.get("table_name"):
-                    # Refresh specific table
                     return self.submit_statistics_refresh_task(
                         connection_id,
                         details.get("table_name"),
                         "high"
                     )
                 else:
-                    # Refresh all tables
                     return self.submit_collection_task(
                         connection_id,
                         {"depth": "high", "table_limit": 50},
@@ -340,9 +452,7 @@ class MetadataTaskManager:
                     )
 
             elif metadata_type == "usage":
-                # Refresh usage patterns
                 if details and details.get("table_name"):
-                    # Refresh specific table
                     return self.submit_usage_update_task(
                         connection_id,
                         details.get("table_name"),
@@ -351,75 +461,46 @@ class MetadataTaskManager:
 
         # System-initiated refresh (e.g., scheduled)
         elif (hasattr(event_type, 'name') and event_type.name == "SYSTEM_REFRESH") or event_type == "SYSTEM_REFRESH":
-            # System scheduled refresh
             metadata_type = details.get("metadata_type") if details else "all"
             depth = details.get("depth", "medium") if details else "medium"
             priority = details.get("priority", "low") if details else "low"
 
             if metadata_type == "all":
-                # Refresh everything
                 return self.submit_collection_task(
                     connection_id,
                     {"depth": depth, "table_limit": 100},
                     priority
                 )
             elif metadata_type == "schema":
-                # Refresh schema only
                 return self.submit_collection_task(
                     connection_id,
                     {"depth": "low", "table_limit": 100},
                     priority
                 )
             elif metadata_type == "statistics":
-                # Refresh statistics only
                 return self.submit_collection_task(
                     connection_id,
                     {"depth": "high", "table_limit": 50},
                     priority
                 )
 
-        # No action taken
         return None
 
     def check_metadata_freshness(self, connection_id, metadata_type="tables", max_age_hours=24):
-        """
-        Check if metadata is fresh
-
-        Args:
-            connection_id: Connection ID
-            metadata_type: Type of metadata to check
-            max_age_hours: Maximum age in hours for fresh metadata
-
-        Returns:
-            True if metadata is fresh, False otherwise
-        """
-        # Get metadata
+        """Check if metadata is fresh"""
         metadata = self.storage_service.get_metadata(connection_id, metadata_type)
 
         if not metadata:
             return False
 
-        # Check freshness
         freshness = metadata.get("freshness", {})
         age_hours = freshness.get("age_hours", float('inf'))
 
         return age_hours < max_age_hours
 
     def schedule_refresh_if_needed(self, connection_id, metadata_type="tables", max_age_hours=24):
-        """
-        Schedule refresh if metadata is not fresh
-
-        Args:
-            connection_id: Connection ID
-            metadata_type: Type of metadata to check
-            max_age_hours: Maximum age in hours for fresh metadata
-
-        Returns:
-            Task ID if a task was submitted, None otherwise
-        """
-        # Check freshness
+        """Schedule refresh if metadata is not fresh"""
         if not self.check_metadata_freshness(connection_id, metadata_type, max_age_hours):
-            # Schedule refresh
             if metadata_type == "tables":
                 return self.submit_collection_task(
                     connection_id,
@@ -435,49 +516,8 @@ class MetadataTaskManager:
 
         return None
 
-    def submit_automation_metadata_refresh(self, connection_id: str, metadata_types: List[str] = None,
-                                           priority: str = "medium"):
-        """
-        Submit metadata refresh task for automation system
-
-        Args:
-            connection_id: Connection ID
-            metadata_types: List of metadata types to refresh (tables, columns, statistics)
-            priority: Task priority
-
-        Returns:
-            Task ID
-        """
-        if not metadata_types:
-            metadata_types = ["tables", "columns"]
-
-        # Map metadata types to collection depth
-        if "statistics" in metadata_types:
-            depth = "high"
-            table_limit = 50
-        elif "columns" in metadata_types:
-            depth = "medium"
-            table_limit = 75
-        else:
-            depth = "low"
-            table_limit = 100
-
-        return self.submit_collection_task(
-            connection_id,
-            {"depth": depth, "table_limit": table_limit, "automation_trigger": True},
-            priority
-        )
-
     def get_metadata_collection_status(self, connection_id: str) -> Dict[str, Any]:
-        """
-        Get status of metadata collection for automation system
-
-        Args:
-            connection_id: Connection ID
-
-        Returns:
-            Status dictionary
-        """
+        """Get status of metadata collection for automation system"""
         try:
             # Check freshness of different metadata types
             tables_metadata = self.storage_service.get_metadata(connection_id, "tables")
@@ -540,7 +580,6 @@ class MetadataTaskManager:
         except Exception as e:
             logger.error(f"Error creating schema change detector: {str(e)}")
 
-        # Track when we last ran schema change detection for each connection
         last_schema_check = {}
         schema_check_interval = 86400  # 24 hours in seconds
 
@@ -583,12 +622,7 @@ class MetadataTaskManager:
                                         logger.info(f"Important schema changes detected for connection {connection_id}")
 
                                         # Get organization ID if possible
-                                        organization_id = None
-                                        if hasattr(connection, "organization_id"):
-                                            organization_id = connection.organization_id
-                                        else:
-                                            # Try to get organization ID from connection object directly
-                                            organization_id = connection.get("organization_id")
+                                        organization_id = connection.get("organization_id")
 
                                         # Log detected changes for visibility
                                         change_types = {}
@@ -641,54 +675,9 @@ class MetadataTaskManager:
                                         except Exception as e:
                                             logger.error(f"Error publishing automation event: {str(e)}")
 
-                                        # Process specific high-priority change types immediately
-                                        high_priority_changes = [
-                                            c for c in changes
-                                            if
-                                            c.get("type") in ["table_removed", "column_removed", "column_type_changed"]
-                                        ]
-
-                                        for change in high_priority_changes:
-                                            table_name = change.get("table")
-                                            change_type = change.get("type")
-
-                                            # For table-level changes
-                                            if change_type == "table_removed":
-                                                logger.info(
-                                                    f"Processing high-priority change: Table {table_name} removed")
-                                                # Handle table removal (e.g., mark dependent objects as affected)
-                                                pass
-
-                                            # For column-level changes
-                                            elif change_type in ["column_removed", "column_type_changed"]:
-                                                column_name = change.get("column")
-                                                logger.info(
-                                                    f"Processing high-priority change: Column {column_name} in table {table_name} {change_type}")
-                                                # Handle column change (e.g., check for dependent validations)
-
-                                                # Check for validations that might be affected
-                                                if self.supabase_manager:
-                                                    # Try to find affected validations
-                                                    affected_validations = self.supabase_manager.get_validations_by_column(
-                                                        organization_id,
-                                                        table_name,
-                                                        column_name,
-                                                        connection_id
-                                                    )
-
-                                                    if affected_validations:
-                                                        logger.info(
-                                                            f"Found {len(affected_validations)} validations potentially affected by schema change")
-                                                        # Mark these validations for recheck or notify users
-
                                 except Exception as e:
                                     logger.error(f"Error in schema change detection for {connection_id}: {str(e)}")
                                     logger.error(traceback.format_exc())
-
-                            # Check for other types of metadata that might need refreshing
-                            # For example, usage statistics
-                            if hasattr(self, 'schedule_usage_refresh_if_needed'):
-                                self.schedule_usage_refresh_if_needed(connection_id, 168)  # Weekly
 
                         except Exception as e:
                             logger.error(f"Error checking connection {connection_id}: {str(e)}")
@@ -708,14 +697,12 @@ class MetadataTaskManager:
             if not self.supabase_manager:
                 return []
 
-            # Get all connections
             connections = []
             organizations = self._get_all_organizations()
 
             for org in organizations:
                 org_id = org.get("id")
 
-                # Get connections for this organization
                 org_connections = self.supabase_manager.supabase.table("database_connections") \
                     .select("id, name, connection_type, organization_id") \
                     .eq("organization_id", org_id) \
@@ -736,7 +723,6 @@ class MetadataTaskManager:
             if not self.supabase_manager:
                 return []
 
-            # Get all organizations
             orgs = self.supabase_manager.supabase.table("organizations") \
                 .select("id, name") \
                 .execute()
@@ -746,121 +732,3 @@ class MetadataTaskManager:
         except Exception as e:
             logger.error(f"Error getting organizations: {str(e)}")
             return []
-
-    def determine_refresh_strategy(self, object_type, object_name=None, last_refreshed=None, change_frequency=None):
-        """
-        Determine optimal refresh strategy for metadata
-
-        Args:
-            object_type: Type of metadata object (table_list, column_metadata, statistics, etc.)
-            object_name: Name of the object (optional)
-            last_refreshed: When the metadata was last refreshed (ISO format datetime string)
-            change_frequency: Historical change frequency (low, medium, high) or None to calculate dynamically
-
-        Returns:
-            Dictionary with schedule and priority
-        """
-        # Default strategies by object type
-        strategies = {
-            "table_list": {"schedule": "daily", "priority": "high", "hours": 24},
-            "column_metadata": {"schedule": "weekly", "priority": "medium", "hours": 168},
-            "statistics": {"schedule": "weekly", "priority": "low", "hours": 168},
-            "relationships": {"schedule": "weekly", "priority": "medium", "hours": 168},
-            "usage_patterns": {"schedule": "monthly", "priority": "low", "hours": 720}
-        }
-
-        # If object type is not recognized, use default strategy
-        if object_type not in strategies:
-            return {"schedule": "weekly", "priority": "low", "hours": 168}
-
-        # Get base strategy
-        strategy = strategies[object_type].copy()
-
-        # Try to dynamically determine change frequency if not provided
-        try:
-            if change_frequency is None and object_name and hasattr(self, 'connection_id'):
-                # Import dynamically to avoid circular imports
-                try:
-                    from .change_analytics import MetadataChangeAnalytics
-                    analytics = MetadataChangeAnalytics(self.supabase_manager)
-
-                    # Get current interval from strategy
-                    current_interval_hours = strategy.get("hours", 24)
-
-                    # Get refresh suggestion
-                    suggestion = analytics.suggest_refresh_interval(
-                        self.connection_id,
-                        object_type,
-                        object_name,
-                        current_interval_hours
-                    )
-
-                    # Update change frequency based on analytics
-                    change_frequency = suggestion.get("frequency")
-
-                    # Update hours based on suggestion
-                    strategy["hours"] = suggestion.get("suggested_interval_hours", current_interval_hours)
-
-                    # Map hours to schedule
-                    if strategy["hours"] <= 24:
-                        strategy["schedule"] = "daily"
-                    elif strategy["hours"] <= 168:
-                        strategy["schedule"] = "weekly"
-                    else:
-                        strategy["schedule"] = "monthly"
-
-                    logger.info(f"Updated refresh strategy for {object_type} {object_name} "
-                                f"to {strategy['schedule']} ({strategy['hours']} hours) "
-                                f"based on analytics")
-
-                except (ImportError, Exception) as e:
-                    logger.warning(f"Could not use change analytics for refresh strategy: {str(e)}")
-        except Exception as e:
-            # Log but continue with manual strategy
-            logger.warning(f"Error in dynamic strategy determination: {str(e)}")
-
-        # Adjust based on change frequency
-        if change_frequency == "high":
-            # More frequent refresh for high-change objects
-            if strategy["schedule"] == "monthly":
-                strategy["schedule"] = "weekly"
-                strategy["hours"] = min(strategy["hours"], 168)
-            elif strategy["schedule"] == "weekly":
-                strategy["schedule"] = "daily"
-                strategy["hours"] = min(strategy["hours"], 24)
-            strategy["priority"] = "high"
-        elif change_frequency == "low":
-            # Less frequent refresh for low-change objects
-            if strategy["schedule"] == "daily":
-                strategy["schedule"] = "weekly"
-                strategy["hours"] = max(strategy["hours"], 168)
-            elif strategy["schedule"] == "weekly":
-                strategy["schedule"] = "monthly"
-                strategy["hours"] = max(strategy["hours"], 720)
-
-        # Adjust if last refresh was too recent (within a day) - prioritize less
-        if last_refreshed:
-            try:
-                refresh_date = datetime.fromisoformat(last_refreshed.replace('Z', '+00:00'))
-                now = datetime.now(datetime.timezone.utc)
-
-                # If refreshed very recently, lower priority
-                age_hours = (now - refresh_date).total_seconds() / 3600
-
-                # If refreshed less than 20% of the way through the schedule, lower priority
-                if age_hours < (strategy["hours"] * 0.2):
-                    if strategy["priority"] == "high":
-                        strategy["priority"] = "medium"
-                    elif strategy["priority"] == "medium":
-                        strategy["priority"] = "low"
-
-                # If nearly due for refresh (>80% of schedule elapsed), raise priority
-                elif age_hours > (strategy["hours"] * 0.8):
-                    if strategy["priority"] == "low":
-                        strategy["priority"] = "medium"
-                    elif strategy["priority"] == "medium":
-                        strategy["priority"] = "high"
-            except:
-                pass
-
-        return strategy
