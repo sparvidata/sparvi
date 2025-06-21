@@ -1,3 +1,4 @@
+import json
 import logging
 import traceback
 import uuid
@@ -129,7 +130,7 @@ class AutomationAPI:
             return []
 
     def get_connection_config(self, connection_id: str) -> Optional[Dict[str, Any]]:
-        """Get automation configuration for a specific connection"""
+        """Get automation configuration for a specific connection - FIXED JSON parsing"""
         try:
             response = self.supabase.supabase.table("automation_connection_configs") \
                 .select("*") \
@@ -137,7 +138,25 @@ class AutomationAPI:
                 .execute()
 
             if response.data and len(response.data) > 0:
-                return response.data[0]
+                config_row = response.data[0]
+
+                # FIXED: Parse JSON strings from database
+                parsed_config = {
+                    "connection_id": connection_id
+                }
+
+                # Parse each JSON field
+                for field in ["metadata_refresh", "schema_change_detection", "validation_automation"]:
+                    try:
+                        if config_row.get(field):
+                            parsed_config[field] = json.loads(config_row[field])
+                        else:
+                            parsed_config[field] = {}
+                    except (json.JSONDecodeError, TypeError) as e:
+                        logger.error(f"Error parsing {field} JSON for connection {connection_id}: {str(e)}")
+                        parsed_config[field] = {}
+
+                return parsed_config
 
             # Return default config if none exists
             return {
@@ -149,12 +168,12 @@ class AutomationAPI:
                 },
                 "schema_change_detection": {
                     "enabled": False,
-                    "interval_hours": 6,
+                    "interval_hours": 24,
                     "auto_acknowledge_safe_changes": False
                 },
                 "validation_automation": {
                     "enabled": False,
-                    "interval_hours": 12,
+                    "interval_hours": 24,
                     "auto_generate_for_new_tables": True
                 }
             }
@@ -164,15 +183,21 @@ class AutomationAPI:
             return None
 
     def update_connection_config(self, connection_id: str, config_data: Dict[str, Any], user_id: str) -> Dict[str, Any]:
-        """Update automation configuration for a connection"""
+        """Update automation configuration for a connection - FIXED JSON handling"""
         try:
-            # Clean the config_data to only include valid table columns
+            # FIXED: Convert config objects to JSON strings for storage
             clean_config_data = {
-                "metadata_refresh": config_data.get("metadata_refresh", {}),
-                "schema_change_detection": config_data.get("schema_change_detection", {}),
-                "validation_automation": config_data.get("validation_automation", {}),
                 "updated_at": datetime.now(timezone.utc).isoformat()
             }
+
+            # Convert each config section to JSON string
+            for field in ["metadata_refresh", "schema_change_detection", "validation_automation"]:
+                if field in config_data:
+                    try:
+                        clean_config_data[field] = json.dumps(config_data[field])
+                    except (TypeError, ValueError) as e:
+                        logger.error(f"Error serializing {field} to JSON: {str(e)}")
+                        return {"error": f"Invalid {field} configuration"}
 
             # Check if config exists
             existing = self.supabase.supabase.table("automation_connection_configs") \

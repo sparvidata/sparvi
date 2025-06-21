@@ -1,3 +1,4 @@
+import json
 import logging
 import uuid
 import threading
@@ -78,18 +79,24 @@ class AutomationScheduler:
         logger.info("Automation scheduler stopped")
 
     def _setup_schedules(self):
-        """Set up periodic automation schedules"""
-        # Run metadata refresh checks every hour
-        schedule.every().hour.do(self._check_metadata_refresh_jobs)
+        """Set up periodic automation schedules - FIXED to run less frequently"""
 
-        # Run schema change detection every 30 minutes
-        schedule.every(30).minutes.do(self._check_schema_detection_jobs)
+        # FIXED: Since users can configure their own intervals (like 24 hours),
+        # we only need to check periodically to see if any jobs are due.
+        # No need to check every 30 minutes when user intervals are 24 hours!
 
-        # Run validation automation every 2 hours
+        # Check for due jobs every 2 hours (was every 30 minutes - 2 hours)
+        schedule.every(2).hours.do(self._check_metadata_refresh_jobs)
+        schedule.every(2).hours.do(self._check_schema_detection_jobs)
         schedule.every(2).hours.do(self._check_validation_jobs)
 
-        # Clean up completed jobs daily
+        # Clean up completed jobs daily (this is fine)
         schedule.every().day.at("02:00").do(self._cleanup_old_jobs)
+
+        logger.info("Automation scheduler configured with user-respecting intervals:")
+        logger.info("- Checking for due jobs: every 2 hours")
+        logger.info("- Cleanup: daily at 2:00 AM")
+        logger.info("- Individual job intervals: determined by user configuration")
 
     def _run_scheduler(self):
         """Main scheduler loop"""
@@ -102,7 +109,7 @@ class AutomationScheduler:
                 time.sleep(5)
 
     def _check_metadata_refresh_jobs(self):
-        """Check and schedule metadata refresh jobs"""
+        """Check and schedule metadata refresh jobs - FIXED to respect user config"""
         try:
             # Get all enabled metadata refresh configurations
             response = self.supabase.supabase.table("automation_connection_configs") \
@@ -113,14 +120,25 @@ class AutomationScheduler:
                 return
 
             for config in response.data:
-                metadata_config = config.get("metadata_refresh", {})
+                try:
+                    # Parse the JSON configuration
+                    metadata_config = json.loads(config.get("metadata_refresh", "{}"))
+                except (json.JSONDecodeError, TypeError):
+                    logger.error(f"Invalid JSON in metadata_refresh config for connection {config['connection_id']}")
+                    continue
+
                 if not metadata_config.get("enabled", False):
                     continue
 
                 connection_id = config["connection_id"]
+
+                # FIXED: Use the user-configured interval, not a hardcoded default
                 interval_hours = metadata_config.get("interval_hours", 24)
 
-                # Check if we need to schedule a job
+                logger.debug(f"Checking metadata refresh for connection {connection_id}, "
+                             f"user configured interval: {interval_hours} hours")
+
+                # Check if we need to schedule a job using the USER'S interval
                 if self._should_schedule_job(connection_id, "metadata_refresh", interval_hours):
                     self._schedule_metadata_refresh(connection_id, metadata_config)
 
@@ -128,7 +146,7 @@ class AutomationScheduler:
             logger.error(f"Error checking metadata refresh jobs: {str(e)}")
 
     def _check_schema_detection_jobs(self):
-        """Check and schedule schema change detection jobs"""
+        """Check and schedule schema change detection jobs - FIXED to respect user config"""
         try:
             # Get all enabled schema detection configurations
             response = self.supabase.supabase.table("automation_connection_configs") \
@@ -139,14 +157,26 @@ class AutomationScheduler:
                 return
 
             for config in response.data:
-                schema_config = config.get("schema_change_detection", {})
+                try:
+                    # Parse the JSON configuration
+                    schema_config = json.loads(config.get("schema_change_detection", "{}"))
+                except (json.JSONDecodeError, TypeError):
+                    logger.error(
+                        f"Invalid JSON in schema_change_detection config for connection {config['connection_id']}")
+                    continue
+
                 if not schema_config.get("enabled", False):
                     continue
 
                 connection_id = config["connection_id"]
+
+                # FIXED: Use the user-configured interval, not a hardcoded default
                 interval_hours = schema_config.get("interval_hours", 6)
 
-                # Check if we need to schedule a job
+                logger.debug(f"Checking schema detection for connection {connection_id}, "
+                             f"user configured interval: {interval_hours} hours")
+
+                # Check if we need to schedule a job using the USER'S interval
                 if self._should_schedule_job(connection_id, "schema_detection", interval_hours):
                     self._schedule_schema_detection(connection_id, schema_config)
 
@@ -154,7 +184,7 @@ class AutomationScheduler:
             logger.error(f"Error checking schema detection jobs: {str(e)}")
 
     def _check_validation_jobs(self):
-        """Check and schedule validation automation jobs"""
+        """Check and schedule validation automation jobs - FIXED to respect user config"""
         try:
             # Get all enabled validation automation configurations
             response = self.supabase.supabase.table("automation_connection_configs") \
@@ -165,14 +195,26 @@ class AutomationScheduler:
                 return
 
             for config in response.data:
-                validation_config = config.get("validation_automation", {})
+                try:
+                    # Parse the JSON configuration
+                    validation_config = json.loads(config.get("validation_automation", "{}"))
+                except (json.JSONDecodeError, TypeError):
+                    logger.error(
+                        f"Invalid JSON in validation_automation config for connection {config['connection_id']}")
+                    continue
+
                 if not validation_config.get("enabled", False):
                     continue
 
                 connection_id = config["connection_id"]
+
+                # FIXED: Use the user-configured interval, not a hardcoded default
                 interval_hours = validation_config.get("interval_hours", 12)
 
-                # Check if we need to schedule a job
+                logger.debug(f"Checking validation automation for connection {connection_id}, "
+                             f"user configured interval: {interval_hours} hours")
+
+                # Check if we need to schedule a job using the USER'S interval
                 if self._should_schedule_job(connection_id, "validation_run", interval_hours):
                     self._schedule_validation_run(connection_id, validation_config)
 
