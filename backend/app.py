@@ -999,22 +999,22 @@ def setup_comprehensive_logging():
     Set up a comprehensive logging configuration that:
     - Logs to console (stderr)
     - Logs to a file
-    - Captures DEBUG level logs
+    - Captures appropriate log levels (not everything at DEBUG)
     - Includes detailed log formatting
     - Handles uncaught exceptions
     """
     # Create a logger
     logger = logging.getLogger()
-    logger.setLevel(logging.DEBUG)  # Set to lowest level to capture everything
+    logger.setLevel(logging.INFO)  # Changed from DEBUG to INFO
 
     # Console Handler - writes to stderr
     console_handler = logging.StreamHandler(sys.stderr)
-    console_handler.setLevel(logging.DEBUG)  # Capture all levels
+    console_handler.setLevel(logging.INFO)  # Changed from DEBUG to INFO
 
     # File Handler - writes to a log file
     try:
         file_handler = logging.FileHandler('app.log', mode='a')
-        file_handler.setLevel(logging.DEBUG)
+        file_handler.setLevel(logging.DEBUG)  # Keep DEBUG for file only
     except Exception as e:
         print(f"Could not create file handler: {e}")
         file_handler = None
@@ -1041,6 +1041,14 @@ def setup_comprehensive_logging():
     logging.getLogger('automation').setLevel(logging.INFO)
     logging.getLogger('automation.scheduler').setLevel(logging.INFO)
     logging.getLogger('automation.api').setLevel(logging.INFO)
+
+    # REDUCE NOISY LOGGERS - Add this section
+    logging.getLogger('core.storage.supabase_manager').setLevel(logging.WARNING)
+    logging.getLogger('core.utils.performance_optimizations').setLevel(logging.WARNING)
+    logging.getLogger('core.metadata.storage_service').setLevel(logging.WARNING)
+    logging.getLogger('supabase_manager').setLevel(logging.WARNING)
+    logging.getLogger('core.utils.auth_utils').setLevel(logging.WARNING)
+    logging.getLogger('core.utils.token_utils').setLevel(logging.WARNING)
 
     # Add handler for uncaught exceptions
     def handle_exception(exc_type, exc_value, exc_traceback):

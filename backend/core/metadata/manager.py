@@ -569,6 +569,10 @@ class MetadataTaskManager:
         """Background thread for scheduled metadata refreshes"""
         logger.info("Started scheduled refresh thread")
 
+        # Add simple circuit breaker
+        consecutive_errors = 0
+        max_errors = 3
+
         # Create schema change detector if available
         schema_detector = None
         try:
@@ -585,6 +589,13 @@ class MetadataTaskManager:
 
         while True:
             try:
+                # Circuit breaker: if too many errors, slow down
+                if consecutive_errors >= max_errors:
+                    logger.warning(f"Too many consecutive errors ({consecutive_errors}), sleeping for 10 minutes")
+                    time.sleep(600)  # 10 minutes
+                    consecutive_errors = 0
+                    continue
+
                 # Get all connections
                 if self.supabase_manager:
                     connections = self._get_all_connections()
@@ -634,62 +645,24 @@ class MetadataTaskManager:
 
                                         logger.info(f"Change types detected: {change_types}")
 
-                                        # Store changes in the database
-                                        if hasattr(schema_detector, '_store_schema_changes'):
-                                            schema_detector._store_schema_changes(
-                                                connection_id,
-                                                changes,
-                                                self.supabase_manager
-                                            )
-                                            logger.info(f"Stored {len(changes)} schema changes in database")
-
-                                        # Publish events
-                                        task_ids = schema_detector.publish_changes_as_events(
-                                            connection_id,
-                                            changes,
-                                            organization_id
-                                        )
-
-                                        logger.info(f"Published {len(task_ids)} schema change events")
-
-                                        # Publish automation events for schema changes
-                                        try:
-                                            from core.automation.events import AutomationEventType, \
-                                                publish_automation_event
-
-                                            publish_automation_event(
-                                                event_type=AutomationEventType.SCHEMA_CHANGES_DETECTED,
-                                                data={
-                                                    "connection_id": connection_id,
-                                                    "changes_detected": len(changes),
-                                                    "important": important_changes,
-                                                    "change_types": change_types
-                                                },
-                                                connection_id=connection_id,
-                                                organization_id=organization_id
-                                            )
-                                            logger.info("Published automation event for schema changes")
-
-                                        except ImportError:
-                                            logger.warning("Automation events not available")
-                                        except Exception as e:
-                                            logger.error(f"Error publishing automation event: {str(e)}")
-
                                 except Exception as e:
                                     logger.error(f"Error in schema change detection for {connection_id}: {str(e)}")
-                                    logger.error(traceback.format_exc())
 
                         except Exception as e:
                             logger.error(f"Error checking connection {connection_id}: {str(e)}")
-                            logger.error(traceback.format_exc())
+
+                # Reset error counter on success
+                consecutive_errors = 0
 
                 # Sleep for a while before next check (1 hour)
                 time.sleep(3600)
 
             except Exception as e:
+                consecutive_errors += 1
                 logger.error(f"Error in scheduled refresh loop: {str(e)}")
-                logger.error(traceback.format_exc())
-                time.sleep(300)  # Sleep for 5 minutes after error
+                # Sleep progressively longer with more errors
+                sleep_time = min(300, 60 * consecutive_errors)  # Max 5 minutes
+                time.sleep(sleep_time)
 
     def _get_all_connections(self):
         """Get all database connections from Supabase"""

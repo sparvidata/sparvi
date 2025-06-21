@@ -442,9 +442,26 @@ class MetadataStorageService:
             logger.error(f"Error verifying statistics storage: {str(e)}")
             return False
 
-    # Keep all existing methods from the original file
     def get_metadata(self, connection_id: str, metadata_type: str) -> Optional[Dict]:
         """Get the most recent metadata of a specific type for a connection"""
+        import time
+
+        # Simple throttling to prevent excessive calls
+        cache_key = f"metadata_check:{connection_id}:{metadata_type}"
+        current_time = time.time()
+
+        if not hasattr(self, '_last_checks'):
+            self._last_checks = {}
+            self._cached_results = {}
+
+        # Only check database once per minute per type
+        if cache_key in self._last_checks:
+            if current_time - self._last_checks[cache_key] < 60:  # 60 seconds
+                cached_result = self._cached_results.get(cache_key)
+                if cached_result is not None:
+                    logger.debug(f"Using cached {metadata_type} metadata for connection {connection_id}")
+                    return cached_result
+
         try:
             response = self.supabase.table("connection_metadata") \
                 .select("id, metadata, collected_at") \
@@ -456,11 +473,16 @@ class MetadataStorageService:
                 .execute()
 
             if not response.data:
-                logger.info(f"No {metadata_type} metadata found for connection {connection_id}")
-                return None
+                logger.debug(f"No {metadata_type} metadata found for connection {connection_id}")
+                result = None
+            else:
+                result = response.data
+                result["freshness"] = self._calculate_freshness(result.get("collected_at"))
 
-            result = response.data
-            result["freshness"] = self._calculate_freshness(result.get("collected_at"))
+            # Cache the result
+            self._last_checks[cache_key] = current_time
+            self._cached_results[cache_key] = result
+
             return result
 
         except Exception as e:

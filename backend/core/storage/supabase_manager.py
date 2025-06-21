@@ -52,16 +52,9 @@ class SupabaseManager:
 
     def __init__(self):
         """Initialize the Supabase client using singleton"""
+        # Use singleton instance only, don't create duplicate clients
         self.supabase: Client = SupabaseSingleton.get_instance()
-        supabase_url = os.getenv("SUPABASE_URL")
-        supabase_key = os.getenv("SUPABASE_SERVICE_KEY")
-
-        if not supabase_url or not supabase_key:
-            logger.error("Missing Supabase configuration (URL or key)")
-            raise ValueError("Missing Supabase configuration. Check environment variables.")
-
-        self.supabase: Client = create_client(supabase_url, supabase_key)
-        logger.debug("Supabase client initialized")  # Changed from INFO to DEBUG
+        logger.debug("Supabase client initialized")
 
     @classmethod
     def reset_client(cls):
