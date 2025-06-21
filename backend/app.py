@@ -722,9 +722,13 @@ import os
 def token_required(f):
     @wraps(f)
     def decorated(*args, **kwargs):
+        # Add request correlation ID for tracing
+        import uuid
+        request_id = str(uuid.uuid4())[:8]
+
         # Special case for testing
         if os.environ.get('TESTING') == 'True' and request.headers.get('Authorization') == 'Bearer test-token':
-            logger.debug("Test token detected, bypassing authentication")
+            logger.debug(f"[{request_id}] Test token detected, bypassing authentication")
             return f("test-user-id", "test-org-id", *args, **kwargs)
 
         # Normal token check
@@ -735,16 +739,16 @@ def token_required(f):
             if len(parts) == 2 and parts[0] == "Bearer":
                 token = parts[1]
         if not token:
-            logger.warning("No token provided")
+            logger.debug(f"[{request_id}] No token provided")
             return jsonify({"error": "Token is missing!", "code": "token_missing"}), 401
 
         try:
-            # Use the new validation utility
+            # Use the new validation utility - ONLY CALL ONCE
             from core.utils.auth_utils import validate_token
             decoded = validate_token(token)
 
             if not decoded:
-                logger.warning("Token validation failed - expired or invalid")
+                logger.debug(f"[{request_id}] Token validation failed")
                 return jsonify({
                     "error": "Token is expired or invalid!",
                     "code": "token_expired"
@@ -752,22 +756,33 @@ def token_required(f):
 
             current_user = decoded.get("sub")
             if not current_user:
-                logger.error("User ID not found in token")
+                logger.error(f"[{request_id}] User ID not found in token")
                 return jsonify({"error": "Invalid token format", "code": "token_invalid"}), 401
 
-            logger.info(f"Token valid for user: {current_user}")
+            # Only log successful auth at DEBUG level, not INFO
+            logger.debug(f"[{request_id}] Token valid for user: {current_user}")
 
-            # Get the user's organization ID
-            supabase_mgr = SupabaseManager()
-            organization_id = supabase_mgr.get_user_organization(current_user)
+            # Cache organization lookup per request using Flask g
+            from flask import g
+            if not hasattr(g, 'user_org_cache'):
+                g.user_org_cache = {}
+
+            if current_user not in g.user_org_cache:
+                from core.storage.supabase_manager import SupabaseManager
+                supabase_mgr = SupabaseManager()
+                g.user_org_cache[current_user] = supabase_mgr.get_user_organization(current_user)
+
+            organization_id = g.user_org_cache[current_user]
 
             if not organization_id:
-                logger.error(f"No organization found for user: {current_user}")
+                logger.error(f"[{request_id}] No organization found for user: {current_user}")
                 return jsonify({"error": "User has no associated organization", "code": "org_missing"}), 403
 
         except Exception as e:
-            logger.error(f"Token verification error: {str(e)}")
-            logger.error(traceback.format_exc())
+            logger.error(f"[{request_id}] Token verification error: {str(e)}")
+            # Don't log full traceback unless in DEBUG mode
+            if logger.isEnabledFor(logging.DEBUG):
+                logger.debug(traceback.format_exc())
             return jsonify({"error": "Token validation failed!", "message": str(e), "code": "token_error"}), 401
 
         # Pass both user_id and organization_id to the decorated function
@@ -3824,9 +3839,7 @@ def delete_connection(current_user, organization_id, connection_id):
                 .delete() \
                 .eq("connection_id", connection_id) \
                 .execute()
-            logger.info(
-                f"Deleted {len(metadata_facts_response.data) if metadata_facts_response.data else 0} metadata facts")
-
+            logger.info(f"Deleted metadata facts for connection {connection_id}")
         except Exception as e:
             logger.warning(f"Error deleting metadata_facts (may not exist): {str(e)}")
 
@@ -3836,9 +3849,7 @@ def delete_connection(current_user, organization_id, connection_id):
                 .delete() \
                 .eq("connection_id", connection_id) \
                 .execute()
-            logger.info(
-                f"Deleted {len(metadata_objects_response.data) if metadata_objects_response.data else 0} metadata objects")
-
+            logger.info(f"Deleted metadata objects for connection {connection_id}")
         except Exception as e:
             logger.warning(f"Error deleting metadata_objects (may not exist): {str(e)}")
 
@@ -3848,9 +3859,7 @@ def delete_connection(current_user, organization_id, connection_id):
                 .delete() \
                 .eq("connection_id", connection_id) \
                 .execute()
-            logger.info(
-                f"Deleted {len(connection_metadata_response.data) if connection_metadata_response.data else 0} connection metadata records")
-
+            logger.info(f"Deleted connection metadata for connection {connection_id}")
         except Exception as e:
             logger.warning(f"Error deleting connection_metadata (may not exist): {str(e)}")
 
@@ -3860,9 +3869,7 @@ def delete_connection(current_user, organization_id, connection_id):
                 .delete() \
                 .eq("connection_id", connection_id) \
                 .execute()
-            logger.info(
-                f"Deleted {len(validation_results_response.data) if validation_results_response.data else 0} validation results")
-
+            logger.info(f"Deleted validation results for connection {connection_id}")
         except Exception as e:
             logger.warning(f"Error deleting validation_results (may not exist): {str(e)}")
 
@@ -3872,9 +3879,7 @@ def delete_connection(current_user, organization_id, connection_id):
                 .delete() \
                 .eq("connection_id", connection_id) \
                 .execute()
-            logger.info(
-                f"Deleted {len(metadata_tasks_response.data) if metadata_tasks_response.data else 0} metadata tasks")
-
+            logger.info(f"Deleted metadata tasks for connection {connection_id}")
         except Exception as e:
             logger.warning(f"Error deleting metadata_tasks (may not exist): {str(e)}")
 
@@ -3886,12 +3891,18 @@ def delete_connection(current_user, organization_id, connection_id):
             .eq("organization_id", organization_id) \
             .execute()
 
-        # Check if any rows were deleted
-        if delete_response.data and len(delete_response.data) > 0:
+        # Verify the connection is gone by trying to select it
+        verify_response = supabase_mgr.supabase.table("database_connections") \
+            .select("id") \
+            .eq("id", connection_id) \
+            .eq("organization_id", organization_id) \
+            .execute()
+
+        if not verify_response.data or len(verify_response.data) == 0:
             logger.info(f"Successfully deleted connection {connection_id}")
             return jsonify({"success": True})
         else:
-            logger.error(f"Failed to delete connection {connection_id} - no rows affected")
+            logger.error(f"Failed to delete connection {connection_id} - still exists after delete")
             return jsonify({"error": "Failed to delete connection"}), 500
 
     except Exception as e:

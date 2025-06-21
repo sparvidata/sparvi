@@ -61,7 +61,7 @@ class SupabaseManager:
             raise ValueError("Missing Supabase configuration. Check environment variables.")
 
         self.supabase: Client = create_client(supabase_url, supabase_key)
-        logger.info("Supabase client initialized")
+        logger.debug("Supabase client initialized")  # Changed from INFO to DEBUG
 
     @classmethod
     def reset_client(cls):

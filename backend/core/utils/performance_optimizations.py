@@ -29,37 +29,32 @@ class MetadataCache:
         self.cache_lock = threading.RLock()
 
     def get(self, key: str) -> Tuple[Any, bool]:
-        """
-        Get a value from the cache
-
-        Args:
-            key: Cache key
-
-        Returns:
-            Tuple of (value, hit) where hit is True if the value was in cache
-        """
+        """Get a value from the cache"""
         with self.cache_lock:
             if key in self.cache:
                 value, timestamp, timeout = self.cache[key]
                 if time.time() - timestamp < timeout:
-                    # Cache hit
+                    # Cache hit - only log at DEBUG level occasionally
+                    if hash(key) % 100 == 0:  # Log only 1% of cache hits
+                        logger.debug(f"Metadata cache hit for {key}")
                     return value, True
                 else:
                     # Expired
                     del self.cache[key]
+                    logger.debug(f"Metadata cache expired for {key}")
+
+        # Only log cache misses occasionally to reduce noise
+        if hash(key) % 10 == 0:  # Log only 10% of cache misses
+            logger.debug(f"Metadata cache miss for {key}")
         return None, False
 
     def set(self, key: str, value: Any, timeout_seconds: int) -> None:
-        """
-        Set a value in the cache with a timeout
-
-        Args:
-            key: Cache key
-            value: Value to cache
-            timeout_seconds: Timeout in seconds
-        """
+        """Set a value in the cache with a timeout"""
         with self.cache_lock:
             self.cache[key] = (value, time.time(), timeout_seconds)
+            # Only log cache sets occasionally
+            if hash(key) % 20 == 0:  # Log only 5% of cache sets
+                logger.debug(f"Cached metadata for {key} (timeout: {timeout_seconds}s)")
 
     def invalidate(self, prefix: str = None) -> int:
         """

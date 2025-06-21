@@ -4,8 +4,6 @@ import os
 import logging
 from datetime import datetime, timedelta
 
-from .token_utils import log_token_details
-
 logger = logging.getLogger(__name__)
 
 def validate_token(token):
@@ -19,17 +17,14 @@ def validate_token(token):
         dict: The decoded token payload if valid
         None: If the token is invalid or expired
     """
-    # Log token details for debugging
-    log_token_details(token)
-
     try:
         # Get Supabase JWT secret from environment
         jwt_secret = os.getenv("SUPABASE_JWT_SECRET")
         service_key = os.getenv("SUPABASE_SERVICE_KEY")
 
-        # Log available secrets (without revealing them)
-        logger.info(f"JWT Secret available: {bool(jwt_secret)}")
-        logger.info(f"Service Key available: {bool(service_key)}")
+        # Log availability once at DEBUG level (not every request)
+        logger.debug(f"JWT Secret available: {bool(jwt_secret)}")
+        logger.debug(f"Service Key available: {bool(service_key)}")
 
         # Determine which secret to use
         secret_to_use = jwt_secret or service_key
@@ -56,14 +51,15 @@ def validate_token(token):
             audience='authenticated'  # Match Supabase's default audience
         )
 
-        logger.info("Token successfully validated")
+        # Only log successful validation at DEBUG level
+        logger.debug("Token successfully validated")
         return decoded
 
     except jwt.ExpiredSignatureError:
-        logger.warning("Token has expired")
+        logger.debug("Token has expired")  # Changed from WARNING to DEBUG
         return None
     except jwt.InvalidTokenError as e:
-        logger.error(f"Token validation error: {str(e)}")
+        logger.debug(f"Token validation error: {str(e)}")  # Changed from ERROR to DEBUG
         return None
     except Exception as e:
         logger.error(f"Unexpected token validation error: {str(e)}")
