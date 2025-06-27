@@ -194,9 +194,29 @@ class AutomationAPI:
             for field in ["metadata_refresh", "schema_change_detection", "validation_automation"]:
                 if field in config_data:
                     try:
-                        clean_config_data[field] = json.dumps(config_data[field])
+                        field_data = config_data[field]
+
+                        # CRITICAL FIX: Check if it's already a string (JSON)
+                        if isinstance(field_data, str):
+                            # Try to parse it to validate it's valid JSON
+                            try:
+                                json.loads(field_data)
+                                # It's already valid JSON string, use as-is
+                                clean_config_data[field] = field_data
+                            except json.JSONDecodeError:
+                                # It's a string but not valid JSON, this shouldn't happen
+                                logger.error(f"Invalid JSON string for {field}: {field_data}")
+                                return {"error": f"Invalid JSON string for {field}"}
+                        elif isinstance(field_data, dict):
+                            # It's a dictionary, convert to JSON string
+                            clean_config_data[field] = json.dumps(field_data)
+                        else:
+                            # Unexpected type
+                            logger.error(f"Unexpected data type for {field}: {type(field_data)}")
+                            return {"error": f"Invalid data type for {field}"}
+
                     except (TypeError, ValueError) as e:
-                        logger.error(f"Error serializing {field} to JSON: {str(e)}")
+                        logger.error(f"Error processing {field} configuration: {str(e)}")
                         return {"error": f"Invalid {field} configuration"}
 
             # Check if config exists
