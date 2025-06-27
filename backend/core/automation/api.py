@@ -92,6 +92,8 @@ class AutomationAPI:
             return {"error": str(e)}
 
     # Connection-Level Configuration
+
+
     def get_connection_configs(self, organization_id: str) -> List[Dict[str, Any]]:
         """Get all connection configurations for an organization"""
         try:
@@ -130,7 +132,7 @@ class AutomationAPI:
             return []
 
     def get_connection_config(self, connection_id: str) -> Optional[Dict[str, Any]]:
-        """Get automation configuration for a specific connection - FIXED JSON parsing"""
+        """Get automation configuration for a specific connection - FIXED"""
         try:
             response = self.supabase.supabase.table("automation_connection_configs") \
                 .select("*") \
@@ -140,20 +142,34 @@ class AutomationAPI:
             if response.data and len(response.data) > 0:
                 config_row = response.data[0]
 
-                # FIXED: Parse JSON strings from database
                 parsed_config = {
                     "connection_id": connection_id
                 }
 
-                # Parse each JSON field
+                # FIXED: Handle both JSON strings (old data) and objects (new data)
                 for field in ["metadata_refresh", "schema_change_detection", "validation_automation"]:
                     try:
-                        if config_row.get(field):
-                            parsed_config[field] = json.loads(config_row[field])
-                        else:
+                        field_value = config_row.get(field)
+
+                        if field_value is None:
                             parsed_config[field] = {}
-                    except (json.JSONDecodeError, TypeError) as e:
-                        logger.error(f"Error parsing {field} JSON for connection {connection_id}: {str(e)}")
+                        elif isinstance(field_value, str):
+                            # Old format: JSON string - parse it
+                            try:
+                                parsed_config[field] = json.loads(field_value)
+                            except json.JSONDecodeError as e:
+                                logger.error(f"Error parsing {field} JSON for connection {connection_id}: {str(e)}")
+                                parsed_config[field] = {}
+                        elif isinstance(field_value, dict):
+                            # New format: Already a dict object - use directly
+                            parsed_config[field] = field_value
+                        else:
+                            # Unexpected type
+                            logger.warning(f"Unexpected type for {field}: {type(field_value)}")
+                            parsed_config[field] = {}
+
+                    except Exception as e:
+                        logger.error(f"Error processing {field} for connection {connection_id}: {str(e)}")
                         parsed_config[field] = {}
 
                 return parsed_config
@@ -183,41 +199,35 @@ class AutomationAPI:
             return None
 
     def update_connection_config(self, connection_id: str, config_data: Dict[str, Any], user_id: str) -> Dict[str, Any]:
-        """Update automation configuration for a connection - FIXED JSON handling"""
+        """Update automation configuration for a connection - SUPABASE FIX"""
         try:
-            # FIXED: Convert config objects to JSON strings for storage
             clean_config_data = {
                 "updated_at": datetime.now(timezone.utc).isoformat()
             }
 
-            # Convert each config section to JSON string
+            # CRITICAL FIX: Store as dict/object directly, not JSON string
+            # Supabase will handle the JSON serialization automatically
             for field in ["metadata_refresh", "schema_change_detection", "validation_automation"]:
                 if field in config_data:
-                    try:
-                        field_data = config_data[field]
+                    field_data = config_data[field]
 
-                        # CRITICAL FIX: Check if it's already a string (JSON)
+                    if field_data is None:
+                        clean_config_data[field] = None
+                    else:
+                        # FIXED: Store the dict/object directly, don't json.dumps() it
+                        # Supabase Python client will serialize it properly
                         if isinstance(field_data, str):
-                            # Try to parse it to validate it's valid JSON
                             try:
-                                json.loads(field_data)
-                                # It's already valid JSON string, use as-is
-                                clean_config_data[field] = field_data
+                                # If it's a string, parse it back to object first
+                                clean_config_data[field] = json.loads(field_data)
                             except json.JSONDecodeError:
-                                # It's a string but not valid JSON, this shouldn't happen
                                 logger.error(f"Invalid JSON string for {field}: {field_data}")
-                                return {"error": f"Invalid JSON string for {field}"}
-                        elif isinstance(field_data, dict):
-                            # It's a dictionary, convert to JSON string
-                            clean_config_data[field] = json.dumps(field_data)
+                                return {"error": f"Invalid JSON for {field}"}
                         else:
-                            # Unexpected type
-                            logger.error(f"Unexpected data type for {field}: {type(field_data)}")
-                            return {"error": f"Invalid data type for {field}"}
+                            # It's already a dict/list, store it directly
+                            clean_config_data[field] = field_data
 
-                    except (TypeError, ValueError) as e:
-                        logger.error(f"Error processing {field} configuration: {str(e)}")
-                        return {"error": f"Invalid {field} configuration"}
+            logger.info(f"Storing config data: {clean_config_data}")
 
             # Check if config exists
             existing = self.supabase.supabase.table("automation_connection_configs") \
