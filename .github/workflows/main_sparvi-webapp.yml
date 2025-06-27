@@ -99,6 +99,16 @@ jobs:
                 "name": "ENABLE_SESSION_EXPIRY",
                 "value": "${{ secrets.ENABLE_SESSION_EXPIRY }}",
                 "slotSetting": false
+              },
+              {
+                "name": "ENVIRONMENT",
+                "value": "production",
+                "slotSetting": false
+              },
+              {
+                "name": "ENABLE_AUTOMATION_SCHEDULER",
+                "value": "true",
+                "slotSetting": false
               }
             ]
 

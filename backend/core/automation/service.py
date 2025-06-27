@@ -1,9 +1,8 @@
-# backend/core/automation/service.py
-
 import logging
 import threading
 import time
 from typing import Optional
+import os
 
 from .scheduler import AutomationScheduler
 from .events import set_event_handler_supabase
@@ -42,10 +41,19 @@ class AutomationService:
         logger.info("AutomationService initialized")
 
     def start(self):
-        """Start the automation service"""
+        """Start the automation service with environment protection"""
         try:
             if self.running:
                 logger.warning("Automation service already running")
+                return False
+
+            # CRITICAL: Environment protection
+            environment = os.getenv("ENVIRONMENT", "development")
+            scheduler_enabled = os.getenv("ENABLE_AUTOMATION_SCHEDULER", "false").lower() == "true"
+
+            if environment == "development" and not scheduler_enabled:
+                logger.info("Automation scheduler disabled in development environment")
+                logger.info("Set ENABLE_AUTOMATION_SCHEDULER=true to enable in development")
                 return False
 
             # Check if automation is globally enabled
@@ -60,7 +68,7 @@ class AutomationService:
             self.scheduler.start()
 
             self.running = True
-            logger.info("Automation service started successfully")
+            logger.info(f"Automation service started successfully in {environment} environment")
             return True
 
         except Exception as e:
