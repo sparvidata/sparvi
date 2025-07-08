@@ -6,7 +6,7 @@ import { useTablesData } from '../../hooks/useTablesData';
 import { useAutomationStatus } from '../../hooks/useAutomationStatus';
 import useValidations from '../../hooks/useValidations';
 import ValidationResultsSummary from './components/ValidationResultsSummary';
-import ValidationResultsTrend from './components/ValidationResultsTrend';
+import ValidationHealthDashboard from './components/ValidationHealthDashboard';
 import ValidationRuleList from './components/ValidationRuleList';
 import ValidationRuleEditor from './components/ValidationRuleEditor';
 import ValidationDebugHelper from './components/ValidationDebugHelper';
@@ -306,24 +306,26 @@ const ValidationPage = () => {
               }}
             />
           ) : (
-            <div className="space-y-4">
+            <div className="space-y-6">
               {/* Results Summary */}
               {selectedTable && (
-                <div className="space-y-4">
-                  <ValidationResultsSummary
-                    metrics={validationData.metrics}
-                    connectionId={connectionId}
-                    tableName={selectedTable}
-                    onRunAll={handleRunAll}
-                    isRunning={validationData.runningValidation}
-                    isLoading={validationData.loading} // Pass loading state
-                  />
-                  <ValidationResultsTrend
-                    connectionId={connectionId}
-                    tableName={selectedTable}
-                    days={30}
-                  />
-                </div>
+                <ValidationResultsSummary
+                  metrics={validationData.metrics}
+                  connectionId={connectionId}
+                  tableName={selectedTable}
+                  onRunAll={handleRunAll}
+                  isRunning={validationData.runningValidation}
+                  isLoading={validationData.loading}
+                />
+              )}
+
+              {/* NEW: Modular Health Dashboard */}
+              {selectedTable && (
+                <ValidationHealthDashboard
+                  connectionId={connectionId}
+                  tableName={selectedTable}
+                  days={30}
+                />
               )}
 
               <div className="bg-white shadow rounded-lg">
