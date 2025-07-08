@@ -7,16 +7,22 @@ import LoadingSpinner from '../../components/common/LoadingSpinner';
 import MetadataStatusPanel from './components/MetadataStatusPanel';
 import MetadataTasksList from './components/MetadataTasksList';
 import MetadataExplorer from './components/MetadataExplorer';
+import MetadataHistoryPanel from './components/MetadataHistoryPanel';
 import SchemaChangesPanel from './components/SchemaChangesPanel';
 import RefreshControls from './components/RefreshControls';
 import EmptyState from '../../components/common/EmptyState';
-import { ServerIcon, TableCellsIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline';
+import {
+  ServerIcon,
+  TableCellsIcon,
+  ExclamationTriangleIcon,
+  ClockIcon
+} from '@heroicons/react/24/outline';
 
 const MetadataPage = () => {
   const { activeConnection } = useConnection();
   const { updateBreadcrumbs, showNotification } = useUI();
   const [selectedMetadataType, setSelectedMetadataType] = useState('tables');
-  const [activeTab, setActiveTab] = useState('metadata'); // 'metadata' or 'schema-changes'
+  const [activeTab, setActiveTab] = useState('metadata'); // 'metadata', 'history', or 'schema-changes'
 
   // Set breadcrumbs
   useEffect(() => {
@@ -113,12 +119,27 @@ const MetadataPage = () => {
               ${activeTab === 'metadata' 
                 ? 'border-primary-500 text-primary-600' 
                 : 'border-transparent text-secondary-500 hover:border-secondary-300 hover:text-secondary-700'}
-              whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm
+              whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm flex items-center
             `}
             onClick={() => setActiveTab('metadata')}
           >
+            <TableCellsIcon className="mr-2 h-5 w-5" />
             Metadata Explorer
           </button>
+
+          <button
+            className={`
+              ${activeTab === 'history' 
+                ? 'border-primary-500 text-primary-600' 
+                : 'border-transparent text-secondary-500 hover:border-secondary-300 hover:text-secondary-700'}
+              whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm flex items-center
+            `}
+            onClick={() => setActiveTab('history')}
+          >
+            <ClockIcon className="mr-2 h-5 w-5" />
+            Metadata History
+          </button>
+
           <button
             aria-label="Schema Changes"
             className={`
@@ -129,6 +150,7 @@ const MetadataPage = () => {
             `}
             onClick={() => setActiveTab('schema-changes')}
           >
+            <ExclamationTriangleIcon className="mr-2 h-5 w-5" />
             Schema Changes
             {hasUnacknowledgedChanges && (
               <span className="ml-2 bg-warning-100 text-warning-800 text-xs px-2 py-0.5 rounded-full">
@@ -140,7 +162,7 @@ const MetadataPage = () => {
       </div>
 
       {/* Add persistent banner for unacknowledged changes */}
-      {hasUnacknowledgedChanges && (
+      {hasUnacknowledgedChanges && activeTab !== 'schema-changes' && (
         <div className="mt-4 mb-6">
           <div className="rounded-md bg-warning-50 p-4">
             <div className="flex">
@@ -166,96 +188,107 @@ const MetadataPage = () => {
       )}
 
       <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-12">
-        {/* Side panel */}
-        <div className="lg:col-span-3">
-          <div className="bg-white shadow rounded-lg">
-            <div className="px-4 py-3 border-b border-secondary-200">
-              <h3 className="text-sm font-medium text-secondary-900">Refresh Controls</h3>
-            </div>
-            <div className="p-4">
-              {activeTab === 'metadata' ? (
-                <RefreshControls
-                  connectionId={connectionId}
-                  onRefresh={refreshMetadata}
-                  isRefreshing={isRefreshing}
-                  metadataStatus={metadataStatus}
-                  onMetadataTypeSelect={setSelectedMetadataType}
-                  selectedMetadataType={selectedMetadataType}
-                  onViewSchemaChanges={() => setActiveTab('schema-changes')}
-                />
-              ) : (
-                <div className="space-y-4">
-                  <button
-                    onClick={handleDetectChanges}
-                    disabled={isDetecting}
-                    className="w-full flex items-center justify-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-primary-600 hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 disabled:opacity-50"
-                  >
-                    {isDetecting ? (
-                      <>
-                        <LoadingSpinner size="sm" className="mr-2" />
-                        Detecting Changes...
-                      </>
-                    ) : (
-                      <>
-                        <ExclamationTriangleIcon className="-ml-1 mr-2 h-5 w-5" aria-hidden="true" />
-                        Detect Schema Changes
-                      </>
-                    )}
-                  </button>
+        {/* Side panel - only show for metadata tab */}
+        {(activeTab === 'metadata' || activeTab === 'schema-changes') && (
+          <div className="lg:col-span-3">
+            <div className="bg-white shadow rounded-lg">
+              <div className="px-4 py-3 border-b border-secondary-200">
+                <h3 className="text-sm font-medium text-secondary-900">
+                  {activeTab === 'metadata' ? 'Refresh Controls' : 'Change Detection'}
+                </h3>
+              </div>
+              <div className="p-4">
+                {activeTab === 'metadata' ? (
+                  <RefreshControls
+                    connectionId={connectionId}
+                    onRefresh={refreshMetadata}
+                    isRefreshing={isRefreshing}
+                    metadataStatus={metadataStatus}
+                    onMetadataTypeSelect={setSelectedMetadataType}
+                    selectedMetadataType={selectedMetadataType}
+                    onViewSchemaChanges={() => setActiveTab('schema-changes')}
+                  />
+                ) : (
+                  <div className="space-y-4">
+                    <button
+                      onClick={handleDetectChanges}
+                      disabled={isDetecting}
+                      className="w-full flex items-center justify-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-primary-600 hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 disabled:opacity-50"
+                    >
+                      {isDetecting ? (
+                        <>
+                          <LoadingSpinner size="sm" className="mr-2" />
+                          Detecting Changes...
+                        </>
+                      ) : (
+                        <>
+                          <ExclamationTriangleIcon className="-ml-1 mr-2 h-5 w-5" aria-hidden="true" />
+                          Detect Schema Changes
+                        </>
+                      )}
+                    </button>
 
-                  <div className="border-t border-secondary-200 pt-4">
-                    <div className="rounded-md bg-secondary-50 p-4">
-                      <div className="flex">
-                        <div className="flex-shrink-0">
-                          <TableCellsIcon className="h-5 w-5 text-secondary-400" aria-hidden="true" />
-                        </div>
-                        <div className="ml-3">
-                          <h3 className="text-sm font-medium text-secondary-900">About Schema Changes</h3>
-                          <div className="mt-2 text-sm text-secondary-700">
-                            <p>
-                              Schema changes are detected by comparing the current database schema with
-                              the previously stored metadata. Detection can be triggered manually or
-                              will run automatically during metadata refresh.
-                            </p>
+                    <div className="border-t border-secondary-200 pt-4">
+                      <div className="rounded-md bg-secondary-50 p-4">
+                        <div className="flex">
+                          <div className="flex-shrink-0">
+                            <TableCellsIcon className="h-5 w-5 text-secondary-400" aria-hidden="true" />
+                          </div>
+                          <div className="ml-3">
+                            <h3 className="text-sm font-medium text-secondary-900">About Schema Changes</h3>
+                            <div className="mt-2 text-sm text-secondary-700">
+                              <p>
+                                Schema changes are detected by comparing the current database schema with
+                                the previously stored metadata. Detection can be triggered manually or
+                                will run automatically during metadata refresh.
+                              </p>
+                            </div>
                           </div>
                         </div>
                       </div>
                     </div>
                   </div>
-                </div>
-              )}
+                )}
+              </div>
             </div>
-          </div>
 
-          <div className="mt-5 bg-white shadow rounded-lg">
-            <div className="px-4 py-3 border-b border-secondary-200">
-              <h3 className="text-sm font-medium text-secondary-900">Active Tasks</h3>
-            </div>
-            <div className="p-4">
-              <MetadataTasksList
-                connectionId={connectionId}
-                metadataStatus={metadataStatus}
-                isLoading={isLoadingStatus}
-              />
+            <div className="mt-5 bg-white shadow rounded-lg">
+              <div className="px-4 py-3 border-b border-secondary-200">
+                <h3 className="text-sm font-medium text-secondary-900">Active Tasks</h3>
+              </div>
+              <div className="p-4">
+                <MetadataTasksList
+                  connectionId={connectionId}
+                  metadataStatus={metadataStatus}
+                  isLoading={isLoadingStatus}
+                />
+              </div>
             </div>
           </div>
-        </div>
+        )}
 
         {/* Main content */}
-        <div className="lg:col-span-9">
+        <div className={`${(activeTab === 'metadata' || activeTab === 'schema-changes') ? 'lg:col-span-9' : 'lg:col-span-12'}`}>
           <div className="bg-white shadow rounded-lg">
-            <MetadataStatusPanel
-              metadataStatus={metadataStatus}
-              isLoading={isLoadingStatus}
-              onRefresh={() => refetchStatus()}
-            />
+            {/* Only show status panel for metadata and schema changes tabs */}
+            {(activeTab === 'metadata' || activeTab === 'schema-changes') && (
+              <MetadataStatusPanel
+                metadataStatus={metadataStatus}
+                isLoading={isLoadingStatus}
+                onRefresh={() => refetchStatus()}
+              />
+            )}
 
-            <div className="px-4 py-5 sm:p-6 border-t border-secondary-200">
+            <div className={`px-4 py-5 sm:p-6 ${(activeTab === 'metadata' || activeTab === 'schema-changes') ? 'border-t border-secondary-200' : ''}`}>
               {activeTab === 'metadata' ? (
                 <MetadataExplorer
                   connectionId={connectionId}
                   metadataType={selectedMetadataType}
                   metadataStatus={metadataStatus}
+                />
+              ) : activeTab === 'history' ? (
+                <MetadataHistoryPanel
+                  connectionId={connectionId}
                 />
               ) : (
                 <SchemaChangesPanel
