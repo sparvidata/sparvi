@@ -1,18 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import {
   ClipboardDocumentCheckIcon,
-  TableCellsIcon,
   ExclamationTriangleIcon,
   CheckCircleIcon,
-  XCircleIcon,
-  ArrowTrendingUpIcon,
-  ArrowTrendingDownIcon,
-  CalendarDaysIcon
+  XCircleIcon
 } from '@heroicons/react/24/outline';
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar } from 'recharts';
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import LoadingSpinner from '../../../components/common/LoadingSpinner';
 import { validationsAPI } from '../../../api/enhancedApiService';
-import { formatDate } from '../../../utils/formatting';
 
 const ValidationOverviewDashboard = ({ connectionId, onTableSelect }) => {
   const [summaryData, setSummaryData] = useState(null);
@@ -330,22 +325,6 @@ const ValidationOverviewDashboard = ({ connectionId, onTableSelect }) => {
           </div>
         </div>
       )}
-
-      {/* Quick Actions */}
-      <div className="bg-primary-50 p-4 rounded-lg border border-primary-200">
-        <h3 className="text-sm font-medium text-primary-800 mb-2">Quick Actions</h3>
-        <div className="flex flex-wrap gap-2">
-          <span className="text-xs text-primary-700 bg-white px-2 py-1 rounded border border-primary-200">
-            Select a table to view detailed validation rules
-          </span>
-          <span className="text-xs text-primary-700 bg-white px-2 py-1 rounded border border-primary-200">
-            Run validations to update health scores
-          </span>
-          <span className="text-xs text-primary-700 bg-white px-2 py-1 rounded border border-primary-200">
-            Generate default rules for new tables
-          </span>
-        </div>
-      </div>
     </div>
   );
 };

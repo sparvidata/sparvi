@@ -15,7 +15,7 @@ import ValidationErrorHandler from './components/ValidationErrorHandler';
 import ValidationAutomationControls from './components/ValidationAutomationControls';
 import LoadingSpinner from '../../components/common/LoadingSpinner';
 import EmptyState from '../../components/common/EmptyState';
-import { ClipboardDocumentCheckIcon, ServerIcon } from '@heroicons/react/24/outline';
+import { ServerIcon, ArrowLeftIcon } from '@heroicons/react/24/outline';
 import validationService from '../../services/validationService';
 import { schemaAPI } from '../../api/enhancedApiService';
 
@@ -32,24 +32,32 @@ const ValidationPage = () => {
   const [selectedValidationForDebug, setSelectedValidationForDebug] = useState(null);
   const [validationErrors, setValidationErrors] = useState(null);
   const [columnsCache, setColumnsCache] = useState({});
-  const [forceRender, setForceRender] = useState(false); // Used to force re-renders
 
   // Automation hooks
   const connectionId = activeConnection?.id;
   const { status: automationStatus, toggleAutomation, triggerManualRun } = useAutomationStatus(connectionId);
 
-  // Set breadcrumbs
+  // Set breadcrumbs based on selected table
   useEffect(() => {
-    updateBreadcrumbs([
-      { name: 'Validations', href: '/validations' }
-    ]);
-  }, [updateBreadcrumbs]);
+    if (selectedTable) {
+      updateBreadcrumbs([
+        { name: 'Validations', href: '/validations' },
+        { name: selectedTable }
+      ]);
+    } else {
+      updateBreadcrumbs([
+        { name: 'Validations', href: '/validations' }
+      ]);
+    }
+  }, [updateBreadcrumbs, selectedTable]);
 
   // Handle table selection from URL params
   useEffect(() => {
     const tableParam = searchParams.get('table');
     if (tableParam) {
       setSelectedTable(tableParam);
+    } else {
+      setSelectedTable('');
     }
   }, [searchParams]);
 
@@ -100,6 +108,18 @@ const ValidationPage = () => {
     setSelectedTable(tableName);
     setSearchParams({ table: tableName });
     preloadTableColumns(tableName);
+  };
+
+  // Handle returning to overview
+  const handleBackToOverview = () => {
+    setSelectedTable('');
+    setSearchParams({}); // Clear all search params
+    // Reset any other table-specific state
+    setShowEditor(false);
+    setEditingRule(null);
+    setShowDebugHelper(false);
+    setSelectedValidationForDebug(null);
+    setValidationErrors(null);
   };
 
   // Extract validations with errors
@@ -173,9 +193,6 @@ const ValidationPage = () => {
     // Update the validations in the hook's data
     validationData.validations = updatedValidations;
 
-    // Force a re-render
-    setForceRender(prev => !prev);
-
     // Update metrics
     if (validationData.metrics) {
       const updatedMetrics = validationService.calculateMetrics(updatedValidations);
@@ -222,7 +239,36 @@ const ValidationPage = () => {
   return (
     <div className="py-4">
       <div className="flex justify-between items-center">
-        <h1 className="text-2xl font-semibold text-secondary-900">Data Validations</h1>
+        <div className="flex items-center">
+          {/* Back button when viewing a specific table */}
+          {selectedTable && (
+            <button
+              onClick={handleBackToOverview}
+              className="mr-4 inline-flex items-center px-3 py-2 border border-secondary-300 shadow-sm text-sm leading-4 font-medium rounded-md text-secondary-700 bg-white hover:bg-secondary-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500"
+            >
+              <ArrowLeftIcon className="-ml-0.5 mr-2 h-4 w-4" />
+              Back to Overview
+            </button>
+          )}
+
+          <h1 className="text-2xl font-semibold text-secondary-900">
+            {selectedTable ? `Validations: ${selectedTable}` : 'Data Validations'}
+          </h1>
+        </div>
+
+        {/* Optional: Add a breadcrumb-style navigation in the header */}
+        {selectedTable && (
+          <div className="text-sm text-secondary-500">
+            <button
+              onClick={handleBackToOverview}
+              className="text-primary-600 hover:text-primary-700 hover:underline"
+            >
+              All Tables
+            </button>
+            <span className="mx-2">›</span>
+            <span>{selectedTable}</span>
+          </div>
+        )}
       </div>
 
       <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-12">
