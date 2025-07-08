@@ -1,5 +1,6 @@
 // Export all validation components
 export { default as ValidationHealthDashboard } from './ValidationHealthDashboard';
+export { default as ValidationOverviewDashboard } from './ValidationOverviewDashboard';
 export { default as HealthScoreChart } from './HealthScoreChart';
 export { default as ValidationVolumeChart } from './ValidationVolumeChart';
 export { default as ValidationMetricCards } from './ValidationMetricCards';

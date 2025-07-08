@@ -7,6 +7,7 @@ import { useAutomationStatus } from '../../hooks/useAutomationStatus';
 import useValidations from '../../hooks/useValidations';
 import ValidationResultsSummary from './components/ValidationResultsSummary';
 import ValidationHealthDashboard from './components/ValidationHealthDashboard';
+import ValidationOverviewDashboard from './components/ValidationOverviewDashboard';
 import ValidationRuleList from './components/ValidationRuleList';
 import ValidationRuleEditor from './components/ValidationRuleEditor';
 import ValidationDebugHelper from './components/ValidationDebugHelper';
@@ -105,7 +106,7 @@ const ValidationPage = () => {
   const errorValidations = useMemo(() => {
     if (!validationData.validations) return [];
     return validationData.validations.filter(v => v.error);
-  }, [validationData.validations, forceRender]); // Add forceRender to dependencies
+  }, [validationData.validations]); // Remove forceRender dependency as it's not needed
 
   // Set validation errors when they occur
   useEffect(() => {
@@ -286,13 +287,11 @@ const ValidationPage = () => {
         {/* Main content with validations */}
         <div className="lg:col-span-9">
           {!selectedTable ? (
-            <div className="bg-white shadow rounded-lg p-6 text-center">
-              <ClipboardDocumentCheckIcon className="mx-auto h-12 w-12 text-secondary-400" />
-              <h3 className="mt-2 text-sm font-medium text-secondary-900">Select a table to see validations</h3>
-              <p className="mt-1 text-sm text-secondary-500">
-                Choose a table from the list to view and manage validation rules.
-              </p>
-            </div>
+            /* Show overview dashboard when no table is selected */
+            <ValidationOverviewDashboard
+              connectionId={connectionId}
+              onTableSelect={handleTableSelect}
+            />
           ) : showEditor ? (
             <ValidationRuleEditor
               connectionId={connectionId}
