@@ -36,7 +36,8 @@ const AutomationPage = () => {
 
   // Get all next run times for overview
   const { nextRuns: allNextRuns, loading: nextRunsLoading, refresh: refreshNextRuns } = useNextRunTimes(null, {
-    refreshInterval: 60000, // 1 minute for overview page
+    refreshInterval: 120000, // 2 minutes for overview page to reduce API calls
+    enabled: globalConfig?.automation_enabled, // Only poll when automation is enabled
     onError: (error) => {
       console.warn('Error loading next runs for overview:', error);
     }
@@ -374,15 +375,20 @@ const AutomationPage = () => {
 const OverviewTab = ({ connections, allNextRuns, nextRunsLoading, globalEnabled, onConnectionSelect, jobs }) => {
   // Calculate summary statistics
   const totalConnections = connections.length;
-  const connectionsWithAutomation = Object.keys(allNextRuns).length;
+
+  // Count connections with automation by checking if any have enabled schedules
+  const connectionsWithAutomation = connections.filter(conn => {
+    const connectionRuns = allNextRuns[conn.id];
+    return connectionRuns && Object.values(connectionRuns).some(run => run.enabled);
+  }).length;
 
   // Get upcoming runs across all connections
   const allUpcomingRuns = [];
-  Object.entries(allNextRuns).forEach(([connectionId, connectionData]) => {
+  Object.entries(allNextRuns).forEach(([connectionId, connectionRuns]) => {
     const connection = connections.find(c => c.id === connectionId);
-    if (connection && connectionData.next_runs) {
-      Object.entries(connectionData.next_runs).forEach(([automationType, runData]) => {
-        if (runData.enabled && !runData.is_overdue) {
+    if (connection && connectionRuns) {
+      Object.entries(connectionRuns).forEach(([automationType, runData]) => {
+        if (runData.enabled && !runData.is_overdue && runData.next_run_timestamp) {
           allUpcomingRuns.push({
             connectionId,
             connectionName: connection.name,
@@ -494,12 +500,17 @@ const OverviewTab = ({ connections, allNextRuns, nextRunsLoading, globalEnabled,
             {nextRunsLoading ? (
               <div className="flex justify-center py-4">
                 <LoadingSpinner size="sm" />
+                <span className="ml-2 text-xs text-gray-500">Loading schedules...</span>
               </div>
             ) : allUpcomingRuns.length === 0 ? (
               <div className="text-center py-4">
                 <CalendarIcon className="mx-auto h-8 w-8 text-gray-400" />
                 <p className="mt-2 text-sm text-gray-500">
-                  {globalEnabled ? 'No runs scheduled' : 'Enable global automation to see scheduled runs'}
+                  {globalEnabled
+                    ? (connectionsWithAutomation > 0
+                        ? 'No upcoming runs scheduled'
+                        : 'Configure automation to see scheduled runs')
+                    : 'Enable global automation to see scheduled runs'}
                 </p>
               </div>
             ) : (
@@ -516,7 +527,7 @@ const OverviewTab = ({ connections, allNextRuns, nextRunsLoading, globalEnabled,
                     </div>
                     <div className="text-right">
                       <div className="text-xs text-green-600 font-medium">
-                        {run.time_until_next}
+                        {run.time_until_next || 'Soon'}
                       </div>
                     </div>
                   </div>

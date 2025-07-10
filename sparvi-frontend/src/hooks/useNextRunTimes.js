@@ -30,6 +30,9 @@ export const useNextRunTimes = (connectionId, options = {}) => {
   const fetchNextRuns = useCallback(async (isRetry = false) => {
     if (!enabled) return;
 
+    // Prevent multiple simultaneous requests
+    if (loading && !isRetry) return;
+
     if (!isRetry) {
       setLoading(true);
       setError(null);
@@ -48,17 +51,21 @@ export const useNextRunTimes = (connectionId, options = {}) => {
 
       // Only update state if component is still mounted
       if (isComponentMountedRef.current) {
-        console.log('Next runs API response:', response); // Temp Debugging - Delete Later
-
         if (connectionId) {
           // For single connection, extract next_runs from response
           const runs = response?.next_runs || {};
-          console.log(`Setting next runs for connection ${connectionId}:`, runs); // Temp Debugging - Delete Later
           setNextRuns(runs);
         } else {
-          // For all connections, use next_runs_by_connection
-          const allRuns = response?.next_runs_by_connection || {};
-          console.log('Setting all next runs:', allRuns); // Temp Debugging - Delete Later
+          // For all connections, need to handle the response structure better
+          let allRuns = {};
+
+          if (response?.next_runs_by_connection) {
+            allRuns = response.next_runs_by_connection;
+          } else if (response?.schedules_by_connection) {
+            // Handle alternative response structure
+            allRuns = response.schedules_by_connection;
+          }
+
           setNextRuns(allRuns);
         }
 
@@ -111,7 +118,7 @@ export const useNextRunTimes = (connectionId, options = {}) => {
     // Initial fetch
     fetchNextRuns();
 
-    // Set up interval
+    // Set up interval with longer delay to prevent spamming
     intervalRef.current = setInterval(() => {
       fetchNextRuns();
     }, refreshInterval);
