@@ -28,7 +28,7 @@ export const useNextRunTimes = (connectionId, options = {}) => {
    * Fetch next run times with error handling
    */
   const fetchNextRuns = useCallback(async (isRetry = false) => {
-    if (!enabled || (connectionId === null && !connectionId)) return;
+    if (!enabled) return;
 
     if (!isRetry) {
       setLoading(true);
@@ -39,19 +39,27 @@ export const useNextRunTimes = (connectionId, options = {}) => {
       let response;
 
       if (connectionId) {
-        // Fetch for specific connection
-        response = await automationAPI.getNextRunTimes(connectionId);
+        // Fetch for specific connection with force fresh
+        response = await automationAPI.getNextRunTimes(connectionId, { forceFresh: true });
       } else {
-        // Fetch for all connections
-        response = await automationAPI.getAllNextRunTimes();
+        // Fetch for all connections with force fresh
+        response = await automationAPI.getAllNextRunTimes({ forceFresh: true });
       }
 
       // Only update state if component is still mounted
       if (isComponentMountedRef.current) {
+        console.log('Next runs API response:', response); // Temp Debugging - Delete Later
+
         if (connectionId) {
-          setNextRuns(response?.next_runs || {});
+          // For single connection, extract next_runs from response
+          const runs = response?.next_runs || {};
+          console.log(`Setting next runs for connection ${connectionId}:`, runs); // Temp Debugging - Delete Later
+          setNextRuns(runs);
         } else {
-          setNextRuns(response?.next_runs_by_connection || {});
+          // For all connections, use next_runs_by_connection
+          const allRuns = response?.next_runs_by_connection || {};
+          console.log('Setting all next runs:', allRuns); // Temp Debugging - Delete Later
+          setNextRuns(allRuns);
         }
 
         setLastFetchTime(new Date());

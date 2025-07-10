@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useScheduleConfig } from '../../hooks/useScheduleConfig';
 import { automationAPI } from '../../api/enhancedApiService';
 import {
@@ -70,10 +70,15 @@ const ScheduleConfig = ({ connectionId, onUpdate, className = '' }) => {
     }
   }, [localSchedule, showValidation]);
 
-  const handleScheduleChange = (automationType, field, value) => {
+  const handleScheduleChange = useCallback((automationType, field, value) => {
     console.log(`Updating ${automationType}.${field} to:`, value, `(type: ${typeof value})`);
 
     setLocalSchedule(prev => {
+      // Don't update if the value hasn't actually changed
+      if (prev && prev[automationType] && prev[automationType][field] === value) {
+        return prev;
+      }
+
       const updated = {
         ...prev,
         [automationType]: {
@@ -85,9 +90,9 @@ const ScheduleConfig = ({ connectionId, onUpdate, className = '' }) => {
       console.log('Updated local schedule:', updated);
       return updated;
     });
-  };
+  }, []);
 
-  const handleDayToggle = (automationType, day) => {
+  const handleDayToggle = useCallback((automationType, day) => {
     const currentDays = localSchedule[automationType]?.days || [];
     const newDays = currentDays.includes(day)
       ? currentDays.filter(d => d !== day)
@@ -95,7 +100,7 @@ const ScheduleConfig = ({ connectionId, onUpdate, className = '' }) => {
 
     console.log(`Toggling day ${day} for ${automationType}. New days:`, newDays);
     handleScheduleChange(automationType, 'days', newDays);
-  };
+  }, [localSchedule, handleScheduleChange]);
 
   const handleTemplateApply = async (templateName) => {
     const template = templates[templateName];
@@ -256,7 +261,7 @@ const ScheduleConfig = ({ connectionId, onUpdate, className = '' }) => {
 
           const errors = validationErrors[automationType] || [];
 
-          console.log(`Rendering ${automationType} with config:`, config); // Temp Debugging - Delete Later
+
 
           return (
             <div key={automationType} className="bg-white border border-gray-200 rounded-lg p-6">
@@ -293,10 +298,7 @@ const ScheduleConfig = ({ connectionId, onUpdate, className = '' }) => {
                       </label>
                       <select
                         value={config.schedule_type}
-                        onChange={(e) => {
-                          console.log(`Schedule type changing from "${config.schedule_type}" to "${e.target.value}"`); // Temp Debugging - Delete Later
-                          handleScheduleChange(automationType, 'schedule_type', e.target.value);
-                        }}
+                        onChange={(e) => handleScheduleChange(automationType, 'schedule_type', e.target.value)}
                         className="block w-full border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
                       >
                         {Object.entries(SCHEDULE_TYPES).map(([value, label]) => (

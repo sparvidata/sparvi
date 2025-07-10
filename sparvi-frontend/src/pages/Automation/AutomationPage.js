@@ -36,7 +36,10 @@ const AutomationPage = () => {
 
   // Get all next run times for overview
   const { nextRuns: allNextRuns, loading: nextRunsLoading, refresh: refreshNextRuns } = useNextRunTimes(null, {
-    refreshInterval: 120000 // 2 minutes for overview page
+    refreshInterval: 60000, // 1 minute for overview page
+    onError: (error) => {
+      console.warn('Error loading next runs for overview:', error);
+    }
   });
 
   // Set breadcrumbs
@@ -165,6 +168,17 @@ const AutomationPage = () => {
     setSearchParams(newParams);
   };
 
+  // Enhanced function to handle schedule updates
+  const handleScheduleUpdate = (updatedSchedule) => {
+    console.log('Schedule updated:', updatedSchedule);
+
+    // Force refresh of next run times after a short delay
+    setTimeout(() => {
+      console.log('Refreshing next runs after schedule update...');
+      refreshNextRuns();
+    }, 2000); // Wait 2 seconds for backend to process the update
+  };
+
   if (globalConfigLoading) {
     return (
       <div className="flex justify-center py-12">
@@ -275,36 +289,33 @@ const AutomationPage = () => {
         <div className="border-b border-gray-200 mb-6">
           <nav className="-mb-px flex space-x-8" aria-label="Tabs">
             <button
-              className={`
-                ${activeTab === 'overview' 
-                  ? 'border-blue-500 text-blue-600' 
-                  : 'border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700'}
-                whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm flex items-center
-              `}
+              className={`${
+                activeTab === 'overview'
+                  ? 'border-blue-500 text-blue-600'
+                  : 'border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700'
+              } whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm flex items-center`}
               onClick={() => handleTabChange('overview')}
             >
               <TableCellsIcon className="h-4 w-4 mr-2" />
               Overview
             </button>
             <button
-              className={`
-                ${activeTab === 'configure' 
-                  ? 'border-blue-500 text-blue-600' 
-                  : 'border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700'}
-                whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm flex items-center
-              `}
+              className={`${
+                activeTab === 'configure'
+                  ? 'border-blue-500 text-blue-600'
+                  : 'border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700'
+              } whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm flex items-center`}
               onClick={() => handleTabChange('configure')}
             >
               <CogIcon className="h-4 w-4 mr-2" />
               Configure Schedules
             </button>
             <button
-              className={`
-                ${activeTab === 'monitoring' 
-                  ? 'border-blue-500 text-blue-600' 
-                  : 'border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700'}
-                whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm flex items-center
-              `}
+              className={`${
+                activeTab === 'monitoring'
+                  ? 'border-blue-500 text-blue-600'
+                  : 'border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700'
+              } whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm flex items-center`}
               onClick={() => handleTabChange('monitoring')}
             >
               <ChartBarIcon className="h-4 w-4 mr-2" />
@@ -327,6 +338,7 @@ const AutomationPage = () => {
               nextRunsLoading={nextRunsLoading}
               globalEnabled={globalConfig?.automation_enabled}
               onConnectionSelect={handleConnectionSelect}
+              jobs={automationJobs}
             />
           </ErrorBoundary>
         )}
@@ -337,6 +349,7 @@ const AutomationPage = () => {
               connections={connections}
               selectedConnectionId={selectedConnectionId}
               onConnectionSelect={handleConnectionSelect}
+              onScheduleUpdate={handleScheduleUpdate}
             />
           </ErrorBoundary>
         )}
@@ -358,7 +371,7 @@ const AutomationPage = () => {
 };
 
 // Overview Tab Component
-const OverviewTab = ({ connections, allNextRuns, nextRunsLoading, globalEnabled, onConnectionSelect }) => {
+const OverviewTab = ({ connections, allNextRuns, nextRunsLoading, globalEnabled, onConnectionSelect, jobs }) => {
   // Calculate summary statistics
   const totalConnections = connections.length;
   const connectionsWithAutomation = Object.keys(allNextRuns).length;
@@ -453,6 +466,18 @@ const OverviewTab = ({ connections, allNextRuns, nextRunsLoading, globalEnabled,
                 {globalEnabled ? 'Enabled' : 'Disabled'}
               </span>
             </div>
+            <div className="flex justify-between">
+              <span className="text-sm text-gray-500">Failed</span>
+              <span className="text-sm font-medium text-red-600">
+                {jobs.filter(j => j.status === 'failed').length}
+              </span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-sm text-gray-500">Running</span>
+              <span className="text-sm font-medium text-blue-600">
+                {jobs.filter(j => j.status === 'running').length}
+              </span>
+            </div>
           </div>
         </div>
 
@@ -511,7 +536,7 @@ const OverviewTab = ({ connections, allNextRuns, nextRunsLoading, globalEnabled,
 };
 
 // Configure Tab Component
-const ConfigureTab = ({ connections, selectedConnectionId, onConnectionSelect }) => {
+const ConfigureTab = ({ connections, selectedConnectionId, onConnectionSelect, onScheduleUpdate }) => {
   const selectedConnection = selectedConnectionId
     ? connections.find(c => c.id === selectedConnectionId)
     : null;
@@ -562,9 +587,7 @@ const ConfigureTab = ({ connections, selectedConnectionId, onConnectionSelect })
 
             <ScheduleConfig
               connectionId={selectedConnectionId}
-              onUpdate={(updatedSchedule) => {
-                console.log('Schedule updated:', updatedSchedule);
-              }}
+              onUpdate={onScheduleUpdate}
             />
           </div>
         ) : (
