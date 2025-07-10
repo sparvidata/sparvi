@@ -16,6 +16,7 @@ import {
   WEEK_DAYS,
   COMMON_TIMEZONES,
   validateScheduleConfig,
+  normalizeScheduleConfig,
   formatAutomationType,
   getUserTimezone
 } from '../../utils/scheduleUtils';
@@ -44,29 +45,46 @@ const ScheduleConfig = ({ connectionId, onUpdate, className = '' }) => {
     loadTemplates();
   }, []);
 
-  // Sync schedule to local state
+  // Sync schedule to local state with normalization
   useEffect(() => {
     if (schedule) {
-      setLocalSchedule({ ...schedule });
+      console.log('Original schedule from API:', schedule);
+      const normalized = normalizeScheduleConfig(schedule);
+      console.log('Normalized schedule:', normalized);
+      setLocalSchedule(normalized);
+    } else {
+      // Set default schedule if none exists
+      const defaultSchedule = normalizeScheduleConfig({});
+      console.log('Setting default schedule:', defaultSchedule);
+      setLocalSchedule(defaultSchedule);
     }
   }, [schedule]);
 
-  // Validate schedule when it changes
+  // Validate schedule when it changes and validation is shown
   useEffect(() => {
     if (localSchedule && showValidation) {
+      console.log('Running validation on local schedule:', localSchedule);
       const validation = validateScheduleConfig(localSchedule);
+      console.log('Validation result:', validation);
       setValidationErrors(validation.errors);
     }
   }, [localSchedule, showValidation]);
 
   const handleScheduleChange = (automationType, field, value) => {
-    setLocalSchedule(prev => ({
-      ...prev,
-      [automationType]: {
-        ...prev[automationType],
-        [field]: value
-      }
-    }));
+    console.log(`Updating ${automationType}.${field} to:`, value, `(type: ${typeof value})`);
+
+    setLocalSchedule(prev => {
+      const updated = {
+        ...prev,
+        [automationType]: {
+          ...prev[automationType],
+          [field]: value
+        }
+      };
+
+      console.log('Updated local schedule:', updated);
+      return updated;
+    });
   };
 
   const handleDayToggle = (automationType, day) => {
@@ -75,35 +93,54 @@ const ScheduleConfig = ({ connectionId, onUpdate, className = '' }) => {
       ? currentDays.filter(d => d !== day)
       : [...currentDays, day];
 
+    console.log(`Toggling day ${day} for ${automationType}. New days:`, newDays);
     handleScheduleChange(automationType, 'days', newDays);
   };
 
   const handleTemplateApply = async (templateName) => {
     const template = templates[templateName];
     if (template?.schedule_config) {
-      setLocalSchedule({ ...template.schedule_config });
+      const normalized = normalizeScheduleConfig(template.schedule_config);
+      console.log('Applying template:', templateName, normalized);
+      setLocalSchedule(normalized);
     }
   };
 
   const handleSave = async () => {
-    if (!localSchedule) return;
+    if (!localSchedule) {
+      console.error('No local schedule to save');
+      return;
+    }
 
+    console.log('Attempting to save schedule:', localSchedule);
     setShowValidation(true);
 
-    const validation = validateScheduleConfig(localSchedule);
+    // Normalize the schedule before validation
+    const normalizedSchedule = normalizeScheduleConfig(localSchedule);
+    console.log('Normalized schedule for validation:', normalizedSchedule);
+
+    const validation = validateScheduleConfig(normalizedSchedule);
+    console.log('Save validation result:', validation);
+
     if (!validation.isValid) {
+      console.error('Validation failed:', validation.errors);
       setValidationErrors(validation.errors);
       return;
     }
 
-    const success = await updateSchedule(localSchedule);
+    // Clear validation errors if validation passed
+    setValidationErrors({});
+
+    const success = await updateSchedule(normalizedSchedule);
     if (success && onUpdate) {
-      onUpdate(localSchedule);
+      onUpdate(normalizedSchedule);
     }
   };
 
   const handleReset = () => {
-    setLocalSchedule(schedule ? { ...schedule } : null);
+    console.log('Resetting to original schedule:', schedule);
+    const normalized = schedule ? normalizeScheduleConfig(schedule) : normalizeScheduleConfig({});
+    setLocalSchedule(normalized);
     setValidationErrors({});
     setShowValidation(false);
   };
@@ -219,6 +256,8 @@ const ScheduleConfig = ({ connectionId, onUpdate, className = '' }) => {
 
           const errors = validationErrors[automationType] || [];
 
+          console.log(`Rendering ${automationType} with config:`, config); // Temp Debugging - Delete Later
+
           return (
             <div key={automationType} className="bg-white border border-gray-200 rounded-lg p-6">
               {/* Header */}
@@ -254,7 +293,10 @@ const ScheduleConfig = ({ connectionId, onUpdate, className = '' }) => {
                       </label>
                       <select
                         value={config.schedule_type}
-                        onChange={(e) => handleScheduleChange(automationType, 'schedule_type', e.target.value)}
+                        onChange={(e) => {
+                          console.log(`Schedule type changing from "${config.schedule_type}" to "${e.target.value}"`); // Temp Debugging - Delete Later
+                          handleScheduleChange(automationType, 'schedule_type', e.target.value);
+                        }}
                         className="block w-full border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
                       >
                         {Object.entries(SCHEDULE_TYPES).map(([value, label]) => (

@@ -50,6 +50,8 @@ export const isValidTimeFormat = (time) => {
  * Validate timezone
  */
 export const isValidTimezone = (timezone) => {
+  if (!timezone) return false;
+
   try {
     Intl.DateTimeFormat(undefined, { timeZone: timezone });
     return true;
@@ -62,30 +64,61 @@ export const isValidTimezone = (timezone) => {
  * Validate schedule configuration
  */
 export const validateScheduleConfig = (scheduleConfig) => {
+  console.log('Validating schedule config:', scheduleConfig);
+
   const errors = {};
 
+  // Ensure we have a valid object
+  if (!scheduleConfig || typeof scheduleConfig !== 'object') {
+    console.error('Invalid schedule config: not an object', scheduleConfig);
+    return {
+      isValid: false,
+      errors: { general: ['Invalid schedule configuration'] }
+    };
+  }
+
   Object.entries(scheduleConfig).forEach(([automationType, config]) => {
-    if (!config.enabled) return; // Skip validation for disabled automations
+    console.log(`Validating ${automationType}:`, config);
+
+    // Skip validation for disabled automations
+    if (!config || !config.enabled) {
+      console.log(`Skipping validation for disabled automation: ${automationType}`);
+      return;
+    }
 
     const automationErrors = [];
 
+    // Ensure config is an object
+    if (typeof config !== 'object') {
+      automationErrors.push('Invalid configuration format');
+      errors[automationType] = automationErrors;
+      return;
+    }
+
     // Validate time format
-    if (!isValidTimeFormat(config.time)) {
+    if (!config.time || !isValidTimeFormat(config.time)) {
       automationErrors.push('Invalid time format. Use HH:MM format (24-hour)');
     }
 
     // Validate timezone
-    if (!isValidTimezone(config.timezone)) {
-      automationErrors.push('Invalid timezone');
+    if (!config.timezone || !isValidTimezone(config.timezone)) {
+      automationErrors.push('Invalid or missing timezone');
     }
 
-    // Validate schedule type
-    if (!['daily', 'weekly'].includes(config.schedule_type)) {
-      automationErrors.push('Invalid schedule type. Must be "daily" or "weekly"');
+    // Validate schedule type - be more explicit about what we're checking
+    const scheduleType = config.schedule_type;
+    console.log(`Checking schedule type for ${automationType}: "${scheduleType}" (type: ${typeof scheduleType})`);
+
+    if (!scheduleType) {
+      automationErrors.push('Schedule type is required');
+    } else if (typeof scheduleType !== 'string') {
+      automationErrors.push('Schedule type must be a string');
+    } else if (!['daily', 'weekly'].includes(scheduleType.toLowerCase().trim())) {
+      automationErrors.push(`Invalid schedule type: "${scheduleType}". Must be "daily" or "weekly"`);
     }
 
     // Validate days for weekly schedule
-    if (config.schedule_type === 'weekly') {
+    if (scheduleType === 'weekly') {
       if (!config.days || !Array.isArray(config.days) || config.days.length === 0) {
         automationErrors.push('Weekly schedule requires at least one day');
       } else {
@@ -97,12 +130,18 @@ export const validateScheduleConfig = (scheduleConfig) => {
     }
 
     if (automationErrors.length > 0) {
+      console.error(`Validation errors for ${automationType}:`, automationErrors);
       errors[automationType] = automationErrors;
+    } else {
+      console.log(`Validation passed for ${automationType}`);
     }
   });
 
+  const isValid = Object.keys(errors).length === 0;
+  console.log('Validation result:', { isValid, errors });
+
   return {
-    isValid: Object.keys(errors).length === 0,
+    isValid,
     errors
   };
 };
@@ -168,12 +207,43 @@ export const createDefaultScheduleConfig = (timezone = null) => {
 };
 
 /**
+ * Normalize schedule configuration to ensure proper structure
+ */
+export const normalizeScheduleConfig = (scheduleConfig) => {
+  if (!scheduleConfig || typeof scheduleConfig !== 'object') {
+    return createDefaultScheduleConfig();
+  }
+
+  const normalized = {};
+  const userTimezone = getUserTimezone();
+
+  // Ensure all automation types are present with valid defaults
+  Object.keys(AUTOMATION_TYPES).forEach(automationType => {
+    const config = scheduleConfig[automationType] || {};
+
+    normalized[automationType] = {
+      enabled: Boolean(config.enabled),
+      schedule_type: config.schedule_type || 'daily',
+      time: config.time || '02:00',
+      timezone: config.timezone || userTimezone,
+      ...(config.schedule_type === 'weekly' && {
+        days: Array.isArray(config.days) && config.days.length > 0
+          ? config.days
+          : ['sunday']
+      })
+    };
+  });
+
+  return normalized;
+};
+
+/**
  * Check if any automation is enabled
  */
 export const hasEnabledAutomation = (scheduleConfig) => {
   if (!scheduleConfig) return false;
 
-  return Object.values(scheduleConfig).some(config => config.enabled);
+  return Object.values(scheduleConfig).some(config => config && config.enabled);
 };
 
 /**
