@@ -179,11 +179,11 @@ class AutomationScheduler:
 
             # CRITICAL: Log assessment summary with clear messaging
             if assessment_results["jobs_scheduled"] > 0:
-                logger.info(f"✓ Assessment complete: {assessment_results['jobs_scheduled']} jobs SCHEDULED, "
+                logger.info(f"Assessment complete: {assessment_results['jobs_scheduled']} jobs SCHEDULED, "
                             f"{assessment_results['jobs_skipped']} skipped, "
                             f"{assessment_results['checked_connections']} connections checked")
             else:
-                logger.info(f"✓ Assessment complete: No jobs scheduled (intervals not elapsed), "
+                logger.info(f"Assessment complete: No jobs scheduled (intervals not elapsed), "
                             f"{assessment_results['jobs_skipped']} skipped, "
                             f"{assessment_results['checked_connections']} connections checked")
 

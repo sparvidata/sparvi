@@ -116,6 +116,54 @@ def request_cache(func):
     return wrapper
 
 
+# Add this function near the top of app.py
+def configure_logging():
+    """Configure logging to handle Unicode properly"""
+    import logging
+    import sys
+
+    # Create a custom formatter that handles Unicode gracefully
+    class SafeFormatter(logging.Formatter):
+        def format(self, record):
+            try:
+                return super().format(record)
+            except UnicodeEncodeError:
+                # Fallback: convert to ASCII and replace problematic characters
+                msg = str(record.getMessage())
+                safe_msg = msg.encode('ascii', 'replace').decode('ascii')
+                record.msg = safe_msg
+                return super().format(record)
+
+    # Configure root logger
+    root_logger = logging.getLogger()
+
+    # Remove existing handlers to avoid duplicates
+    for handler in root_logger.handlers[:]:
+        root_logger.removeHandler(handler)
+
+    # Create console handler with UTF-8 encoding
+    console_handler = logging.StreamHandler(sys.stdout)
+
+    # Try to set UTF-8 encoding, fall back to system default
+    try:
+        if hasattr(console_handler.stream, 'reconfigure'):
+            console_handler.stream.reconfigure(encoding='utf-8', errors='replace')
+    except:
+        pass  # Use system default if reconfigure fails
+
+    # Set formatter
+    formatter = SafeFormatter(
+        '%(asctime)s - %(name)s - %(levelname)s - %(filename)s:%(lineno)d - %(message)s'
+    )
+    console_handler.setFormatter(formatter)
+
+    # Set level and add handler
+    console_handler.setLevel(logging.INFO)
+    root_logger.addHandler(console_handler)
+    root_logger.setLevel(logging.INFO)
+
+    logger.info("Logging configured with Unicode safety")
+
 # Helper function for connection access checks
 def connection_access_check(connection_id, organization_id):
     """Check if the organization has access to this connection"""
@@ -892,7 +940,7 @@ def init_metadata_task_manager():
 
 def init_automation_system():
     """Initialize the simplified automation system - UPDATED VERSION"""
-    logger.info("🚀 Starting simplified automation system initialization...")
+    logger.info("Starting simplified automation system initialization...")
 
     try:
         # Import the app_hooks functions you're already using
@@ -906,91 +954,126 @@ def init_automation_system():
         logger.info(f"Simplified automation initialization result: {automation_success}")
 
         if automation_success:
-            logger.info("✅ Simplified automation system started successfully")
+            logger.info("Simplified automation system started successfully")
 
             # Set up event handler with Supabase (this was missing before)
             logger.info("Setting up automation event handler...")
             try:
                 supabase_manager = SupabaseManager()
                 set_event_handler_supabase(supabase_manager)
-                logger.info("✅ Automation event handler configured")
+                logger.info("Automation event handler configured")
             except Exception as event_error:
-                logger.error(f"❌ Error setting up event handler: {str(event_error)}")
+                logger.error(f"Error setting up event handler: {str(event_error)}")
 
             # Integrate with existing metadata system
             logger.info("Integrating automation with metadata system...")
             integration_success = integrate_with_metadata_system()
 
             if integration_success:
-                logger.info("✅ Automation integrated with metadata system")
+                logger.info("Automation integrated with metadata system")
             else:
-                logger.warning("⚠️  Automation metadata integration failed")
+                logger.warning("⚠Automation metadata integration failed")
 
             return True
         else:
-            logger.error("❌ Simplified automation system failed to start")
+            logger.error("Simplified automation system failed to start")
             return False
 
     except ImportError as e:
-        logger.error(f"❌ Import error in automation system: {str(e)}")
+        logger.error(f"Import error in automation system: {str(e)}")
         logger.error("This usually means missing dependencies or module path issues")
         logger.error(traceback.format_exc())
         return False
     except Exception as e:
-        logger.error(f"❌ Unexpected error initializing automation system: {str(e)}")
+        logger.error(f"Unexpected error initializing automation system: {str(e)}")
         logger.error(traceback.format_exc())
         return False
 
     finally:
-        logger.info("📋 Simplified automation system initialization complete")
+        logger.info("Simplified automation system initialization complete")
 
 
 def delayed_initialization():
-    """Initialize services with proper error handling and dependencies - UPDATED VERSION"""
+    """Initialize background services with better error handling"""
     try:
         logger.info("Starting delayed initialization of background services...")
 
-        # Step 1: Initialize metadata task manager first (required by automation)
-        logger.info("Step 1: Initializing metadata task manager...")
-        metadata_manager = init_metadata_task_manager()
+        initialization_results = {
+            "metadata_task_manager": False,
+            "automation_system": False,
+            "performance_optimizations": False
+        }
 
-        if metadata_manager:
-            logger.info("Metadata task manager ready")
-        else:
-            logger.error("Metadata task manager failed to initialize")
-            # Continue anyway - automation might still work without it
+        # Step 1: Initialize metadata task manager
+        try:
+            logger.info("Step 1: Initializing metadata task manager...")
 
-        # Small delay between services
+            from core.metadata.manager import MetadataTaskManager
+            from core.storage.supabase_manager import SupabaseManager
+
+            supabase_manager = SupabaseManager()
+            metadata_task_manager = MetadataTaskManager.get_instance(supabase_manager=supabase_manager)
+
+            logger.info("Metadata task manager initialized successfully")
+            initialization_results["metadata_task_manager"] = True
+
+        except Exception as e:
+            logger.error(f"Failed to initialize metadata task manager: {str(e)}")
+            # Continue with other initializations
+
+        # Wait a moment before next step
         time.sleep(2)
 
         # Step 2: Initialize automation system
-        logger.info("Step 2: Initializing automation system...")
-        automation_success = init_automation_system()
-
-        if automation_success:
-            logger.info("Automation system ready")
-        else:
-            logger.error("Automation system failed to initialize")
-
-        # Step 3: Apply performance optimizations (if available)
-        logger.info("Step 3: Applying performance optimizations...")
         try:
-            optimized_classes = get_optimized_classes()
-            logger.info(f"Applied performance optimizations to {len(optimized_classes)} classes")
-        except Exception as e:
-            logger.warning(f"Could not apply performance optimizations: {str(e)}")
-            optimized_classes = {}
+            logger.info("Step 2: Initializing automation system...")
 
+            from core.utils.app_hooks import initialize_automation_system
+            automation_success = initialize_automation_system()
+
+            if automation_success:
+                logger.info("Automation system started successfully")
+                initialization_results["automation_system"] = True
+            else:
+                logger.error("Automation system failed to start")
+
+        except Exception as e:
+            logger.error(f"Failed to initialize automation system: {str(e)}")
+            logger.error(traceback.format_exc())
+
+        # Step 3: Apply performance optimizations (non-critical)
+        try:
+            logger.info("Step 3: Applying performance optimizations...")
+
+            from core.utils.performance_optimizations import apply_performance_optimizations
+            optimized_classes = apply_performance_optimizations()
+
+            logger.info(f"Applied performance optimizations to {len(optimized_classes)} classes")
+            initialization_results["performance_optimizations"] = True
+
+        except Exception as e:
+            logger.warning(f"Failed to apply performance optimizations: {str(e)}")
+            # This is non-critical, so just warn and continue
+
+        # Log final results
         logger.info("Background services initialization complete")
 
-        # Log final status
-        if automation_success:
-            logger.info("Automation system is running and ready")
-        else:
+        successful_services = sum(1 for success in initialization_results.values() if success)
+        total_services = len(initialization_results)
+
+        logger.info(f"Initialization summary: {successful_services}/{total_services} services started successfully")
+
+        for service, success in initialization_results.items():
+            status = "SUCCESS" if success else "FAILED"
+            logger.info(f"  {service}: {status}")
+
+        # If automation system failed, provide guidance
+        if not initialization_results["automation_system"]:
             logger.warning("Automation system is not running - check logs above")
+            logger.info("To enable automation in development, set ENABLE_AUTOMATION_SCHEDULER=true")
 
     except Exception as e:
-        logger.error(f"Error in delayed initialization: {str(e)}")
+        logger.error(f"Critical error in delayed initialization: {str(e)}")
         logger.error(traceback.format_exc())
 
 
@@ -1155,7 +1238,7 @@ def create_error_handlers(app):
             "message": "Some automated features may not be available"
         }), 503
 
-
+configure_logging()
 app = Flask(__name__, template_folder="templates")
 setup_cors(app)
 create_error_handlers(app)
@@ -6946,6 +7029,9 @@ def after_request_cors(response):
     return response
 
 
+# For local development
 if __name__ == "__main__":
-    # In production, ensure you run with HTTPS (via a reverse proxy or WSGI server with SSL configured)
-    app.run(debug=False)
+    logger.info("Running in local development mode")
+    app.run(debug=True, host="0.0.0.0", port=5001)
+else:
+    logger.info("Running in production mode (Azure App Service)")

@@ -19,43 +19,56 @@ def initialize_automation_system():
     try:
         global _automation_service
 
-        # Import automation service - UPDATED to use new simplified system
-        from core.automation.service import automation_service
-        _automation_service = automation_service
-
         logger.info("Starting simplified automation system...")
 
+        # Import automation service with error handling
+        try:
+            from core.automation.service import automation_service
+            _automation_service = automation_service
+        except ImportError as import_error:
+            logger.error(f"Failed to import automation service: {str(import_error)}")
+            return False
+        except Exception as import_error:
+            logger.error(f"Error importing automation service: {str(import_error)}")
+            return False
+
         # Start the automation service with new scheduler
-        success = _automation_service.start()
+        try:
+            success = _automation_service.start()
 
-        if success:
-            logger.info("✅ Simplified automation system started successfully")
+            if success:
+                logger.info("Simplified automation system started successfully")
 
-            # Only register signal handlers if we're in the main thread
-            try:
-                import threading
-                if threading.current_thread() is threading.main_thread():
-                    # Register cleanup handlers only in main thread
+                # Only register signal handlers if we're in the main thread
+                try:
+                    import threading
+                    if threading.current_thread() is threading.main_thread():
+                        # Register cleanup handlers only in main thread
+                        atexit.register(cleanup_automation_system)
+                        signal.signal(signal.SIGTERM, _signal_handler)
+                        signal.signal(signal.SIGINT, _signal_handler)
+                        logger.info("Signal handlers registered successfully")
+                    else:
+                        logger.warning("Skipping signal handler registration (not in main thread)")
+                        # Just register atexit cleanup which works from any thread
+                        atexit.register(cleanup_automation_system)
+                except Exception as signal_error:
+                    logger.warning(f"Could not register signal handlers: {signal_error}")
+                    # Still register atexit cleanup
                     atexit.register(cleanup_automation_system)
-                    signal.signal(signal.SIGTERM, _signal_handler)
-                    signal.signal(signal.SIGINT, _signal_handler)
-                    logger.info("Signal handlers registered successfully")
-                else:
-                    logger.warning("Skipping signal handler registration (not in main thread)")
-                    # Just register atexit cleanup which works from any thread
-                    atexit.register(cleanup_automation_system)
-            except Exception as signal_error:
-                logger.warning(f"Could not register signal handlers: {signal_error}")
-                # Still register atexit cleanup
-                atexit.register(cleanup_automation_system)
 
-        else:
-            logger.warning("❌ Simplified automation system failed to start")
+            else:
+                logger.warning("Simplified automation system failed to start")
 
-        return success
+            return success
+
+        except Exception as start_error:
+            logger.error(f"Error starting automation service: {str(start_error)}")
+            return False
 
     except Exception as e:
         logger.error(f"Error initializing simplified automation system: {str(e)}")
+        logger.error(traceback.format_exc())
         return False
 
 
@@ -70,7 +83,7 @@ def cleanup_automation_system():
         if _automation_service and _automation_service.is_running():
             logger.info("Shutting down simplified automation system...")
             _automation_service.stop()
-            logger.info("✅ Simplified automation system shutdown complete")
+            logger.info("Simplified automation system shutdown complete")
 
     except Exception as e:
         logger.error(f"Error during automation cleanup: {str(e)}")
@@ -133,9 +146,9 @@ def restart_automation_system():
         success = _automation_service.restart()
 
         if success:
-            logger.info("✅ Simplified automation system restarted successfully")
+            logger.info("Simplified automation system restarted successfully")
         else:
-            logger.error("❌ Failed to restart simplified automation system")
+            logger.error("Failed to restart simplified automation system")
 
         return success
 
@@ -169,7 +182,7 @@ def integrate_with_metadata_system():
         supabase_manager = SupabaseManager()
         set_event_handler_supabase(supabase_manager)
 
-        logger.info("✅ Simplified automation system integrated with metadata system")
+        logger.info("Simplified automation system integrated with metadata system")
         return True
 
     except Exception as e:

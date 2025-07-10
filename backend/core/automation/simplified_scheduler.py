@@ -62,13 +62,13 @@ class SimplifiedAutomationScheduler:
             return
 
         self.running = True
-        logger.info("🚀 Starting simplified automation scheduler")
+        logger.info("Starting simplified automation scheduler")
 
         # Start scheduler thread
         self.scheduler_thread = threading.Thread(target=self._run_scheduler, daemon=True)
         self.scheduler_thread.start()
 
-        logger.info("✅ Simplified automation scheduler started")
+        logger.info("Simplified automation scheduler started")
 
     def stop(self):
         """Stop the automation scheduler"""
@@ -89,7 +89,7 @@ class SimplifiedAutomationScheduler:
 
     def _run_scheduler(self):
         """Main scheduler loop - much simpler than before"""
-        logger.info("📅 Scheduler loop started")
+        logger.info("Scheduler loop started")
 
         while self.running:
             try:
@@ -116,7 +116,7 @@ class SimplifiedAutomationScheduler:
             if not due_jobs:
                 return  # No jobs due, nothing to log
 
-            logger.info(f"🎯 Found {len(due_jobs)} jobs due to run")
+            logger.info(f"Found {len(due_jobs)} jobs due to run")
 
             for scheduled_job in due_jobs:
                 try:
@@ -124,7 +124,7 @@ class SimplifiedAutomationScheduler:
                     automation_type = scheduled_job["automation_type"]
                     scheduled_job_id = scheduled_job["id"]
 
-                    logger.info(f"🚀 Executing {automation_type} for connection {connection_id}")
+                    logger.info(f"Executing {automation_type} for connection {connection_id}")
 
                     # Create and execute the job
                     job_id = self._create_and_execute_job(
@@ -136,12 +136,12 @@ class SimplifiedAutomationScheduler:
                     if job_id:
                         # Mark the scheduled job as executed
                         self.schedule_manager.mark_job_executed(scheduled_job_id)
-                        logger.info(f"✅ Scheduled {automation_type} job {job_id} for connection {connection_id}")
+                        logger.info(f"Scheduled {automation_type} job {job_id} for connection {connection_id}")
                     else:
-                        logger.error(f"❌ Failed to create {automation_type} job for connection {connection_id}")
+                        logger.error(f"Failed to create {automation_type} job for connection {connection_id}")
 
                 except Exception as job_error:
-                    logger.error(f"❌ Error executing scheduled job: {str(job_error)}")
+                    logger.error(f"Error executing scheduled job: {str(job_error)}")
                     continue
 
         except Exception as e:
@@ -227,7 +227,7 @@ class SimplifiedAutomationScheduler:
         metadata_task_id = None
 
         try:
-            logger.info(f"🔄 Starting metadata refresh job {job_id}")
+            logger.info(f"Starting metadata refresh job {job_id}")
 
             # Update job status to running
             self._update_job_status(job_id, "running", started_at=datetime.now(timezone.utc).isoformat())
@@ -244,7 +244,7 @@ class SimplifiedAutomationScheduler:
             if not connection:
                 raise Exception(f"Connection {connection_id} not found")
 
-            logger.info(f"📊 Collecting metadata for connection: {connection.get('name')}")
+            logger.info(f"Collecting metadata for connection: {connection.get('name')}")
 
             # Submit metadata collection task
             collection_params = {
@@ -262,7 +262,7 @@ class SimplifiedAutomationScheduler:
                 priority="medium"
             )
 
-            logger.info(f"📤 Submitted metadata task {metadata_task_id}")
+            logger.info(f"Submitted metadata task {metadata_task_id}")
 
             # Wait for completion
             task_completed = self._wait_for_task_completion(metadata_task_id, timeout_minutes=30)
@@ -292,21 +292,21 @@ class SimplifiedAutomationScheduler:
                     connection_id=connection_id
                 )
 
-                logger.info(f"✅ Completed metadata refresh job {job_id}")
+                logger.info(f"Completed metadata refresh job {job_id}")
             else:
                 error_msg = f"Metadata task {metadata_task_id} timed out"
                 self._handle_job_failure(job_id, run_id, connection_id, error_msg)
 
         except Exception as e:
             error_msg = str(e)
-            logger.error(f"❌ Metadata refresh job {job_id} failed: {error_msg}")
+            logger.error(f"Metadata refresh job {job_id} failed: {error_msg}")
             self._handle_job_failure(job_id, run_id, connection_id, error_msg)
 
     def _execute_schema_detection(self, job_id: str, connection_id: str, config: Dict[str, Any]):
         """Execute schema change detection job"""
         run_id = None
         try:
-            logger.info(f"🔍 Starting schema detection job {job_id}")
+            logger.info(f"Starting schema detection job {job_id}")
 
             # Update job status to running
             self._update_job_status(job_id, "running", started_at=datetime.now(timezone.utc).isoformat())
@@ -326,7 +326,7 @@ class SimplifiedAutomationScheduler:
             connector_factory = ConnectorFactory(self.supabase)
             schema_detector = SchemaChangeDetector()
 
-            logger.info(f"🔎 Detecting schema changes for: {connection.get('name')}")
+            logger.info(f"Detecting schema changes for: {connection.get('name')}")
 
             changes, important_changes = schema_detector.detect_changes_for_connection(
                 connection_id, connector_factory, self.supabase
@@ -357,18 +357,18 @@ class SimplifiedAutomationScheduler:
                     connection_id=connection_id
                 )
 
-            logger.info(f"✅ Completed schema detection job {job_id}, found {len(changes)} changes")
+            logger.info(f"Completed schema detection job {job_id}, found {len(changes)} changes")
 
         except Exception as e:
             error_msg = str(e)
-            logger.error(f"❌ Schema detection job {job_id} failed: {error_msg}")
+            logger.error(f"Schema detection job {job_id} failed: {error_msg}")
             self._handle_job_failure(job_id, run_id, connection_id, error_msg)
 
     def _execute_validation_run(self, job_id: str, connection_id: str, config: Dict[str, Any]):
         """Execute validation automation job"""
         run_id = None
         try:
-            logger.info(f"✅ Starting validation job {job_id}")
+            logger.info(f"Starting validation job {job_id}")
 
             # Update job status to running
             self._update_job_status(job_id, "running", started_at=datetime.now(timezone.utc).isoformat())
@@ -389,7 +389,7 @@ class SimplifiedAutomationScheduler:
             from core.utils.validation_automation_integration import create_validation_automation_integrator
             integrator = create_validation_automation_integrator()
 
-            logger.info(f"🔬 Running validations for: {connection.get('name')}")
+            logger.info(f"Running validations for: {connection.get('name')}")
 
             results = integrator.run_automated_validations(connection_id, organization_id)
             results["trigger"] = "user_schedule"
@@ -411,11 +411,11 @@ class SimplifiedAutomationScheduler:
                     connection_id=connection_id
                 )
 
-            logger.info(f"✅ Completed validation job {job_id}: {results.get('failed_rules', 0)} failures")
+            logger.info(f"Completed validation job {job_id}: {results.get('failed_rules', 0)} failures")
 
         except Exception as e:
             error_msg = str(e)
-            logger.error(f"❌ Validation job {job_id} failed: {error_msg}")
+            logger.error(f"Validation job {job_id} failed: {error_msg}")
             self._handle_job_failure(job_id, run_id, connection_id, error_msg)
 
     def _handle_job_failure(self, job_id: str, run_id: str, connection_id: str, error_msg: str):
@@ -515,11 +515,11 @@ class SimplifiedAutomationScheduler:
                 .execute()
 
             if status == "completed":
-                logger.info(f"✅ Job {job_id} completed")
+                logger.info(f"Job {job_id} completed")
             elif status == "failed":
-                logger.error(f"❌ Job {job_id} failed")
+                logger.error(f"Job {job_id} failed")
             elif status == "running":
-                logger.info(f"🏃 Job {job_id} started")
+                logger.info(f"Job {job_id} started")
 
         except Exception as e:
             logger.error(f"Error updating job status for {job_id}: {str(e)}")
@@ -537,7 +537,7 @@ class SimplifiedAutomationScheduler:
 
             deleted_count = len(response.data) if response.data else 0
             if deleted_count > 0:
-                logger.info(f"🧹 Cleaned up {deleted_count} old automation jobs")
+                logger.info(f"Cleaned up {deleted_count} old automation jobs")
 
         except Exception as e:
             logger.error(f"Error cleaning up old jobs: {str(e)}")
