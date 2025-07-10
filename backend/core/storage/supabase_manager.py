@@ -2,13 +2,15 @@ import datetime
 import os
 import secrets
 import traceback
-import uuid  # Added missing import
+import uuid
+import time
 from typing import Dict, List, Any, Optional, Union
 import json
 from dotenv import load_dotenv
 from supabase import create_client, Client
 import logging
 import threading
+from functools import wraps
 
 # Configure logging
 logging.basicConfig(
@@ -20,6 +22,42 @@ logger = logging.getLogger('supabase_manager')
 
 # Load environment variables
 load_dotenv()
+
+
+# Add retry decorator
+def retry_on_failure(max_retries=3, delay=0.5, backoff=2.0):
+    """Decorator for retrying failed operations with exponential backoff"""
+
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            last_exception = None
+
+            for attempt in range(max_retries):
+                try:
+                    return func(*args, **kwargs)
+                except Exception as e:
+                    last_exception = e
+
+                    # Don't retry on certain types of errors
+                    if hasattr(e, 'response') and e.response:
+                        status_code = getattr(e.response, 'status_code', 0)
+                        if 400 <= status_code < 500 and status_code not in [429, 408]:
+                            # Don't retry on client errors (except rate limiting and timeout)
+                            raise e
+
+                    if attempt < max_retries - 1:
+                        wait_time = delay * (backoff ** attempt)
+                        logger.warning(f"Attempt {attempt + 1} failed: {str(e)}. Retrying in {wait_time:.2f}s...")
+                        time.sleep(wait_time)
+                    else:
+                        logger.error(f"All {max_retries} attempts failed. Last error: {str(e)}")
+
+            raise last_exception
+
+        return wrapper
+
+    return decorator
 
 
 class SupabaseSingleton:
@@ -51,9 +89,15 @@ class SupabaseManager:
     """Manager class for Supabase operations, handling data storage and retrieval."""
 
     def __init__(self):
-        """Initialize the Supabase client using singleton"""
+        """Initialize the Supabase client using singleton with caching"""
         # Use singleton instance only, don't create duplicate clients
         self.supabase: Client = SupabaseSingleton.get_instance()
+
+        # Add simple caching for organization lookups
+        self._org_cache = {}
+        self._cache_expiry = {}
+        self._cache_duration = datetime.timedelta(minutes=10)
+
         logger.debug("Supabase client initialized")
 
     @classmethod
@@ -61,14 +105,65 @@ class SupabaseManager:
         """Reset the Supabase client instance (useful for testing or reconnection)"""
         SupabaseSingleton._instance = None
 
+    def _get_cached_organization(self, user_id: str) -> Optional[str]:
+        """Get organization from cache if not expired"""
+        if user_id in self._org_cache:
+            if datetime.datetime.now() < self._cache_expiry.get(user_id, datetime.datetime.min):
+                return self._org_cache[user_id]
+            else:
+                # Cache expired
+                self._org_cache.pop(user_id, None)
+                self._cache_expiry.pop(user_id, None)
+        return None
+
+    def _cache_organization(self, user_id: str, organization_id: str):
+        """Cache organization data"""
+        if organization_id:  # Only cache valid organization IDs
+            self._org_cache[user_id] = organization_id
+            self._cache_expiry[user_id] = datetime.datetime.now() + self._cache_duration
+
+    @retry_on_failure(max_retries=3, delay=0.3)
     def get_user_organization(self, user_id: str) -> Optional[str]:
-        """Get the organization ID for a user"""
-        try:
-            response = self.supabase.table("profiles").select("organization_id").eq("id", user_id).single().execute()
-            return response.data.get("organization_id") if response.data else None
-        except Exception as e:
-            logger.error(f"Error getting user organization: {str(e)}")
+        """Get the organization ID for a user with retry logic and caching"""
+        if not user_id:
+            logger.error("User ID is required")
             return None
+
+        # Check cache first
+        cached_org = self._get_cached_organization(user_id)
+        if cached_org:
+            logger.debug(f"Using cached organization for user {user_id}")
+            return cached_org
+
+        try:
+            logger.debug(f"Getting organization for user {user_id}")
+            response = self.supabase.table("profiles").select("organization_id").eq("id", user_id).single().execute()
+
+            if response.data:
+                org_id = response.data.get("organization_id")
+                logger.debug(f"Found organization {org_id} for user {user_id}")
+
+                # Cache the result
+                self._cache_organization(user_id, org_id)
+
+                return org_id
+            else:
+                logger.warning(f"No profile found for user {user_id}")
+                return None
+
+        except Exception as e:
+            logger.error(f"Error getting user organization for {user_id}: {str(e)}")
+            # Re-raise so the retry decorator can handle it
+            raise Exception(f"Failed to get user organization: {str(e)}")
+
+    def health_check(self):
+        """Check if Supabase is healthy"""
+        try:
+            response = self.supabase.table("organizations").select("id").limit(1).execute()
+            return True
+        except Exception as e:
+            logger.error(f"Supabase health check failed: {str(e)}")
+            return False
 
     # Profile History Methods
 
@@ -242,7 +337,7 @@ class SupabaseManager:
             return []
 
     def get_validations_by_column(self, organization_id: str, table_name: str, column_name: str, connection_id: str) -> \
-    List[Dict]:
+            List[Dict]:
         """Get validations that might be affected by a column change"""
         try:
             query = self.supabase.table("validation_rules") \
@@ -786,3 +881,16 @@ class SupabaseManager:
             logger.error(f"Error deactivating validation rule: {str(e)}")
             logger.error(traceback.format_exc())
             return False
+
+    def clear_cache(self):
+        """Clear the organization cache"""
+        self._org_cache.clear()
+        self._cache_expiry.clear()
+        logger.info("Organization cache cleared")
+
+
+# Convenience function for backward compatibility
+def get_user_organization(user_id: str) -> Optional[str]:
+    """Get user organization - backward compatible function"""
+    manager = SupabaseManager()
+    return manager.get_user_organization(user_id)

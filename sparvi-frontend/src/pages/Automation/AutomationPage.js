@@ -23,6 +23,7 @@ import LoadingSpinner from '../../components/common/LoadingSpinner';
 import EmptyState from '../../components/common/EmptyState';
 import { ScheduleConfig, NextRunDisplay, ScheduleStatusWidget } from '../../components/automation';
 import { useNextRunTimes } from '../../hooks/useNextRunTimes';
+import ErrorBoundary from '../../components/ErrorBoundary';
 
 const AutomationPage = () => {
   const { connections, activeConnection } = useConnection();
@@ -192,157 +193,170 @@ const AutomationPage = () => {
   const recentJobs = automationJobs.slice(0, 10);
 
   return (
-    <div className="py-4">
-      <div className="flex justify-between items-center mb-6">
-        <div>
-          <h1 className="text-2xl font-semibold text-gray-900">Automation Management</h1>
-          <p className="mt-1 text-sm text-gray-500">
-            Configure and monitor automated processes for your database connections
-          </p>
-        </div>
+    <ErrorBoundary
+      onError={(error, errorInfo) => {
+        console.error('Automation page error:', error, errorInfo);
+        // Optional: send to error reporting service
+      }}
+    >
+      <div className="py-4">
+        <div className="flex justify-between items-center mb-6">
+          <div>
+            <h1 className="text-2xl font-semibold text-gray-900">Automation Management</h1>
+            <p className="mt-1 text-sm text-gray-500">
+              Configure and monitor automated processes for your database connections
+            </p>
+          </div>
 
-        {/* Quick actions */}
-        <div className="flex items-center space-x-3">
-          {/* Active jobs indicator */}
-          {activeJobCount > 0 && (
-            <div className="flex items-center px-3 py-2 bg-blue-50 text-blue-700 rounded-md text-sm">
-              <LoadingSpinner size="xs" className="mr-2" />
-              {activeJobCount} active job{activeJobCount !== 1 ? 's' : ''}
-            </div>
-          )}
-
-          {/* Global automation toggle */}
-          <button
-            onClick={toggleGlobalAutomation}
-            disabled={globalConfigLoading}
-            className={`flex items-center px-4 py-2 rounded-md text-sm font-medium transition-colors ${
-              globalConfig?.automation_enabled
-                ? 'bg-green-100 text-green-800 hover:bg-green-200'
-                : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-            } disabled:opacity-50 disabled:cursor-not-allowed`}
-          >
-            {globalConfig?.automation_enabled ? (
-              <>
-                <PlayIcon className="h-4 w-4 mr-2" />
-                Global Automation On
-              </>
-            ) : (
-              <>
-                <PauseIcon className="h-4 w-4 mr-2" />
-                Global Automation Off
-              </>
-            )}
-          </button>
-        </div>
-      </div>
-
-      {/* Global automation disabled warning */}
-      {!globalConfig?.automation_enabled && (
-        <div className="mb-6 rounded-md bg-yellow-50 border border-yellow-200 p-4">
-          <div className="flex">
-            <div className="flex-shrink-0">
-              <ExclamationTriangleIcon className="h-5 w-5 text-yellow-400" aria-hidden="true" />
-            </div>
-            <div className="ml-3">
-              <h3 className="text-sm font-medium text-yellow-800">
-                Global automation is disabled
-              </h3>
-              <div className="mt-2 text-sm text-yellow-700">
-                <p>
-                  All automated processes are currently paused. Enable global automation to resume scheduled tasks.
-                </p>
+          {/* Quick actions */}
+          <div className="flex items-center space-x-3">
+            {/* Active jobs indicator */}
+            {activeJobCount > 0 && (
+              <div className="flex items-center px-3 py-2 bg-blue-50 text-blue-700 rounded-md text-sm">
+                <LoadingSpinner size="xs" className="mr-2" />
+                {activeJobCount} active job{activeJobCount !== 1 ? 's' : ''}
               </div>
-              <div className="mt-4">
-                <div className="-mx-2 -my-1.5 flex">
-                  <button
-                    onClick={toggleGlobalAutomation}
-                    className="bg-yellow-50 px-2 py-1.5 rounded-md text-sm font-medium text-yellow-800 hover:bg-yellow-100 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-yellow-50 focus:ring-yellow-600"
-                  >
-                    Enable Global Automation
-                  </button>
+            )}
+
+            {/* Global automation toggle */}
+            <button
+              onClick={toggleGlobalAutomation}
+              disabled={globalConfigLoading}
+              className={`flex items-center px-4 py-2 rounded-md text-sm font-medium transition-colors ${
+                globalConfig?.automation_enabled
+                  ? 'bg-green-100 text-green-800 hover:bg-green-200'
+                  : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+              } disabled:opacity-50 disabled:cursor-not-allowed`}
+            >
+              {globalConfig?.automation_enabled ? (
+                <>
+                  <PlayIcon className="h-4 w-4 mr-2" />
+                  Global Automation On
+                </>
+              ) : (
+                <>
+                  <PauseIcon className="h-4 w-4 mr-2" />
+                  Global Automation Off
+                </>
+              )}
+            </button>
+          </div>
+        </div>
+
+        {/* Global automation disabled warning */}
+        {!globalConfig?.automation_enabled && (
+          <div className="mb-6 rounded-md bg-yellow-50 border border-yellow-200 p-4">
+            <div className="flex">
+              <div className="flex-shrink-0">
+                <ExclamationTriangleIcon className="h-5 w-5 text-yellow-400" aria-hidden="true" />
+              </div>
+              <div className="ml-3">
+                <h3 className="text-sm font-medium text-yellow-800">
+                  Global automation is disabled
+                </h3>
+                <div className="mt-2 text-sm text-yellow-700">
+                  <p>
+                    All automated processes are currently paused. Enable global automation to resume scheduled tasks.
+                  </p>
+                </div>
+                <div className="mt-4">
+                  <div className="-mx-2 -my-1.5 flex">
+                    <button
+                      onClick={toggleGlobalAutomation}
+                      className="bg-yellow-50 px-2 py-1.5 rounded-md text-sm font-medium text-yellow-800 hover:bg-yellow-100 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-yellow-50 focus:ring-yellow-600"
+                    >
+                      Enable Global Automation
+                    </button>
+                  </div>
                 </div>
               </div>
             </div>
           </div>
+        )}
+
+        {/* Tab Navigation */}
+        <div className="border-b border-gray-200 mb-6">
+          <nav className="-mb-px flex space-x-8" aria-label="Tabs">
+            <button
+              className={`
+                ${activeTab === 'overview' 
+                  ? 'border-blue-500 text-blue-600' 
+                  : 'border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700'}
+                whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm flex items-center
+              `}
+              onClick={() => handleTabChange('overview')}
+            >
+              <TableCellsIcon className="h-4 w-4 mr-2" />
+              Overview
+            </button>
+            <button
+              className={`
+                ${activeTab === 'configure' 
+                  ? 'border-blue-500 text-blue-600' 
+                  : 'border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700'}
+                whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm flex items-center
+              `}
+              onClick={() => handleTabChange('configure')}
+            >
+              <CogIcon className="h-4 w-4 mr-2" />
+              Configure Schedules
+            </button>
+            <button
+              className={`
+                ${activeTab === 'monitoring' 
+                  ? 'border-blue-500 text-blue-600' 
+                  : 'border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700'}
+                whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm flex items-center
+              `}
+              onClick={() => handleTabChange('monitoring')}
+            >
+              <ChartBarIcon className="h-4 w-4 mr-2" />
+              Jobs & Monitoring
+              {activeJobs.length > 0 && (
+                <span className="ml-2 inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
+                  {activeJobs.length}
+                </span>
+              )}
+            </button>
+          </nav>
         </div>
-      )}
 
-      {/* Tab Navigation */}
-      <div className="border-b border-gray-200 mb-6">
-        <nav className="-mb-px flex space-x-8" aria-label="Tabs">
-          <button
-            className={`
-              ${activeTab === 'overview' 
-                ? 'border-blue-500 text-blue-600' 
-                : 'border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700'}
-              whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm flex items-center
-            `}
-            onClick={() => handleTabChange('overview')}
-          >
-            <TableCellsIcon className="h-4 w-4 mr-2" />
-            Overview
-          </button>
-          <button
-            className={`
-              ${activeTab === 'configure' 
-                ? 'border-blue-500 text-blue-600' 
-                : 'border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700'}
-              whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm flex items-center
-            `}
-            onClick={() => handleTabChange('configure')}
-          >
-            <CogIcon className="h-4 w-4 mr-2" />
-            Configure Schedules
-          </button>
-          <button
-            className={`
-              ${activeTab === 'monitoring' 
-                ? 'border-blue-500 text-blue-600' 
-                : 'border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700'}
-              whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm flex items-center
-            `}
-            onClick={() => handleTabChange('monitoring')}
-          >
-            <ChartBarIcon className="h-4 w-4 mr-2" />
-            Jobs & Monitoring
-            {activeJobs.length > 0 && (
-              <span className="ml-2 inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
-                {activeJobs.length}
-              </span>
-            )}
-          </button>
-        </nav>
+        {/* Tab Content - Each wrapped in its own ErrorBoundary */}
+        {activeTab === 'overview' && (
+          <ErrorBoundary fallback={<div className="p-4 text-center text-red-600">Error loading overview. Please refresh the page.</div>}>
+            <OverviewTab
+              connections={connections}
+              allNextRuns={allNextRuns}
+              nextRunsLoading={nextRunsLoading}
+              globalEnabled={globalConfig?.automation_enabled}
+              onConnectionSelect={handleConnectionSelect}
+            />
+          </ErrorBoundary>
+        )}
+
+        {activeTab === 'configure' && (
+          <ErrorBoundary fallback={<div className="p-4 text-center text-red-600">Error loading configuration. Please refresh the page.</div>}>
+            <ConfigureTab
+              connections={connections}
+              selectedConnectionId={selectedConnectionId}
+              onConnectionSelect={handleConnectionSelect}
+            />
+          </ErrorBoundary>
+        )}
+
+        {activeTab === 'monitoring' && (
+          <ErrorBoundary fallback={<div className="p-4 text-center text-red-600">Error loading monitoring. Please refresh the page.</div>}>
+            <MonitoringTab
+              connections={connections}
+              jobs={automationJobs}
+              jobsLoading={jobsLoading}
+              activeJobs={activeJobs}
+              recentJobs={recentJobs}
+            />
+          </ErrorBoundary>
+        )}
       </div>
-
-      {/* Tab Content */}
-      {activeTab === 'overview' && (
-        <OverviewTab
-          connections={connections}
-          allNextRuns={allNextRuns}
-          nextRunsLoading={nextRunsLoading}
-          globalEnabled={globalConfig?.automation_enabled}
-          onConnectionSelect={handleConnectionSelect}
-        />
-      )}
-
-      {activeTab === 'configure' && (
-        <ConfigureTab
-          connections={connections}
-          selectedConnectionId={selectedConnectionId}
-          onConnectionSelect={handleConnectionSelect}
-        />
-      )}
-
-      {activeTab === 'monitoring' && (
-        <MonitoringTab
-          connections={connections}
-          jobs={automationJobs}
-          jobsLoading={jobsLoading}
-          activeJobs={activeJobs}
-          recentJobs={recentJobs}
-        />
-      )}
-    </div>
+    </ErrorBoundary>
   );
 };
 

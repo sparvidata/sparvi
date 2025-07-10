@@ -7090,6 +7090,6 @@ def after_request_cors(response):
 # For local development
 if __name__ == "__main__":
     logger.info("Running in local development mode")
-    app.run(debug=True, host="0.0.0.0", port=5001)
+    app.run()
 else:
     logger.info("Running in production mode (Azure App Service)")

@@ -1,287 +1,297 @@
 /**
- * Utility functions for API request management
+ * Request deduplication and circuit breaker utilities
+ * Prevents infinite loops and manages failed requests gracefully
  */
-import axios from 'axios';
-import { waitForAuth } from '../api/enhancedApiService';
-import {getSession, supabase} from "../api/supabase";
+
+// Store for tracking ongoing requests
+const ongoingRequests = new Map();
+
+// Circuit breaker state for different endpoints
+const circuitBreakers = new Map();
+
+// Configuration
+const CIRCUIT_BREAKER_CONFIG = {
+  failureThreshold: 5,        // Number of failures before opening circuit
+  resetTimeoutMs: 30000,      // 30 seconds before attempting reset
+  monitorWindowMs: 60000,     // 1 minute window for tracking failures
+};
+
+const RETRY_CONFIG = {
+  maxRetries: 3,
+  baseDelayMs: 1000,
+  maxDelayMs: 10000,
+};
 
 /**
- * Map to store active request AbortControllers
- * Used to cancel in-flight requests when needed
+ * Circuit breaker implementation
  */
-const activeRequestControllers = new Map();
+class CircuitBreaker {
+  constructor(key, config = CIRCUIT_BREAKER_CONFIG) {
+    this.key = key;
+    this.config = config;
+    this.state = 'CLOSED'; // CLOSED, OPEN, HALF_OPEN
+    this.failures = [];
+    this.lastFailureTime = null;
+    this.nextAttemptTime = null;
+  }
 
-/**
- * Create an AbortController and token for a request
- * @param {string} requestId - Unique identifier for the request
- * @returns {AbortController} AbortController for the request
- */
-export const getRequestAbortController = (requestId) => {
-  // Cancel any existing request with the same ID
-  cancelRequest(requestId);
+  canExecute() {
+    const now = Date.now();
 
-  // Create a new AbortController
-  try {
-    const controller = new AbortController();
-    activeRequestControllers.set(requestId, controller);
-    return controller;
-  } catch (error) {
-    console.error('Error creating AbortController:', error);
-    // Return a dummy controller if real one fails to initialize
+    // Clean old failures outside the monitoring window
+    this.failures = this.failures.filter(
+      time => now - time < this.config.monitorWindowMs
+    );
+
+    switch (this.state) {
+      case 'CLOSED':
+        return true;
+
+      case 'OPEN':
+        if (now >= this.nextAttemptTime) {
+          this.state = 'HALF_OPEN';
+          return true;
+        }
+        return false;
+
+      case 'HALF_OPEN':
+        return true;
+
+      default:
+        return false;
+    }
+  }
+
+  recordSuccess() {
+    this.failures = [];
+    this.state = 'CLOSED';
+    this.nextAttemptTime = null;
+  }
+
+  recordFailure() {
+    const now = Date.now();
+    this.failures.push(now);
+    this.lastFailureTime = now;
+
+    if (this.failures.length >= this.config.failureThreshold) {
+      this.state = 'OPEN';
+      this.nextAttemptTime = now + this.config.resetTimeoutMs;
+      console.warn(`Circuit breaker OPENED for ${this.key}. Next attempt at ${new Date(this.nextAttemptTime)}`);
+    }
+  }
+
+  getState() {
     return {
-      signal: { aborted: false },
-      abort: () => console.log('Dummy abort called')
+      state: this.state,
+      failures: this.failures.length,
+      nextAttemptTime: this.nextAttemptTime,
+      canExecute: this.canExecute()
     };
   }
-};
+}
 
 /**
- * Cancel a specific request
- * @param {string} requestId - ID of the request to cancel
+ * Get or create circuit breaker for endpoint
  */
-export const cancelRequest = (requestId) => {
-  const controller = activeRequestControllers.get(requestId);
-  if (controller) {
-    controller.abort();
-    activeRequestControllers.delete(requestId);
+function getCircuitBreaker(key) {
+  if (!circuitBreakers.has(key)) {
+    circuitBreakers.set(key, new CircuitBreaker(key));
   }
-};
+  return circuitBreakers.get(key);
+}
 
 /**
- * Cancel all active requests or those matching a prefix
- * @param {string} prefix - Optional prefix to limit cancellation to specific request IDs
+ * Generate a unique key for request deduplication
  */
-export const cancelRequests = (prefix = '') => {
-  for (const [requestId, controller] of activeRequestControllers.entries()) {
-    if (!prefix || requestId.startsWith(prefix)) {
-      controller.abort();
-      activeRequestControllers.delete(requestId);
-    }
-  }
-};
+function getRequestKey(url, method = 'GET', params = {}) {
+  const paramString = Object.keys(params).length > 0
+    ? `?${new URLSearchParams(params).toString()}`
+    : '';
+  return `${method}:${url}${paramString}`;
+}
 
 /**
- * Clean up completed request controllers
- * @param {string} requestId - ID of the completed request
+ * Sleep utility for delays
  */
-export const requestCompleted = (requestId) => {
-  activeRequestControllers.delete(requestId);
-};
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
 
 /**
- * Create a debounced function that delays invoking func until after wait milliseconds
- * @param {Function} func - The function to debounce
- * @param {number} wait - The number of milliseconds to delay
- * @returns {Function} The debounced function
+ * Calculate exponential backoff delay
  */
-export const debounce = (func, wait = 300) => {
-  let timeout;
-
-  return function executedFunction(...args) {
-    const later = () => {
-      clearTimeout(timeout);
-      func(...args);
-    };
-
-    clearTimeout(timeout);
-    timeout = setTimeout(later, wait);
-  };
-};
+function calculateBackoffDelay(attempt, baseDelay = RETRY_CONFIG.baseDelayMs, maxDelay = RETRY_CONFIG.maxDelayMs) {
+  const delay = baseDelay * Math.pow(2, attempt - 1);
+  const jitter = Math.random() * 0.1 * delay; // Add 10% jitter
+  return Math.min(delay + jitter, maxDelay);
+}
 
 /**
- * Create a throttled function that only invokes func at most once per every wait milliseconds
- * @param {Function} func - The function to throttle
- * @param {number} wait - The number of milliseconds to throttle invocations to
- * @returns {Function} The throttled function
+ * Enhanced fetch with circuit breaker, deduplication, and retry logic
  */
-export const throttle = (func, wait = 600) => {
-  let waiting = false;
-
-  return function executedFunction(...args) {
-    if (waiting) return;
-
-    func(...args);
-    waiting = true;
-    setTimeout(() => {
-      waiting = false;
-    }, wait);
-  };
-};
-
-/**
- * Batch multiple API requests into a single call with retry logic
- * @param {Array} requests - Array of request configurations
- * @param {Object} options - Options for batch request
- * @returns {Promise} Promise that resolves with all responses
- */
-export const batchRequests = async (requests, options = {}) => {
+export async function safeFetch(url, options = {}) {
   const {
-    endpoint = '/batch',
-    retries = 2,
-    retryDelay = 1000,
-    waitForAuthentication = true,
-    timeout = 120000 // Increase from 30000 to 60000 (60 seconds)
+    method = 'GET',
+    params = {},
+    retries = RETRY_CONFIG.maxRetries,
+    timeout = 10000,
+    ...fetchOptions
   } = options;
 
-  // Create an abort controller for this entire batch operation
-  const controller = new AbortController();
+  // Generate unique key for this request
+  const requestKey = getRequestKey(url, method, params);
 
-  // Set timeout to prevent hanging requests
-  const timeoutId = setTimeout(() => {
-    console.log(`Batch request timed out after ${timeout}ms, aborting`);
-    controller.abort();
-  }, timeout);
+  // Check circuit breaker
+  const circuitBreaker = getCircuitBreaker(url);
+  if (!circuitBreaker.canExecute()) {
+    const error = new Error(`Circuit breaker is OPEN for ${url}`);
+    error.circuitBreakerOpen = true;
+    error.nextAttemptTime = circuitBreaker.nextAttemptTime;
+    throw error;
+  }
+
+  // Check for ongoing identical request
+  if (ongoingRequests.has(requestKey)) {
+    console.log(`Deduplicating request: ${requestKey}`);
+    return ongoingRequests.get(requestKey);
+  }
+
+  // Create the actual request promise
+  const requestPromise = executeRequestWithRetry(url, {
+    method,
+    params,
+    retries,
+    timeout,
+    circuitBreaker,
+    ...fetchOptions
+  });
+
+  // Store the promise for deduplication
+  ongoingRequests.set(requestKey, requestPromise);
 
   try {
-    // Wait for auth if needed
-    if (waitForAuthentication) {
-      try {
-        await waitForAuth(5000);
-      } catch (error) {
-        console.warn('Proceeding with batch request without waiting for auth');
-      }
-    }
-
-    let attempt = 0;
-
-    while (attempt <= retries) {
-      try {
-        const session = await getSession();
-
-        // Extract token - keep it simple
-        const token = session?.access_token;
-
-        if (!token) {
-          console.error('No valid authentication token for batch request');
-          throw new Error('Authentication required');
-        }
-
-        const apiUrl = process.env.NODE_ENV === 'development'
-          ? 'http://127.0.0.1:5000/api'
-          : '/api';
-
-        const batchEndpoint = `${apiUrl}${endpoint}`;
-
-        console.log(`Making batch request with ${requests.length} requests`);
-
-        const response = await axios.post(
-          batchEndpoint,
-          { requests },
-          {
-            headers: { 'Authorization': `Bearer ${token}` },
-            signal: controller.signal,
-            timeout: timeout // Also set the axios timeout to match
-          }
-        );
-
-        return response.data.results;
-      } catch (error) {
-        // If request was cancelled, don't retry
-        if (axios.isCancel(error)) {
-          console.log('Batch request was cancelled');
-          throw { cancelled: true };
-        }
-
-        attempt++;
-
-        // Only retry on specific errors
-        if (attempt > retries ||
-            (error.response?.status !== 401 &&
-             error.response?.status !== 403 &&
-             error.response?.status !== 429)) {
-          throw error;
-        }
-
-        console.log(`Batch request error, retrying (${attempt}/${retries})...`);
-        await new Promise(resolve => setTimeout(resolve, retryDelay));
-      }
-    }
+    const result = await requestPromise;
+    circuitBreaker.recordSuccess();
+    return result;
+  } catch (error) {
+    circuitBreaker.recordFailure();
+    throw error;
   } finally {
-    clearTimeout(timeoutId);
+    // Clean up the ongoing request
+    ongoingRequests.delete(requestKey);
   }
-};
+}
 
 /**
- * Create a paginated data fetcher
- * @param {Function} fetchFunction - The function to call for fetching data
- * @param {Object} options - Options for pagination
- * @returns {Object} Object with pagination methods and state
+ * Execute request with retry logic
  */
-export const createPagination = (fetchFunction, options = {}) => {
-  const {
-    initialPage = 1,
-    pageSize = 20,
-    initialData = [],
-  } = options;
+async function executeRequestWithRetry(url, options) {
+  const { method, params, retries, timeout, circuitBreaker, ...fetchOptions } = options;
 
-  let currentPage = initialPage;
-  let hasMore = true;
-  let isLoading = false;
-  let data = [...initialData];
-  let totalCount = 0;
+  // Build full URL with params
+  const fullUrl = Object.keys(params).length > 0
+    ? `${url}?${new URLSearchParams(params).toString()}`
+    : url;
 
-  // Function to fetch a specific page
-  const fetchPage = async (page) => {
-    if (isLoading) return;
+  let lastError;
 
-    isLoading = true;
+  for (let attempt = 1; attempt <= retries + 1; attempt++) {
     try {
-      const result = await fetchFunction({
-        page,
-        pageSize,
+      // Create abort controller for timeout
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), timeout);
+
+      const response = await fetch(fullUrl, {
+        method,
+        signal: controller.signal,
+        ...fetchOptions
       });
 
-      // If result is array, use it directly, otherwise extract data
-      const newData = Array.isArray(result) ? result : (result.data || []);
-      totalCount = result.totalCount || newData.length;
+      clearTimeout(timeoutId);
 
-      // If this is the first page, replace data, otherwise append
-      if (page === 1) {
-        data = newData;
-      } else {
-        data = [...data, ...newData];
+      if (!response.ok) {
+        const errorText = await response.text();
+        let errorData;
+        try {
+          errorData = JSON.parse(errorText);
+        } catch {
+          errorData = { error: errorText };
+        }
+
+        const error = new Error(errorData.error || `HTTP ${response.status}`);
+        error.status = response.status;
+        error.response = response;
+        error.data = errorData;
+        throw error;
       }
 
-      // Check if there are more pages
-      hasMore = newData.length === pageSize;
-      currentPage = page;
+      const data = await response.json();
+      return data;
 
-      return {
-        data,
-        page: currentPage,
-        hasMore,
-        totalCount,
-      };
     } catch (error) {
-      console.error('Error fetching page:', error);
-      throw error;
-    } finally {
-      isLoading = false;
+      lastError = error;
+
+      // Don't retry on auth errors (401, 403) or client errors (400-499)
+      if (error.status && error.status >= 400 && error.status < 500) {
+        break;
+      }
+
+      // Don't retry if circuit breaker is open
+      if (error.name === 'AbortError' || error.circuitBreakerOpen) {
+        break;
+      }
+
+      // If we have more attempts, wait before retrying
+      if (attempt <= retries) {
+        const delay = calculateBackoffDelay(attempt);
+        console.warn(`Request failed (attempt ${attempt}/${retries + 1}), retrying in ${delay}ms:`, error.message);
+        await sleep(delay);
+      }
     }
-  };
+  }
 
-  // Function to fetch the next page
-  const fetchNextPage = async () => {
-    if (!hasMore || isLoading) return null;
-    return await fetchPage(currentPage + 1);
-  };
+  throw lastError;
+}
 
-  // Function to reset and fetch the first page
-  const reset = async () => {
-    currentPage = 0;
-    hasMore = true;
-    data = [];
-    return await fetchNextPage();
-  };
+/**
+ * Get circuit breaker status for monitoring
+ */
+export function getCircuitBreakerStatus() {
+  const status = {};
+  for (const [key, breaker] of circuitBreakers.entries()) {
+    status[key] = breaker.getState();
+  }
+  return status;
+}
 
-  return {
-    fetchPage,
-    fetchNextPage,
-    reset,
-    getCurrentPage: () => currentPage,
-    getData: () => data,
-    hasMore: () => hasMore,
-    isLoading: () => isLoading,
-    getTotalCount: () => totalCount,
-  };
-};
+/**
+ * Reset circuit breaker (for manual recovery)
+ */
+export function resetCircuitBreaker(key) {
+  if (circuitBreakers.has(key)) {
+    circuitBreakers.delete(key);
+    console.log(`Circuit breaker reset for ${key}`);
+  }
+}
+
+/**
+ * Reset all circuit breakers
+ */
+export function resetAllCircuitBreakers() {
+  circuitBreakers.clear();
+  console.log('All circuit breakers reset');
+}
+
+/**
+ * Get ongoing requests for monitoring
+ */
+export function getOngoingRequests() {
+  return Array.from(ongoingRequests.keys());
+}
+
+/**
+ * Cancel all ongoing requests (useful for cleanup)
+ */
+export function cancelAllRequests() {
+  ongoingRequests.clear();
+}
