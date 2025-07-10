@@ -1562,51 +1562,6 @@ export const automationAPI = {
     });
   },
 
-  // Get next run times for a specific connection
-  getNextRunTimes: (connectionId, options = {}) => {
-    const { forceFresh = false, requestId = `automation.nextRuns.${connectionId}` } = options;
-
-    if (!connectionId) {
-      console.warn('getNextRunTimes called without connectionId');
-      return Promise.resolve({ next_runs: {} });
-    }
-
-    return enhancedRequest({
-      url: `/automation/connections/${connectionId}/next-runs`,
-      cacheKey: `automation.nextRuns.${connectionId}`,
-      cacheTTL: 1 * 60 * 1000, // 1 minute cache - next runs change frequently
-      requestId,
-      forceFresh
-    }).catch(error => {
-      console.error(`Error fetching next run times for connection ${connectionId}:`, error);
-      // Return a safe default instead of throwing
-      return {
-        connection_id: connectionId,
-        next_runs: {},
-        error: error.message || 'Failed to load next run times'
-      };
-    });
-  },
-
-  // Get next run times for all connections
-  getAllNextRunTimes: (options = {}) => {
-    const { forceFresh = false, requestId = 'automation.allNextRuns' } = options;
-    return enhancedRequest({
-      url: '/automation/next-runs',
-      cacheKey: 'automation.allNextRuns',
-      cacheTTL: 1 * 60 * 1000, // 1 minute cache
-      requestId,
-      forceFresh
-    }).catch(error => {
-      console.error('Error fetching all next run times:', error);
-      // Return a safe default instead of throwing
-      return {
-        next_runs_by_connection: {},
-        error: error.message || 'Failed to load next run times'
-      };
-    });
-  },
-
   // Enhanced status with next run times
   getEnhancedStatus: (connectionId = null, options = {}) => {
     const { forceFresh = false } = options;
@@ -1839,6 +1794,133 @@ export const automationAPI = {
       cacheTTL: 30 * 1000, // 30 seconds
       requestId,
       forceFresh
+    });
+  },
+
+  getSchedule: (connectionId, options = {}) => {
+    const { forceFresh = false, requestId = `automation.schedule.${connectionId}` } = options;
+    return enhancedRequest({
+      url: `/automation/schedules/${connectionId}`,
+      cacheKey: `automation.schedule.${connectionId}`,
+      cacheTTL: 2 * 60 * 1000, // 2 minutes - schedules don't change often
+      requestId,
+      forceFresh
+    });
+  },
+
+  // Update schedule for a connection
+  updateSchedule: (connectionId, scheduleConfig) => {
+    return enhancedRequest({
+      method: 'PUT',
+      url: `/automation/schedules/${connectionId}`,
+      data: { schedule_config: scheduleConfig },
+      requestId: `automation.updateSchedule.${connectionId}`
+    }).then(response => {
+      // Clear affected cache items
+      clearCacheItem(`automation.schedule.${connectionId}`);
+      clearCacheItem(`automation.nextRuns.${connectionId}`);
+      clearCacheItem('automation.allNextRuns');
+      return response;
+    });
+  },
+
+  // Get next run times for a specific connection
+  getNextRunTimes: (connectionId, options = {}) => {
+    const { forceFresh = false, requestId = `automation.nextRuns.${connectionId}` } = options;
+    return enhancedRequest({
+      url: `/automation/schedules/${connectionId}/next-runs`,
+      cacheKey: `automation.nextRuns.${connectionId}`,
+      cacheTTL: 1 * 60 * 1000, // 1 minute - next runs change frequently
+      requestId,
+      forceFresh
+    }).catch(error => {
+      console.error(`Error fetching next runs for ${connectionId}:`, error);
+      return {
+        connection_id: connectionId,
+        next_runs: {},
+        error: error.message
+      };
+    });
+  },
+
+  // Get next run times for all connections
+  getAllNextRunTimes: (options = {}) => {
+    const { forceFresh = false, requestId = 'automation.allNextRuns' } = options;
+    return enhancedRequest({
+      url: '/automation/schedules/all',
+      cacheKey: 'automation.allNextRuns',
+      cacheTTL: 1 * 60 * 1000, // 1 minute
+      requestId,
+      forceFresh
+    }).catch(error => {
+      console.error('Error fetching all next runs:', error);
+      return {
+        next_runs_by_connection: {},
+        error: error.message
+      };
+    });
+  },
+
+  // Validate schedule configuration
+  validateSchedule: (scheduleConfig) => {
+    return enhancedRequest({
+      method: 'POST',
+      url: '/automation/schedules/validate',
+      data: { schedule_config: scheduleConfig },
+      requestId: 'automation.validateSchedule'
+    });
+  },
+
+  // Get schedule templates
+  getScheduleTemplates: (options = {}) => {
+    const { forceFresh = false, requestId = 'automation.scheduleTemplates' } = options;
+    return enhancedRequest({
+      url: '/automation/schedules/templates',
+      cacheKey: 'automation.scheduleTemplates',
+      cacheTTL: 30 * 60 * 1000, // 30 minutes - templates rarely change
+      requestId,
+      forceFresh
+    });
+  },
+
+  // Disable all automation for a connection
+  disableAllAutomation: (connectionId) => {
+    return enhancedRequest({
+      method: 'POST',
+      url: `/automation/schedules/${connectionId}/disable`,
+      requestId: `automation.disableAll.${connectionId}`
+    }).then(response => {
+      // Clear affected caches
+      clearCacheItem(`automation.schedule.${connectionId}`);
+      clearCacheItem(`automation.nextRuns.${connectionId}`);
+      return response;
+    });
+  },
+
+  // Enable default schedule for a connection
+  enableDefaultSchedule: (connectionId, timezone = null) => {
+    const data = timezone ? { timezone } : {};
+    return enhancedRequest({
+      method: 'POST',
+      url: `/automation/schedules/${connectionId}/enable-default`,
+      data,
+      requestId: `automation.enableDefault.${connectionId}`
+    }).then(response => {
+      // Clear affected caches
+      clearCacheItem(`automation.schedule.${connectionId}`);
+      clearCacheItem(`automation.nextRuns.${connectionId}`);
+      return response;
+    });
+  },
+
+  // Trigger immediate automation
+  triggerImmediate: (connectionId, automationType = null) => {
+    const data = automationType ? { automation_type: automationType } : {};
+    return enhancedRequest({
+      method: 'POST',
+      url: `/automation/trigger-immediate/${connectionId}`,
+      data,
+      requestId: `automation.triggerImmediate.${connectionId}.${automationType || 'all'}`
     });
   },
 
