@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { useSearchParams } from 'react-router-dom';
 import { useConnection } from '../../contexts/EnhancedConnectionContext';
 import { useUI } from '../../contexts/UIContext';
 import { useAutomationJobCount } from '../../hooks/useAutomationJobCount';
@@ -8,25 +8,22 @@ import {
   ClockIcon,
   PlayIcon,
   PauseIcon,
-  Cog6ToothIcon,
   ExclamationTriangleIcon,
   TableCellsIcon,
   ClipboardDocumentCheckIcon,
   CommandLineIcon,
   ChartBarIcon,
   CalendarIcon,
-  CheckCircleIcon,
-  ExclamationCircleIcon,
   CogIcon
 } from '@heroicons/react/24/outline';
 import LoadingSpinner from '../../components/common/LoadingSpinner';
 import EmptyState from '../../components/common/EmptyState';
-import { ScheduleConfig, NextRunDisplay, ScheduleStatusWidget } from '../../components/automation';
+import { ScheduleConfig, ScheduleStatusWidget } from '../../components/automation';
 import { useNextRunTimes } from '../../hooks/useNextRunTimes';
 import ErrorBoundary from '../../components/ErrorBoundary';
 
 const AutomationPage = () => {
-  const { connections, activeConnection } = useConnection();
+  const { connections } = useConnection();
   const { updateBreadcrumbs, showNotification } = useUI();
   const { activeJobCount } = useAutomationJobCount();
   const [searchParams, setSearchParams] = useSearchParams();

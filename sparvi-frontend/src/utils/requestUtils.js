@@ -9,6 +9,9 @@ const ongoingRequests = new Map();
 // Circuit breaker state for different endpoints
 const circuitBreakers = new Map();
 
+// Store for abort controllers by request ID
+const abortControllers = new Map();
+
 // Configuration
 const CIRCUIT_BREAKER_CONFIG = {
   failureThreshold: 5,        // Number of failures before opening circuit
@@ -254,6 +257,79 @@ async function executeRequestWithRetry(url, options) {
 }
 
 /**
+ * Get or create abort controller for a request
+ * @param {string} requestId - Unique identifier for the request
+ * @returns {AbortController} Abort controller for the request
+ */
+export function getRequestAbortController(requestId) {
+  if (!abortControllers.has(requestId)) {
+    abortControllers.set(requestId, new AbortController());
+  }
+  return abortControllers.get(requestId);
+}
+
+/**
+ * Mark a request as completed and clean up its abort controller
+ * @param {string} requestId - Unique identifier for the request
+ */
+export function requestCompleted(requestId) {
+  if (abortControllers.has(requestId)) {
+    abortControllers.delete(requestId);
+  }
+}
+
+/**
+ * Debounce function to limit the rate of function calls
+ * @param {Function} func - Function to debounce
+ * @param {number} wait - Wait time in milliseconds
+ * @param {boolean} immediate - Whether to execute on leading edge
+ * @returns {Function} Debounced function
+ */
+export function debounce(func, wait, immediate = false) {
+  let timeout;
+
+  return function executedFunction(...args) {
+    const later = () => {
+      timeout = null;
+      if (!immediate) func.apply(this, args);
+    };
+
+    const callNow = immediate && !timeout;
+    clearTimeout(timeout);
+    timeout = setTimeout(later, wait);
+
+    if (callNow) func.apply(this, args);
+  };
+}
+
+/**
+ * Batch multiple requests into a single API call
+ * @param {Array} requests - Array of request objects
+ * @param {Object} options - Request options
+ * @returns {Promise} Promise resolving to batch results
+ */
+export async function batchRequests(requests, options = {}) {
+  const { timeout = 30000 } = options;
+
+  try {
+    // Use safeFetch for the batch request
+    const response = await safeFetch('/batch', {
+      method: 'POST',
+      body: JSON.stringify({ requests }),
+      timeout,
+      headers: {
+        'Content-Type': 'application/json'
+      }
+    });
+
+    return response.results || {};
+  } catch (error) {
+    console.error('Batch request failed:', error);
+    throw error;
+  }
+}
+
+/**
  * Get circuit breaker status for monitoring
  */
 export function getCircuitBreakerStatus() {
@@ -294,4 +370,9 @@ export function getOngoingRequests() {
  */
 export function cancelAllRequests() {
   ongoingRequests.clear();
+  // Also abort all ongoing controllers
+  for (const controller of abortControllers.values()) {
+    controller.abort();
+  }
+  abortControllers.clear();
 }
