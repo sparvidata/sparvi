@@ -891,8 +891,8 @@ def init_metadata_task_manager():
 
 
 def init_automation_system():
-    """Initialize the automation system - UPDATED VERSION"""
-    logger.info("Starting automation system initialization...")
+    """Initialize the simplified automation system - UPDATED VERSION"""
+    logger.info("🚀 Starting simplified automation system initialization...")
 
     try:
         # Import the app_hooks functions you're already using
@@ -900,49 +900,49 @@ def init_automation_system():
         from core.automation.events import set_event_handler_supabase
         from core.storage.supabase_manager import SupabaseManager
 
-        logger.info("Calling initialize_automation_system()...")
+        logger.info("Calling initialize_automation_system() with simplified scheduler...")
         automation_success = initialize_automation_system()
 
-        logger.info(f"Automation initialization result: {automation_success}")
+        logger.info(f"Simplified automation initialization result: {automation_success}")
 
         if automation_success:
-            logger.info("Automation system started successfully")
+            logger.info("✅ Simplified automation system started successfully")
 
             # Set up event handler with Supabase (this was missing before)
             logger.info("Setting up automation event handler...")
             try:
                 supabase_manager = SupabaseManager()
                 set_event_handler_supabase(supabase_manager)
-                logger.info("Automation event handler configured")
+                logger.info("✅ Automation event handler configured")
             except Exception as event_error:
-                logger.error(f"Error setting up event handler: {str(event_error)}")
+                logger.error(f"❌ Error setting up event handler: {str(event_error)}")
 
             # Integrate with existing metadata system
             logger.info("Integrating automation with metadata system...")
             integration_success = integrate_with_metadata_system()
 
             if integration_success:
-                logger.info("Automation integrated with metadata system")
+                logger.info("✅ Automation integrated with metadata system")
             else:
-                logger.warning("Automation metadata integration failed")
+                logger.warning("⚠️  Automation metadata integration failed")
 
             return True
         else:
-            logger.error("Automation system failed to start")
+            logger.error("❌ Simplified automation system failed to start")
             return False
 
     except ImportError as e:
-        logger.error(f"Import error in automation system: {str(e)}")
+        logger.error(f"❌ Import error in automation system: {str(e)}")
         logger.error("This usually means missing dependencies or module path issues")
         logger.error(traceback.format_exc())
         return False
     except Exception as e:
-        logger.error(f"Unexpected error initializing automation system: {str(e)}")
+        logger.error(f"❌ Unexpected error initializing automation system: {str(e)}")
         logger.error(traceback.format_exc())
         return False
 
     finally:
-        logger.info("Automation system initialization complete")
+        logger.info("📋 Simplified automation system initialization complete")
 
 
 def delayed_initialization():

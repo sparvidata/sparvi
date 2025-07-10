@@ -19,17 +19,17 @@ def initialize_automation_system():
     try:
         global _automation_service
 
-        # Import automation service
+        # Import automation service - UPDATED to use new simplified system
         from core.automation.service import automation_service
         _automation_service = automation_service
 
-        logger.info("Starting automation system...")
+        logger.info("Starting simplified automation system...")
 
-        # Start the automation service
+        # Start the automation service with new scheduler
         success = _automation_service.start()
 
         if success:
-            logger.info("Automation system started successfully")
+            logger.info("✅ Simplified automation system started successfully")
 
             # Only register signal handlers if we're in the main thread
             try:
@@ -50,12 +50,12 @@ def initialize_automation_system():
                 atexit.register(cleanup_automation_system)
 
         else:
-            logger.warning("Automation system failed to start")
+            logger.warning("❌ Simplified automation system failed to start")
 
         return success
 
     except Exception as e:
-        logger.error(f"Error initializing automation system: {str(e)}")
+        logger.error(f"Error initializing simplified automation system: {str(e)}")
         return False
 
 
@@ -68,9 +68,9 @@ def cleanup_automation_system():
         global _automation_service
 
         if _automation_service and _automation_service.is_running():
-            logger.info("Shutting down automation system...")
+            logger.info("Shutting down simplified automation system...")
             _automation_service.stop()
-            logger.info("Automation system shutdown complete")
+            logger.info("✅ Simplified automation system shutdown complete")
 
     except Exception as e:
         logger.error(f"Error during automation cleanup: {str(e)}")
@@ -103,8 +103,9 @@ def get_automation_health():
 
         return {
             "healthy": healthy,
-            "message": "Automation system is healthy" if healthy else "Automation system has issues",
-            "status": status
+            "message": "Simplified automation system is healthy" if healthy else "Simplified automation system has issues",
+            "status": status,
+            "version": "simplified_user_schedule"
         }
 
     except Exception as e:
@@ -128,13 +129,13 @@ def restart_automation_system():
             logger.error("Automation service not initialized")
             return False
 
-        logger.info("Restarting automation system...")
+        logger.info("Restarting simplified automation system...")
         success = _automation_service.restart()
 
         if success:
-            logger.info("Automation system restarted successfully")
+            logger.info("✅ Simplified automation system restarted successfully")
         else:
-            logger.error("Failed to restart automation system")
+            logger.error("❌ Failed to restart simplified automation system")
 
         return success
 
@@ -145,9 +146,38 @@ def restart_automation_system():
 
 def _signal_handler(signum, frame):
     """Handle shutdown signals"""
-    logger.info(f"Received signal {signum}, shutting down automation system...")
+    logger.info(f"Received signal {signum}, shutting down simplified automation system...")
     cleanup_automation_system()
     sys.exit(0)
+
+
+# Integration with existing metadata system
+def integrate_with_metadata_system():
+    """
+    Integrate automation system with existing metadata task manager
+    Call this after both systems are initialized
+    """
+    try:
+        from core.metadata.manager import MetadataTaskManager
+        from core.automation.events import set_event_handler_supabase
+        from core.storage.supabase_manager import SupabaseManager
+
+        # Get metadata task manager instance
+        metadata_manager = MetadataTaskManager.get_instance()
+
+        # Set up automation event handler with Supabase
+        supabase_manager = SupabaseManager()
+        set_event_handler_supabase(supabase_manager)
+
+        logger.info("✅ Simplified automation system integrated with metadata system")
+        return True
+
+    except Exception as e:
+        logger.error(f"Error integrating automation with metadata system: {str(e)}")
+        logger.error(traceback.format_exc())
+        # Don't fail the entire startup - just log and continue
+        logger.warning("Continuing automation startup without metadata integration")
+        return False
 
 
 # Health check endpoint function
@@ -180,83 +210,18 @@ def automation_control_endpoint(action: str):
         success = restart_automation_system()
         return {
             "success": success,
-            "message": "Automation system restarted" if success else "Failed to restart automation system"
+            "message": "Simplified automation system restarted" if success else "Failed to restart simplified automation system"
         }
     elif action == "status":
         return get_automation_health()
     elif action == "stop":
         cleanup_automation_system()
-        return {"success": True, "message": "Automation system stopped"}
+        return {"success": True, "message": "Simplified automation system stopped"}
     elif action == "start":
         success = initialize_automation_system()
         return {
             "success": success,
-            "message": "Automation system started" if success else "Failed to start automation system"
+            "message": "Simplified automation system started" if success else "Failed to start simplified automation system"
         }
     else:
         return {"success": False, "message": f"Unknown action: {action}"}
-
-
-# Integration with existing metadata system
-def integrate_with_metadata_system():
-    """
-    Integrate automation system with existing metadata task manager
-    Call this after both systems are initialized
-    """
-    try:
-        from core.metadata.manager import MetadataTaskManager
-        from core.automation.events import set_event_handler_supabase
-        from core.storage.supabase_manager import SupabaseManager
-
-        # Get metadata task manager instance
-        metadata_manager = MetadataTaskManager.get_instance()
-
-        # Set up automation event handler with Supabase
-        supabase_manager = SupabaseManager()
-        set_event_handler_supabase(supabase_manager)
-
-        logger.info("Automation system integrated with metadata system")
-        return True
-
-    except Exception as e:
-        logger.error(f"Error integrating automation with metadata system: {str(e)}")
-        logger.error(traceback.format_exc())  # Add full traceback
-        # Don't fail the entire startup - just log and continue
-        logger.warning("Continuing automation startup without metadata integration")
-        return False
-
-
-# Example usage in app.py:
-"""
-from core.utils.app_hooks import initialize_automation_system, integrate_with_metadata_system
-
-# After creating Flask app and initializing other systems
-def create_app():
-    app = Flask(__name__)
-
-    # ... other initialization ...
-
-    # Initialize automation system
-    initialize_automation_system()
-
-    # Integrate with metadata system
-    integrate_with_metadata_system()
-
-    # Add health check endpoint
-    @app.route('/health/automation')
-    def automation_health():
-        return jsonify(automation_health_endpoint())
-
-    # Add admin control endpoint
-    @app.route('/admin/automation/<action>', methods=['POST'])
-    @token_required  # Your auth decorator
-    def automation_control(current_user, organization_id, action):
-        # Check if user is admin
-        if not user_is_admin(current_user):
-            return jsonify({"error": "Insufficient permissions"}), 403
-
-        result, status_code = automation_control_endpoint(action)
-        return jsonify(result), status_code
-
-    return app
-"""

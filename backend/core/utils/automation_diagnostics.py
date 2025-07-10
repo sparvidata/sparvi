@@ -1,3 +1,5 @@
+# backend/core/utils/automation_diagnostics.py
+
 import logging
 import traceback
 from datetime import datetime, timezone, timedelta
@@ -132,8 +134,7 @@ class AutomationDiagnosticUtility:
                     })
 
             # Calculate failure rate
-            total_finished = analysis["jobs_by_status"].get("completed", 0) + analysis["jobs_by_status"].get("failed",
-                                                                                                             0)
+            total_finished = analysis["jobs_by_status"].get("completed", 0) + analysis["jobs_by_status"].get("failed", 0)
             if total_finished > 0:
                 analysis["failure_rate"] = analysis["jobs_by_status"].get("failed", 0) / total_finished
 
@@ -323,6 +324,15 @@ class AutomationDiagnosticUtility:
         issues = []
 
         try:
+            # Check for no job records at all
+            if job_analysis.get("total_jobs", 0) == 0:
+                issues.append({
+                    "type": "no_automation_jobs",
+                    "severity": "critical",
+                    "description": "No automation jobs found - scheduler may not be creating job records",
+                    "details": {"total_jobs": 0}
+                })
+
             # High failure rate
             failure_rate = job_analysis.get("failure_rate", 0)
             if failure_rate > 0.8:  # More than 80% failure rate
@@ -373,8 +383,7 @@ class AutomationDiagnosticUtility:
                 })
 
             # All jobs failing (100% failure rate)
-            if job_analysis.get("total_jobs", 0) > 0 and job_analysis.get("jobs_by_status", {}).get("completed",
-                                                                                                    0) == 0:
+            if job_analysis.get("total_jobs", 0) > 0 and job_analysis.get("jobs_by_status", {}).get("completed", 0) == 0:
                 issues.append({
                     "type": "all_jobs_failing",
                     "severity": "critical",
@@ -398,7 +407,21 @@ class AutomationDiagnosticUtility:
             for issue in issues:
                 issue_type = issue.get("type")
 
-                if issue_type == "high_failure_rate" or issue_type == "all_jobs_failing":
+                if issue_type == "no_automation_jobs":
+                    recommendations.append({
+                        "priority": "critical",
+                        "action": "check_scheduler_initialization",
+                        "description": "Check if automation scheduler is properly initialized and running",
+                        "steps": [
+                            "Verify automation service is started in app.py",
+                            "Check scheduler logs for initialization errors",
+                            "Verify automation_connection_configs table has proper data",
+                            "Test manual job creation via API",
+                            "Check if automation is enabled globally and for this connection"
+                        ]
+                    })
+
+                elif issue_type == "high_failure_rate" or issue_type == "all_jobs_failing":
                     recommendations.append({
                         "priority": "critical",
                         "action": "investigate_job_failures",
@@ -550,6 +573,39 @@ class AutomationDiagnosticUtility:
 
             except Exception as e:
                 test_results["tests"]["run_creation"] = {
+                    "status": "failed",
+                    "error": str(e)
+                }
+
+            # Test automation event creation
+            try:
+                test_event = {
+                    "id": f"test_event_{int(datetime.now().timestamp())}",
+                    "event_type": "test_event",
+                    "automation_type": "test",
+                    "connection_id": connection_id,
+                    "event_data": {"test": True},
+                    "created_at": datetime.now(timezone.utc).isoformat()
+                }
+
+                response = self.supabase.supabase.table("automation_events").insert(test_event).execute()
+
+                if response.data:
+                    # Clean up test event
+                    self.supabase.supabase.table("automation_events").delete().eq("id", test_event["id"]).execute()
+
+                    test_results["tests"]["event_creation"] = {
+                        "status": "success",
+                        "message": "Successfully created and deleted test event"
+                    }
+                else:
+                    test_results["tests"]["event_creation"] = {
+                        "status": "failed",
+                        "message": "Failed to create test event"
+                    }
+
+            except Exception as e:
+                test_results["tests"]["event_creation"] = {
                     "status": "failed",
                     "error": str(e)
                 }
@@ -726,12 +782,10 @@ class AutomationDiagnosticUtility:
                 fix_results["message"] = "All attempted fixes were successful"
             elif len(fix_results["fixes_successful"]) > len(fix_results["fixes_failed"]):
                 fix_results["overall_result"] = "partial_success"
-                fix_results[
-                    "message"] = f"{len(fix_results['fixes_successful'])} fixes successful, {len(fix_results['fixes_failed'])} failed"
+                fix_results["message"] = f"{len(fix_results['fixes_successful'])} fixes successful, {len(fix_results['fixes_failed'])} failed"
             else:
                 fix_results["overall_result"] = "failed"
-                fix_results[
-                    "message"] = f"Most fixes failed ({len(fix_results['fixes_failed'])} failed, {len(fix_results['fixes_successful'])} successful)"
+                fix_results["message"] = f"Most fixes failed ({len(fix_results['fixes_failed'])} failed, {len(fix_results['fixes_successful'])} successful)"
 
             return fix_results
 

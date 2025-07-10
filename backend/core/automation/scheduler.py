@@ -126,15 +126,16 @@ class AutomationScheduler:
                 time.sleep(5)
 
     def _check_due_jobs(self):
-        """FIXED: Check for due jobs across all automation types - ASSESSMENT ONLY"""
+        """ENHANCED: Check for due jobs with better tracking and logging"""
         try:
-            logger.debug("=== Starting automation assessment cycle ===")
+            logger.info("=== Starting automation assessment cycle ===")
 
             assessment_results = {
                 "checked_connections": 0,
                 "jobs_scheduled": 0,
                 "jobs_skipped": 0,
-                "errors": []
+                "errors": [],
+                "assessment_type": "check_only"  # Important: This is ASSESSMENT ONLY
             }
 
             # Get all connections with automation enabled
@@ -143,8 +144,10 @@ class AutomationScheduler:
                 .execute()
 
             if not response.data:
-                logger.debug("No automation configs found")
+                logger.info("No automation configs found")
                 return
+
+            logger.info(f"Found {len(response.data)} automation configurations to assess")
 
             for config in response.data:
                 connection_id = config["connection_id"]
@@ -163,6 +166,7 @@ class AutomationScheduler:
 
                         if scheduled:
                             assessment_results["jobs_scheduled"] += 1
+                            logger.info(f"SCHEDULED: {automation_type} for {connection_id}")
                         else:
                             assessment_results["jobs_skipped"] += 1
 
@@ -173,15 +177,21 @@ class AutomationScheduler:
                         "error": str(conn_error)
                     })
 
-            # Log assessment summary
+            # CRITICAL: Log assessment summary with clear messaging
             if assessment_results["jobs_scheduled"] > 0:
-                logger.info(f"Assessment complete: {assessment_results['jobs_scheduled']} jobs scheduled, "
+                logger.info(f"✓ Assessment complete: {assessment_results['jobs_scheduled']} jobs SCHEDULED, "
                             f"{assessment_results['jobs_skipped']} skipped, "
                             f"{assessment_results['checked_connections']} connections checked")
             else:
-                logger.debug(f"Assessment complete: No jobs scheduled, "
-                             f"{assessment_results['jobs_skipped']} skipped, "
-                             f"{assessment_results['checked_connections']} connections checked")
+                logger.info(f"✓ Assessment complete: No jobs scheduled (intervals not elapsed), "
+                            f"{assessment_results['jobs_skipped']} skipped, "
+                            f"{assessment_results['checked_connections']} connections checked")
+
+            # Store assessment results for debugging
+            try:
+                self._store_assessment_results(assessment_results)
+            except Exception as e:
+                logger.warning(f"Could not store assessment results: {str(e)}")
 
         except Exception as e:
             logger.error(f"Error in job assessment cycle: {str(e)}")
@@ -240,14 +250,12 @@ class AutomationScheduler:
 
     def _should_schedule_job_fixed(self, connection_id: str, job_type: str, interval_hours: int) -> bool:
         """
-        FIXED: Properly check if job should be scheduled based on user-defined intervals
-
-        This is the core fix - ensures jobs only run at user-configured intervals
+        ENHANCED: Check if job should be scheduled with detailed logging
         """
         try:
             now = datetime.now(timezone.utc)
 
-            # Step 1: NEVER schedule if there's already a running job
+            # STEP 1: Check for running jobs (NEVER schedule if running)
             running_response = self.supabase.supabase.table("automation_jobs") \
                 .select("id, started_at") \
                 .eq("connection_id", connection_id) \
@@ -256,9 +264,10 @@ class AutomationScheduler:
                 .execute()
 
             if running_response.data and len(running_response.data) > 0:
+                logger.debug(f"{job_type} skipped: job currently running")
                 return False
 
-            # Step 2: NEVER schedule if there's already a scheduled job waiting
+            # STEP 2: Check for scheduled jobs (NEVER schedule if already scheduled)
             scheduled_response = self.supabase.supabase.table("automation_jobs") \
                 .select("id, scheduled_at") \
                 .eq("connection_id", connection_id) \
@@ -267,9 +276,10 @@ class AutomationScheduler:
                 .execute()
 
             if scheduled_response.data and len(scheduled_response.data) > 0:
+                logger.debug(f"{job_type} skipped: job already scheduled")
                 return False
 
-            # Step 3: Check when we last completed a job of this type
+            # STEP 3: Check when we last completed a job
             completed_response = self.supabase.supabase.table("automation_jobs") \
                 .select("id, completed_at, scheduled_at, status") \
                 .eq("connection_id", connection_id) \
@@ -281,16 +291,14 @@ class AutomationScheduler:
 
             if not completed_response.data or len(completed_response.data) == 0:
                 # No previous jobs - schedule the first one
-                logger.info(f"No previous {job_type} jobs found for {connection_id}, scheduling first run")
+                logger.info(f"{job_type}: No previous jobs found, scheduling first run")
                 return True
 
             last_job = completed_response.data[0]
-
-            # Use completed_at first, fall back to scheduled_at if needed
             last_completion_str = last_job.get("completed_at") or last_job.get("scheduled_at")
 
             if not last_completion_str:
-                logger.warning(f"No completion time found for last {job_type} job, scheduling new one")
+                logger.info(f"{job_type}: No completion time found, scheduling new job")
                 return True
 
             try:
@@ -300,7 +308,8 @@ class AutomationScheduler:
                 should_schedule = hours_elapsed >= interval_hours
 
                 if should_schedule:
-                    logger.info(f"{job_type}: {hours_elapsed:.1f}h elapsed >= {interval_hours}h interval, scheduling")
+                    logger.info(
+                        f"{job_type}: {hours_elapsed:.1f}h elapsed >= {interval_hours}h interval → SCHEDULING")
                 else:
                     remaining_hours = interval_hours - hours_elapsed
                     logger.debug(f"{job_type}: {hours_elapsed:.1f}h elapsed < {interval_hours}h interval, "
@@ -309,12 +318,12 @@ class AutomationScheduler:
                 return should_schedule
 
             except Exception as time_error:
-                logger.warning(f"Error parsing completion time for {job_type}: {str(time_error)}")
-                return True  # Schedule if we can't determine last run time
+                logger.warning(f"{job_type}: Error parsing completion time, scheduling new job: {str(time_error)}")
+                return True
 
         except Exception as e:
             logger.error(f"Error checking if {job_type} job should be scheduled: {str(e)}")
-            return False  # Don't schedule if we can't determine safely
+            return False
 
     def _cleanup_zombie_jobs(self):
         """FIXED: More conservative zombie job cleanup"""
@@ -545,16 +554,19 @@ class AutomationScheduler:
                 del self.active_jobs[job_id]
 
     def _execute_metadata_refresh_fixed(self, job_id: str, connection_id: str, config: Dict[str, Any]):
-        """FIXED: Execute metadata refresh with better error handling and validation"""
+        """ENHANCED: Execute metadata refresh with better tracking"""
         run_id = None
         metadata_task_id = None
 
         try:
+            logger.info(f"Starting metadata refresh job {job_id} for connection {connection_id}")
+
             # Update job status to running
             self._update_job_status(job_id, "running", started_at=datetime.now(timezone.utc).isoformat())
 
             # Create automation run record
             run_id = self._create_automation_run(job_id, connection_id, "metadata_refresh")
+            logger.info(f"Created automation run {run_id}")
 
             # Validate metadata task manager
             if not self.metadata_task_manager:
@@ -565,26 +577,22 @@ class AutomationScheduler:
                 connection = self.supabase.get_connection(connection_id)
                 if not connection:
                     raise Exception(f"Connection {connection_id} not found")
-
-                # Test basic connectivity
-                logger.info(f"Connection {connection_id} validated: {connection.get('name')}")
+                logger.info(f"✓ Connection validated: {connection.get('name')}")
             except Exception as conn_error:
                 raise Exception(f"Connection validation failed: {str(conn_error)}")
 
             # Use conservative collection parameters
             refresh_types = config.get("types", ["tables", "columns"])
-
-            # Be more conservative with parameters to reduce failures
             collection_params = {
-                "depth": "low",  # Use low depth to reduce complexity
-                "table_limit": 20,  # Lower limit to reduce load
+                "depth": "low",
+                "table_limit": 20,
                 "automation_trigger": True,
                 "automation_job_id": job_id,
                 "refresh_types": refresh_types,
-                "timeout_minutes": 15  # Shorter timeout for individual collection
+                "timeout_minutes": 15
             }
 
-            logger.info(f"Starting metadata collection with params: {collection_params}")
+            logger.info(f"Starting metadata collection: {collection_params}")
 
             # Submit collection task
             metadata_task_id = self.metadata_task_manager.submit_collection_task(
@@ -593,9 +601,9 @@ class AutomationScheduler:
                 priority="medium"
             )
 
-            logger.info(f"Submitted metadata collection task {metadata_task_id}")
+            logger.info(f"Submitted metadata task {metadata_task_id}")
 
-            # Wait for completion with conservative timeout
+            # Wait for completion
             task_completed = self._wait_for_task_completion(metadata_task_id, timeout_minutes=20)
 
             if task_completed:
@@ -605,7 +613,7 @@ class AutomationScheduler:
                     "task_result": task_status.get("result", {}),
                     "refresh_types": refresh_types,
                     "success": True,
-                    "automation_version": "fixed"
+                    "automation_version": "enhanced"
                 }
 
                 self._update_job_status(
@@ -619,8 +627,19 @@ class AutomationScheduler:
 
                 logger.info(f"Successfully completed metadata refresh job {job_id}")
 
+                # CRITICAL: Publish automation event
+                try:
+                    from core.automation.events import AutomationEventType, publish_automation_event
+                    publish_automation_event(
+                        event_type=AutomationEventType.METADATA_REFRESHED,
+                        data=results,
+                        connection_id=connection_id
+                    )
+                    logger.info(f"📡 Published metadata refresh event")
+                except Exception as event_error:
+                    logger.warning(f"Could not publish automation event: {str(event_error)}")
+
             else:
-                # Task didn't complete in time
                 error_msg = f"Metadata collection task {metadata_task_id} did not complete within 20 minutes"
                 self._update_job_status(
                     job_id, "failed",
@@ -646,6 +665,17 @@ class AutomationScheduler:
 
             if run_id:
                 self._update_automation_run(run_id, "failed", {"error": error_msg})
+
+            # Publish failure event
+            try:
+                from core.automation.events import AutomationEventType, publish_automation_event
+                publish_automation_event(
+                    event_type=AutomationEventType.JOB_FAILED,
+                    data={"job_id": job_id, "job_type": "metadata_refresh", "error": error_msg},
+                    connection_id=connection_id
+                )
+            except Exception:
+                pass  # Don't fail the cleanup
 
         finally:
             # Clean up
@@ -1085,3 +1115,54 @@ class AutomationScheduler:
                 "timestamp": datetime.now(timezone.utc).isoformat(),
                 "version": "fixed"
             }
+
+    def _store_assessment_results(self, results: Dict[str, Any]):
+        """Store assessment results for debugging (not creating jobs)"""
+        try:
+            assessment_record = {
+                "assessment_type": "scheduler_check",
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "connections_checked": results["checked_connections"],
+                "jobs_scheduled": results["jobs_scheduled"],
+                "jobs_skipped": results["jobs_skipped"],
+                "errors": results["errors"],
+                "assessment_data": results
+            }
+
+            # Store in a debug table or log (don't create actual jobs)
+            logger.debug(f"Assessment results: {assessment_record}")
+
+            # Optional: Store in a debug table
+            # self.supabase.supabase.table("automation_assessments").insert(assessment_record).execute()
+
+        except Exception as e:
+            logger.warning(f"Error storing assessment results: {str(e)}")
+
+    def _update_job_status(self, job_id: str, status: str, **kwargs):
+        """ENHANCED: Update job status with better logging"""
+        try:
+            update_data = {"status": status}
+            update_data.update(kwargs)
+
+            # Always set completed_at for failed/completed jobs
+            if status in ["completed", "failed"] and "completed_at" not in update_data:
+                update_data["completed_at"] = datetime.now(timezone.utc).isoformat()
+
+            response = self.supabase.supabase.table("automation_jobs") \
+                .update(update_data) \
+                .eq("id", job_id) \
+                .execute()
+
+            if not response.data:
+                logger.warning(f" No data returned when updating job {job_id} status to {status}")
+            else:
+                if status == "completed":
+                    logger.info(f"Updated job {job_id} status to {status}")
+                elif status == "failed":
+                    logger.error(f"Updated job {job_id} status to {status}")
+                else:
+                    logger.info(f"Updated job {job_id} status to {status}")
+
+        except Exception as e:
+            logger.error(f"Error updating job status for {job_id}: {str(e)}")
+            # Don't raise - we don't want job status update failures to crash the scheduler
