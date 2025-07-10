@@ -40,92 +40,124 @@ class AutomationService:
             # Set up event handler with Supabase
             set_event_handler_supabase(self.supabase)
 
-            logger.info("Simplified AutomationService initialized")
+            logger.info("AutomationService initialized successfully")
         except Exception as e:
             logger.error(f"Error initializing AutomationService: {str(e)}")
             self.initialization_error = str(e)
             # Don't raise - allow service to exist but track the error
 
     def start(self):
-        """Start the automation service with robust error handling"""
+        """Start the automation service with improved error handling"""
         try:
             if self.initialization_error:
                 logger.error(f"Cannot start automation service - initialization error: {self.initialization_error}")
                 return False
 
             if self.running:
-                logger.warning("Automation service already running")
+                logger.info("Automation service already running")
                 return True
 
-            # Environment protection
+            # FIXED: More flexible environment handling
             environment = os.getenv("ENVIRONMENT", "development")
-            scheduler_enabled = os.getenv("ENABLE_AUTOMATION_SCHEDULER", "false").lower() == "true"
 
-            if environment == "development" and not scheduler_enabled:
-                logger.info("Simplified automation scheduler disabled in development environment")
-                logger.info("Set ENABLE_AUTOMATION_SCHEDULER=true to enable in development")
+            # Check if explicitly disabled
+            if os.getenv("DISABLE_AUTOMATION", "false").lower() == "true":
+                logger.info("Automation explicitly disabled via DISABLE_AUTOMATION environment variable")
                 return False
 
-            # Check if automation is globally enabled
+            # Allow enabling in development
+            scheduler_enabled = os.getenv("ENABLE_AUTOMATION_SCHEDULER", "false").lower() == "true"
+
+            # FIXED: Less restrictive logic - allow in development if explicitly enabled
+            if environment == "development" and not scheduler_enabled:
+                logger.info("Automation scheduler disabled in development environment")
+                logger.info("Set ENABLE_AUTOMATION_SCHEDULER=true to enable automation in development")
+                return False
+            elif environment == "production":
+                # In production, default to enabled unless explicitly disabled
+                scheduler_enabled = True
+                logger.info("Automation enabled in production environment")
+
+            if not scheduler_enabled:
+                logger.info(f"Automation scheduler not enabled for environment: {environment}")
+                return False
+
+            # Check if automation is globally enabled (with better error handling)
             try:
                 global_config = self._get_global_config()
                 if not global_config.get("automation_enabled", True):
-                    logger.info("Global automation is disabled, not starting service")
+                    logger.info("Global automation is disabled in configuration")
                     return False
+
+                logger.info("Global automation is enabled")
             except Exception as config_error:
-                logger.warning(f"Could not check global config, proceeding anyway: {str(config_error)}")
+                logger.warning(f"Could not check global config, using defaults: {str(config_error)}")
                 global_config = {"automation_enabled": True, "max_concurrent_jobs": 3}
 
-            # Initialize and start simplified scheduler
+            # FIXED: Better scheduler initialization with error handling
             try:
                 max_workers = global_config.get("max_concurrent_jobs", 3)
+                logger.info(f"Starting automation scheduler with {max_workers} max workers")
+
                 self.scheduler = SimplifiedAutomationScheduler(max_workers=max_workers)
+
+                # Test scheduler initialization before marking as started
+                if not self.scheduler:
+                    raise Exception("Failed to create scheduler instance")
+
                 self.scheduler.start()
 
+                # Verify scheduler actually started
+                if hasattr(self.scheduler, 'running') and not self.scheduler.running:
+                    raise Exception("Scheduler failed to start properly")
+
                 self.running = True
-                logger.info(f"Simplified automation service started successfully in {environment} environment")
+                logger.info(f"Automation service started successfully in {environment} environment")
                 return True
 
             except Exception as scheduler_error:
-                logger.error(f"Failed to start scheduler: {str(scheduler_error)}")
+                logger.error(f"Failed to start automation scheduler: {str(scheduler_error)}")
                 self.scheduler = None
                 return False
 
         except Exception as e:
-            logger.error(f"Error starting simplified automation service: {str(e)}")
+            logger.error(f"Error starting automation service: {str(e)}")
             return False
 
     def stop(self):
         """Stop the automation service with proper cleanup"""
         try:
             if not self.running:
-                logger.info("Automation service not running")
+                logger.debug("Automation service not running")
                 return True
 
             # Stop scheduler
             if self.scheduler:
                 try:
+                    logger.info("Stopping automation scheduler...")
                     self.scheduler.stop()
-                    logger.info("Scheduler stopped successfully")
+                    logger.info("Automation scheduler stopped successfully")
                 except Exception as e:
                     logger.error(f"Error stopping scheduler: {str(e)}")
                 finally:
                     self.scheduler = None
 
             self.running = False
-            logger.info("Simplified automation service stopped successfully")
+            logger.info("Automation service stopped successfully")
             return True
 
         except Exception as e:
-            logger.error(f"Error stopping simplified automation service: {str(e)}")
+            logger.error(f"Error stopping automation service: {str(e)}")
             return False
 
     def restart(self):
         """Restart the automation service"""
-        logger.info("Restarting simplified automation service")
-        self.stop()
-        time.sleep(1)  # Brief pause
-        return self.start()
+        logger.info("Restarting automation service...")
+        success = self.stop()
+        if success:
+            time.sleep(1)  # Brief pause
+            return self.start()
+        return False
 
     def is_running(self) -> bool:
         """Check if the automation service is running"""
@@ -140,6 +172,8 @@ class AutomationService:
             "active_jobs": 0,
             "scheduler_type": "simplified_user_schedule",
             "initialization_error": self.initialization_error,
+            "environment": os.getenv("ENVIRONMENT", "development"),
+            "explicitly_enabled": os.getenv("ENABLE_AUTOMATION_SCHEDULER", "false").lower() == "true",
             "error": None
         }
 
@@ -160,14 +194,15 @@ class AutomationService:
 
         except Exception as e:
             status["error"] = str(e)
-            logger.error(f"Error getting simplified automation service status: {str(e)}")
+            logger.error(f"Error getting automation service status: {str(e)}")
 
         return status
 
     def _get_global_config(self) -> dict:
-        """Get global automation configuration with error handling"""
+        """Get global automation configuration with improved error handling"""
         try:
             if not self.supabase:
+                logger.warning("No Supabase manager available, using default config")
                 return {"automation_enabled": True, "max_concurrent_jobs": 3}
 
             response = self.supabase.supabase.table("automation_global_config") \
@@ -177,9 +212,12 @@ class AutomationService:
                 .execute()
 
             if response.data and len(response.data) > 0:
-                return response.data[0]
+                config = response.data[0]
+                logger.debug("Retrieved global automation configuration from database")
+                return config
 
             # Return default config if none exists
+            logger.info("No global automation config found, using defaults")
             return {
                 "automation_enabled": True,
                 "max_concurrent_jobs": 3,
@@ -187,7 +225,7 @@ class AutomationService:
             }
 
         except Exception as e:
-            logger.error(f"Error getting global config: {str(e)}")
+            logger.warning(f"Error getting global config, using defaults: {str(e)}")
             return {"automation_enabled": True, "max_concurrent_jobs": 3}
 
     def update_global_config(self, config: dict):
@@ -200,18 +238,18 @@ class AutomationService:
 
             # If automation was disabled, stop the service
             if current_enabled and not new_enabled:
-                logger.info("Automation disabled, stopping simplified service")
+                logger.info("Automation disabled in config, stopping service")
                 self.stop()
 
             # If automation was enabled, start the service
             elif not current_enabled and new_enabled:
-                logger.info("Automation enabled, starting simplified service")
+                logger.info("Automation enabled in config, starting service")
                 self.start()
 
             # If max workers changed, restart scheduler
             elif (self.running and
                   current_config.get("max_concurrent_jobs") != config.get("max_concurrent_jobs")):
-                logger.info("Max concurrent jobs changed, restarting simplified scheduler")
+                logger.info("Max concurrent jobs changed, restarting scheduler")
                 self.restart()
 
         except Exception as e:
@@ -253,15 +291,15 @@ def get_automation_service_status():
 def initialize_automation_on_startup():
     """Initialize automation service when the application starts"""
     try:
-        logger.info("Initializing simplified automation service on startup")
+        logger.info("Initializing automation service on startup...")
 
         # Start the service
         success = automation_service.start()
 
         if success:
-            logger.info("Simplified automation service started successfully on startup")
+            logger.info("Automation service started successfully on startup")
         else:
-            logger.warning("Simplified automation service did not start on startup")
+            logger.warning("Automation service did not start on startup (this may be expected in development)")
 
         return success
 
@@ -274,9 +312,9 @@ def initialize_automation_on_startup():
 def cleanup_automation_on_shutdown():
     """Clean up automation service when the application shuts down"""
     try:
-        logger.info("Cleaning up simplified automation service on shutdown")
+        logger.info("Cleaning up automation service on shutdown...")
         automation_service.stop()
-        logger.info("Simplified automation service cleaned up successfully")
+        logger.info("Automation service cleaned up successfully")
 
     except Exception as e:
         logger.error(f"Error cleaning up automation on shutdown: {str(e)}")
@@ -288,19 +326,34 @@ def automation_health_check():
     try:
         status = automation_service.get_status()
 
-        # Service should be running if globally enabled
-        if status["global_enabled"] and not status["running"]:
+        # FIXED: More nuanced health checking
+        environment = status.get("environment", "development")
+        explicitly_enabled = status.get("explicitly_enabled", False)
+        global_enabled = status.get("global_enabled", True)
+        running = status.get("running", False)
+        scheduler_active = status.get("scheduler_active", False)
+
+        # In development, it's OK if automation is not running unless explicitly enabled
+        if environment == "development" and not explicitly_enabled:
+            return {
+                "healthy": True,
+                "message": "Automation disabled in development (set ENABLE_AUTOMATION_SCHEDULER=true to enable)",
+                "status": status
+            }
+
+        # Service should be running if globally enabled and environment allows it
+        if global_enabled and explicitly_enabled and not running:
             return {
                 "healthy": False,
-                "message": "Automation is enabled but simplified service is not running",
+                "message": "Automation is enabled but service is not running",
                 "status": status
             }
 
         # If running, scheduler should be active
-        if status["running"] and not status["scheduler_active"]:
+        if running and not scheduler_active:
             return {
                 "healthy": False,
-                "message": "Simplified service is running but scheduler is not active",
+                "message": "Service is running but scheduler is not active",
                 "status": status
             }
 
@@ -314,7 +367,7 @@ def automation_health_check():
 
         return {
             "healthy": True,
-            "message": "Simplified automation service is healthy",
+            "message": "Automation service is healthy" if running else "Automation service is properly disabled",
             "status": status
         }
 

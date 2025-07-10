@@ -994,15 +994,39 @@ def init_automation_system():
 
 
 def delayed_initialization():
-    """Initialize background services with better error handling"""
+    """Initialize background services with comprehensive validation and better error handling"""
     try:
         logger.info("Starting delayed initialization of background services...")
 
         initialization_results = {
             "metadata_task_manager": False,
             "automation_system": False,
-            "performance_optimizations": False
+            "performance_optimizations": False,
+            "automation_validation": {}
         }
+
+        # Step 0: Validate automation configuration before attempting to start
+        try:
+            logger.info("Step 0: Validating automation configuration...")
+
+            # Import validation utilities
+            from core.utils.automation_config_validation import (
+                comprehensive_automation_validation,
+                log_validation_summary
+            )
+            from core.storage.supabase_manager import SupabaseManager
+
+            # Perform comprehensive validation
+            supabase_manager = SupabaseManager()
+            validation_results = comprehensive_automation_validation(supabase_manager)
+            initialization_results["automation_validation"] = validation_results
+
+            # Log validation summary
+            log_validation_summary(validation_results)
+
+        except Exception as validation_error:
+            logger.warning(f"Could not perform automation validation: {str(validation_error)}")
+            # Continue with initialization anyway
 
         # Step 1: Initialize metadata task manager
         try:
@@ -1014,28 +1038,50 @@ def delayed_initialization():
             supabase_manager = SupabaseManager()
             metadata_task_manager = MetadataTaskManager.get_instance(supabase_manager=supabase_manager)
 
-            logger.info("Metadata task manager initialized successfully")
-            initialization_results["metadata_task_manager"] = True
+            if metadata_task_manager:
+                logger.info("✓ Metadata task manager initialized successfully")
+                initialization_results["metadata_task_manager"] = True
+            else:
+                logger.warning("Metadata task manager initialization returned None")
 
         except Exception as e:
             logger.error(f"Failed to initialize metadata task manager: {str(e)}")
             # Continue with other initializations
 
         # Wait a moment before next step
-        time.sleep(2)
+        time.sleep(1)
 
-        # Step 2: Initialize automation system
+        # Step 2: Initialize automation system (with validation results)
         try:
             logger.info("Step 2: Initializing automation system...")
 
-            from core.utils.app_hooks import initialize_automation_system
-            automation_success = initialize_automation_system()
+            # Check if automation validation passed
+            validation_results = initialization_results.get("automation_validation", {})
+            can_start = validation_results.get("can_start_automation", False)
 
-            if automation_success:
-                logger.info("Automation system started successfully")
-                initialization_results["automation_system"] = True
+            if not can_start:
+                logger.info("Automation validation indicates system cannot start")
+                environment = validation_results.get("validation_checks", {}).get("environment", {}).get("details",
+                                                                                                         {}).get(
+                    "environment", "unknown")
+
+                if environment == "development":
+                    logger.info("This is expected in development environment unless ENABLE_AUTOMATION_SCHEDULER=true")
+                else:
+                    logger.warning("Automation system has configuration issues - check validation results above")
+
+                initialization_results["automation_system"] = False
             else:
-                logger.error("Automation system failed to start")
+                # Validation passed, attempt to start automation
+                from core.utils.app_hooks import initialize_automation_system
+                automation_success = initialize_automation_system()
+
+                if automation_success:
+                    logger.info("✓ Automation system started successfully")
+                    initialization_results["automation_system"] = True
+                else:
+                    logger.warning("Automation system failed to start despite passing validation")
+                    initialization_results["automation_system"] = False
 
         except Exception as e:
             logger.error(f"Failed to initialize automation system: {str(e)}")
@@ -1058,19 +1104,31 @@ def delayed_initialization():
         # Log final results
         logger.info("Background services initialization complete")
 
-        successful_services = sum(1 for success in initialization_results.values() if success)
-        total_services = len(initialization_results)
+        successful_services = sum(1 for success in initialization_results.values() if success is True)
+        total_services = len([k for k, v in initialization_results.items() if isinstance(v, bool)])
 
         logger.info(f"Initialization summary: {successful_services}/{total_services} services started successfully")
 
         for service, success in initialization_results.items():
-            status = "SUCCESS" if success else "FAILED"
-            logger.info(f"  {service}: {status}")
+            if isinstance(success, bool):
+                status = "SUCCESS" if success else "FAILED"
+                logger.info(f"  {service}: {status}")
 
-        # If automation system failed, provide guidance
+        # Provide guidance based on results
         if not initialization_results["automation_system"]:
-            logger.warning("Automation system is not running - check logs above")
-            logger.info("To enable automation in development, set ENABLE_AUTOMATION_SCHEDULER=true")
+            validation_results = initialization_results.get("automation_validation", {})
+            environment = validation_results.get("validation_checks", {}).get("environment", {}).get("details", {}).get(
+                "environment", "development")
+
+            if environment == "development":
+                logger.info("💡 To enable automation in development: set ENABLE_AUTOMATION_SCHEDULER=true")
+            else:
+                logger.warning("⚠️ Automation system failed to start - check configuration and logs above")
+                next_steps = validation_results.get("next_steps", [])
+                if next_steps:
+                    logger.info("Recommended next steps:")
+                    for step in next_steps:
+                        logger.info(f"  • {step}")
 
     except Exception as e:
         logger.error(f"Critical error in delayed initialization: {str(e)}")

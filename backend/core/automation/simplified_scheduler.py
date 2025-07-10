@@ -27,10 +27,16 @@ class SimplifiedAutomationScheduler:
         self.active_jobs = {}  # job_id -> Future mapping
 
         self.environment = os.getenv("ENVIRONMENT", "development")
-        self.scheduler_enabled = (
-                self.environment == "production" or
-                os.getenv("ENABLE_AUTOMATION_SCHEDULER", "false").lower() == "true"
-        )
+
+        # FIXED: More flexible environment logic
+        self.scheduler_enabled = True  # Default to enabled
+
+        # Check if explicitly disabled
+        if os.getenv("DISABLE_AUTOMATION", "false").lower() == "true":
+            self.scheduler_enabled = False
+        # In development, require explicit enabling
+        elif self.environment == "development":
+            self.scheduler_enabled = os.getenv("ENABLE_AUTOMATION_SCHEDULER", "false").lower() == "true"
 
         logger.info(
             f"Simplified Scheduler initialized - Environment: {self.environment}, Enabled: {self.scheduler_enabled}")
@@ -52,23 +58,30 @@ class SimplifiedAutomationScheduler:
             self.metadata_task_manager = None
 
     def start(self):
-        """Start the simplified scheduler"""
+        """Start the simplified scheduler with better error handling"""
         if not self.scheduler_enabled:
-            logger.info("Scheduler disabled for this environment")
+            logger.info(f"Scheduler disabled for environment: {self.environment}")
+            if self.environment == "development":
+                logger.info("Set ENABLE_AUTOMATION_SCHEDULER=true to enable in development")
             return
 
         if self.running:
             logger.warning("Scheduler already running")
             return
 
-        self.running = True
-        logger.info("Starting simplified automation scheduler")
+        try:
+            self.running = True
+            logger.info("Starting simplified automation scheduler...")
 
-        # Start scheduler thread
-        self.scheduler_thread = threading.Thread(target=self._run_scheduler, daemon=True)
-        self.scheduler_thread.start()
+            # Start scheduler thread
+            self.scheduler_thread = threading.Thread(target=self._run_scheduler, daemon=True)
+            self.scheduler_thread.start()
 
-        logger.info("Simplified automation scheduler started")
+            logger.info("✓ Simplified automation scheduler started successfully")
+        except Exception as e:
+            logger.error(f"Error starting scheduler: {str(e)}")
+            self.running = False
+            raise
 
     def stop(self):
         """Stop the automation scheduler"""
