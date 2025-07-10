@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useConnection } from '../../contexts/EnhancedConnectionContext';
 import { useUI } from '../../contexts/UIContext';
@@ -34,14 +34,26 @@ const AutomationPage = () => {
   const [automationJobs, setAutomationJobs] = useState([]);
   const [jobsLoading, setJobsLoading] = useState(true);
 
-  // Get all next run times for overview
-  const { nextRuns: allNextRuns, loading: nextRunsLoading, refresh: refreshNextRuns } = useNextRunTimes(null, {
+  // Memoize the hook options to prevent unnecessary re-renders
+  const nextRunsOptions = useMemo(() => ({
     refreshInterval: 120000, // 2 minutes for overview page to reduce API calls
-    enabled: globalConfig?.automation_enabled, // Only poll when automation is enabled
+    enabled: globalConfig?.automation_enabled || false, // Only poll when automation is enabled
     onError: (error) => {
-      console.warn('Error loading next runs for overview:', error);
+      // Only log significant errors, not every polling failure
+      if (error.consecutiveErrors >= 3) {
+        console.warn('Multiple consecutive errors loading next runs for overview:', error);
+      }
     }
-  });
+  }), [globalConfig?.automation_enabled]);
+
+  // Get all next run times for overview - now with memoized options
+  const {
+    nextRuns: allNextRuns,
+    loading: nextRunsLoading,
+    refresh: refreshNextRuns,
+    error: nextRunsError,
+    circuitBreakerOpen
+  } = useNextRunTimes(null, nextRunsOptions);
 
   // Set breadcrumbs
   useEffect(() => {
@@ -70,30 +82,49 @@ const AutomationPage = () => {
 
   // Load global automation config
   useEffect(() => {
+    let isMounted = true;
+
     const loadGlobalConfig = async () => {
       try {
         const response = await automationAPI.getGlobalConfig();
-        setGlobalConfig(response?.config || { automation_enabled: false });
+        if (isMounted) {
+          setGlobalConfig(response?.config || { automation_enabled: false });
+        }
       } catch (error) {
         console.error('Error loading global config:', error);
-        setGlobalConfig({ automation_enabled: false });
+        if (isMounted) {
+          setGlobalConfig({ automation_enabled: false });
+        }
       } finally {
-        setGlobalConfigLoading(false);
+        if (isMounted) {
+          setGlobalConfigLoading(false);
+        }
       }
     };
 
     loadGlobalConfig();
+
+    return () => {
+      isMounted = false;
+    };
   }, []);
 
-  // Load recent automation jobs
+  // Load recent automation jobs with proper cleanup
   useEffect(() => {
+    let isMounted = true;
+    let intervalId = null;
+
     const loadJobs = async () => {
       try {
+        if (!isMounted) return;
+
         setJobsLoading(true);
         const response = await automationAPI.getJobs({
           limit: 20,
           forceFresh: true
         });
+
+        if (!isMounted) return;
 
         if (response?.jobs) {
           setAutomationJobs(response.jobs);
@@ -104,20 +135,35 @@ const AutomationPage = () => {
         }
       } catch (error) {
         console.error('Error loading automation jobs:', error);
-        setAutomationJobs([]);
+        if (isMounted) {
+          setAutomationJobs([]);
+        }
       } finally {
-        setJobsLoading(false);
+        if (isMounted) {
+          setJobsLoading(false);
+        }
       }
     };
 
+    // Initial load
     loadJobs();
 
-    // Refresh jobs every 30 seconds
-    const interval = setInterval(loadJobs, 30000);
-    return () => clearInterval(interval);
+    // Set up interval for refreshing jobs every 30 seconds
+    intervalId = setInterval(() => {
+      if (isMounted) {
+        loadJobs();
+      }
+    }, 30000);
+
+    return () => {
+      isMounted = false;
+      if (intervalId) {
+        clearInterval(intervalId);
+      }
+    };
   }, []);
 
-  const toggleGlobalAutomation = async () => {
+  const toggleGlobalAutomation = useCallback(async () => {
     if (!globalConfig || globalConfigLoading) return;
 
     const newEnabled = !globalConfig.automation_enabled;
@@ -137,7 +183,12 @@ const AutomationPage = () => {
         );
 
         // Refresh next runs when global automation changes
-        refreshNextRuns();
+        if (newEnabled) {
+          // Small delay to let the backend update
+          setTimeout(() => {
+            refreshNextRuns();
+          }, 1000);
+        }
       } else {
         showNotification('Failed to update global automation setting', 'error');
       }
@@ -145,9 +196,9 @@ const AutomationPage = () => {
       console.error('Error toggling global automation:', error);
       showNotification('Failed to update global automation setting', 'error');
     }
-  };
+  }, [globalConfig, globalConfigLoading, refreshNextRuns, showNotification]);
 
-  const handleTabChange = (tab) => {
+  const handleTabChange = useCallback((tab) => {
     setActiveTab(tab);
     // Update URL parameters
     const newParams = new URLSearchParams(searchParams);
@@ -157,9 +208,9 @@ const AutomationPage = () => {
       setSelectedConnectionId(null);
     }
     setSearchParams(newParams);
-  };
+  }, [searchParams, setSearchParams]);
 
-  const handleConnectionSelect = (connectionId) => {
+  const handleConnectionSelect = useCallback((connectionId) => {
     setSelectedConnectionId(connectionId);
     setActiveTab('configure');
     // Update URL parameters
@@ -167,10 +218,10 @@ const AutomationPage = () => {
     newParams.set('connection', connectionId);
     newParams.set('tab', 'configure');
     setSearchParams(newParams);
-  };
+  }, [searchParams, setSearchParams]);
 
   // Enhanced function to handle schedule updates
-  const handleScheduleUpdate = (updatedSchedule) => {
+  const handleScheduleUpdate = useCallback((updatedSchedule) => {
     console.log('Schedule updated:', updatedSchedule);
 
     // Force refresh of next run times after a short delay
@@ -178,7 +229,14 @@ const AutomationPage = () => {
       console.log('Refreshing next runs after schedule update...');
       refreshNextRuns();
     }, 2000); // Wait 2 seconds for backend to process the update
-  };
+  }, [refreshNextRuns]);
+
+  // Memoize computed values to prevent unnecessary recalculations
+  const { activeJobs, recentJobs } = useMemo(() => {
+    const active = automationJobs.filter(job => job.status === 'running' || job.status === 'scheduled');
+    const recent = automationJobs.slice(0, 10);
+    return { activeJobs: active, recentJobs: recent };
+  }, [automationJobs]);
 
   if (globalConfigLoading) {
     return (
@@ -200,9 +258,6 @@ const AutomationPage = () => {
       />
     );
   }
-
-  const activeJobs = automationJobs.filter(job => job.status === 'running' || job.status === 'scheduled');
-  const recentJobs = automationJobs.slice(0, 10);
 
   return (
     <ErrorBoundary
@@ -286,6 +341,28 @@ const AutomationPage = () => {
           </div>
         )}
 
+        {/* Next runs error warning */}
+        {nextRunsError && circuitBreakerOpen && (
+          <div className="mb-6 rounded-md bg-red-50 border border-red-200 p-4">
+            <div className="flex">
+              <div className="flex-shrink-0">
+                <ExclamationTriangleIcon className="h-5 w-5 text-red-400" aria-hidden="true" />
+              </div>
+              <div className="ml-3">
+                <h3 className="text-sm font-medium text-red-800">
+                  Schedule information temporarily unavailable
+                </h3>
+                <div className="mt-2 text-sm text-red-700">
+                  <p>
+                    Unable to load schedule information due to repeated errors.
+                    Some features may not display current data.
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Tab Navigation */}
         <div className="border-b border-gray-200 mb-6">
           <nav className="-mb-px flex space-x-8" aria-label="Tabs">
@@ -337,6 +414,7 @@ const AutomationPage = () => {
               connections={connections}
               allNextRuns={allNextRuns}
               nextRunsLoading={nextRunsLoading}
+              nextRunsError={nextRunsError}
               globalEnabled={globalConfig?.automation_enabled}
               onConnectionSelect={handleConnectionSelect}
               jobs={automationJobs}
@@ -371,37 +449,45 @@ const AutomationPage = () => {
   );
 };
 
-// Overview Tab Component
-const OverviewTab = ({ connections, allNextRuns, nextRunsLoading, globalEnabled, onConnectionSelect, jobs }) => {
-  // Calculate summary statistics
-  const totalConnections = connections.length;
+// Overview Tab Component - Updated to handle errors gracefully
+const OverviewTab = ({ connections, allNextRuns, nextRunsLoading, nextRunsError, globalEnabled, onConnectionSelect, jobs }) => {
+  // Calculate summary statistics with error handling
+  const { totalConnections, connectionsWithAutomation, allUpcomingRuns } = useMemo(() => {
+    const total = connections.length;
 
-  // Count connections with automation by checking if any have enabled schedules
-  const connectionsWithAutomation = connections.filter(conn => {
-    const connectionRuns = allNextRuns[conn.id];
-    return connectionRuns && Object.values(connectionRuns).some(run => run.enabled);
-  }).length;
+    // Count connections with automation by checking if any have enabled schedules
+    const withAutomation = connections.filter(conn => {
+      const connectionRuns = allNextRuns[conn.id];
+      return connectionRuns && Object.values(connectionRuns).some(run => run?.enabled);
+    }).length;
 
-  // Get upcoming runs across all connections
-  const allUpcomingRuns = [];
-  Object.entries(allNextRuns).forEach(([connectionId, connectionRuns]) => {
-    const connection = connections.find(c => c.id === connectionId);
-    if (connection && connectionRuns) {
-      Object.entries(connectionRuns).forEach(([automationType, runData]) => {
-        if (runData.enabled && !runData.is_overdue && runData.next_run_timestamp) {
-          allUpcomingRuns.push({
-            connectionId,
-            connectionName: connection.name,
-            automationType,
-            ...runData
-          });
-        }
-      });
-    }
-  });
+    // Get upcoming runs across all connections
+    const upcomingRuns = [];
+    Object.entries(allNextRuns).forEach(([connectionId, connectionRuns]) => {
+      const connection = connections.find(c => c.id === connectionId);
+      if (connection && connectionRuns) {
+        Object.entries(connectionRuns).forEach(([automationType, runData]) => {
+          if (runData?.enabled && !runData.is_overdue && runData.next_run_timestamp) {
+            upcomingRuns.push({
+              connectionId,
+              connectionName: connection.name,
+              automationType,
+              ...runData
+            });
+          }
+        });
+      }
+    });
 
-  // Sort by next run time
-  allUpcomingRuns.sort((a, b) => (a.next_run_timestamp || Infinity) - (b.next_run_timestamp || Infinity));
+    // Sort by next run time
+    upcomingRuns.sort((a, b) => (a.next_run_timestamp || Infinity) - (b.next_run_timestamp || Infinity));
+
+    return {
+      totalConnections: total,
+      connectionsWithAutomation: withAutomation,
+      allUpcomingRuns: upcomingRuns
+    };
+  }, [connections, allNextRuns]);
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -453,26 +539,6 @@ const OverviewTab = ({ connections, allNextRuns, nextRunsLoading, globalEnabled,
           <h3 className="text-lg font-medium text-gray-900 mb-4">Summary</h3>
           <div className="space-y-4">
             <div className="flex justify-between">
-              <span className="text-sm text-gray-500">Total Connections</span>
-              <span className="text-sm font-medium text-gray-900">{totalConnections}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-sm text-gray-500">With Automation</span>
-              <span className="text-sm font-medium text-gray-900">{connectionsWithAutomation}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-sm text-gray-500">Upcoming Runs</span>
-              <span className="text-sm font-medium text-gray-900">{allUpcomingRuns.length}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-sm text-gray-500">Global Status</span>
-              <span className={`text-sm font-medium ${
-                globalEnabled ? 'text-green-600' : 'text-gray-500'
-              }`}>
-                {globalEnabled ? 'Enabled' : 'Disabled'}
-              </span>
-            </div>
-            <div className="flex justify-between">
               <span className="text-sm text-gray-500">Failed</span>
               <span className="text-sm font-medium text-red-600">
                 {jobs.filter(j => j.status === 'failed').length}
@@ -501,6 +567,13 @@ const OverviewTab = ({ connections, allNextRuns, nextRunsLoading, globalEnabled,
               <div className="flex justify-center py-4">
                 <LoadingSpinner size="sm" />
                 <span className="ml-2 text-xs text-gray-500">Loading schedules...</span>
+              </div>
+            ) : nextRunsError ? (
+              <div className="text-center py-4">
+                <ExclamationTriangleIcon className="mx-auto h-8 w-8 text-yellow-400" />
+                <p className="mt-2 text-sm text-yellow-600">
+                  Unable to load schedule information
+                </p>
               </div>
             ) : allUpcomingRuns.length === 0 ? (
               <div className="text-center py-4">

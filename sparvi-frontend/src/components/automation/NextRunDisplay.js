@@ -1,30 +1,73 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { useNextRunTimes } from '../../hooks/useNextRunTimes';
 import {
   ClockIcon,
   PlayIcon,
   ExclamationTriangleIcon,
-  CalendarIcon
+  CalendarIcon,
+  ArrowPathIcon
 } from '@heroicons/react/24/outline';
 import LoadingSpinner from '../common/LoadingSpinner';
 import { formatAutomationType, formatNextRunTime, getNextRunStatusColor } from '../../utils/scheduleUtils';
 
-const NextRunDisplay = ({ connectionId, connectionName, className = '', showManualTriggers = true }) => {
-  const { nextRuns, loading, error, triggerManualRun } = useNextRunTimes(connectionId, {
-    refreshInterval: 60000 // Update every minute
-  });
+const NextRunDisplay = ({
+  connectionId,
+  connectionName,
+  className = '',
+  showManualTriggers = true,
+  compact = false
+}) => {
+  // Memoize the options to prevent unnecessary re-renders
+  const hookOptions = useMemo(() => ({
+    refreshInterval: 60000, // Update every minute
+    enabled: true,
+    onError: (error) => {
+      console.warn(`NextRunDisplay error for connection ${connectionId}:`, error);
+    }
+  }), [connectionId]);
+
+  const {
+    nextRuns,
+    loading,
+    error,
+    refresh,
+    triggerManualRun,
+    circuitBreakerOpen,
+    consecutiveErrors
+  } = useNextRunTimes(connectionId, hookOptions);
 
   const handleManualTrigger = async (automationType) => {
     const success = await triggerManualRun(automationType);
     if (success) {
-      // Show success feedback (you could use a toast notification here)
       console.log(`${formatAutomationType(automationType)} triggered successfully`);
     } else {
       console.error(`Failed to trigger ${formatAutomationType(automationType)}`);
     }
   };
 
-  if (loading) {
+  const handleRefresh = () => {
+    console.log('Manual refresh requested');
+    refresh();
+  };
+
+  // Memoize the filtered and sorted runs to prevent unnecessary recalculations
+  const { nextRunEntries, sortedRuns, hasEnabledRuns } = useMemo(() => {
+    const entries = Object.entries(nextRuns).filter(([_, runData]) => runData?.enabled);
+    const sorted = entries.sort((a, b) => {
+      const aTime = a[1]?.next_run_timestamp || Infinity;
+      const bTime = b[1]?.next_run_timestamp || Infinity;
+      return aTime - bTime;
+    });
+
+    return {
+      nextRunEntries: entries,
+      sortedRuns: sorted,
+      hasEnabledRuns: entries.length > 0
+    };
+  }, [nextRuns]);
+
+  // Show loading state
+  if (loading && !hasEnabledRuns) {
     return (
       <div className={`flex justify-center py-4 ${className}`}>
         <LoadingSpinner size="sm" />
@@ -33,24 +76,44 @@ const NextRunDisplay = ({ connectionId, connectionName, className = '', showManu
     );
   }
 
-  if (error) {
+  // Show error state with retry option
+  if (error && !hasEnabledRuns) {
     return (
       <div className={`rounded-md bg-yellow-50 p-3 ${className}`}>
-        <div className="flex">
-          <ExclamationTriangleIcon className="h-5 w-5 text-yellow-400" />
-          <div className="ml-3">
-            <p className="text-sm text-yellow-700">
-              Unable to load schedule information
-            </p>
+        <div className="flex items-center justify-between">
+          <div className="flex">
+            <ExclamationTriangleIcon className="h-5 w-5 text-yellow-400" />
+            <div className="ml-3">
+              <p className="text-sm text-yellow-700">
+                {circuitBreakerOpen
+                  ? 'Too many errors - schedule loading paused'
+                  : 'Unable to load schedule information'
+                }
+              </p>
+              {consecutiveErrors > 0 && (
+                <p className="text-xs text-yellow-600 mt-1">
+                  {consecutiveErrors} consecutive error{consecutiveErrors !== 1 ? 's' : ''}
+                </p>
+              )}
+            </div>
           </div>
+          {!circuitBreakerOpen && (
+            <button
+              onClick={handleRefresh}
+              className="flex items-center px-2 py-1 text-xs bg-yellow-100 text-yellow-800 rounded hover:bg-yellow-200 transition-colors"
+              title="Retry loading schedules"
+            >
+              <ArrowPathIcon className="h-3 w-3 mr-1" />
+              Retry
+            </button>
+          )}
         </div>
       </div>
     );
   }
 
-  const nextRunEntries = Object.entries(nextRuns).filter(([_, runData]) => runData.enabled);
-
-  if (nextRunEntries.length === 0) {
+  // Show empty state
+  if (!hasEnabledRuns) {
     return (
       <div className={`text-center py-6 ${className}`}>
         <CalendarIcon className="mx-auto h-8 w-8 text-gray-400" />
@@ -58,28 +121,82 @@ const NextRunDisplay = ({ connectionId, connectionName, className = '', showManu
         <p className="mt-1 text-sm text-gray-500">
           {connectionName ? `No automation scheduled for ${connectionName}` : 'No automation scheduled'}
         </p>
+        {error && (
+          <button
+            onClick={handleRefresh}
+            className="mt-3 text-sm text-blue-600 hover:text-blue-700"
+          >
+            Try loading again
+          </button>
+        )}
       </div>
     );
   }
 
-  // Sort by next run time (soonest first)
-  const sortedRuns = nextRunEntries.sort((a, b) => {
-    const aTime = a[1].next_run_timestamp || Infinity;
-    const bTime = b[1].next_run_timestamp || Infinity;
-    return aTime - bTime;
-  });
+  // Compact view for widgets
+  if (compact) {
+    const nextRun = sortedRuns[0];
 
+    return (
+      <div className={`flex items-center justify-between p-2 ${className}`}>
+        <div className="flex items-center">
+          <ClockIcon className="h-4 w-4 text-gray-400 mr-2" />
+          <div>
+            <div className="text-sm font-medium text-gray-900">
+              {nextRun ? formatAutomationType(nextRun[0]) : 'No runs scheduled'}
+            </div>
+            {nextRun && (
+              <div className="text-xs text-gray-500">
+                {connectionName}
+              </div>
+            )}
+          </div>
+        </div>
+
+        {nextRun && (
+          <div className={`text-sm ${getNextRunStatusColor(nextRun[1])}`}>
+            {formatNextRunTime(nextRun[1])}
+          </div>
+        )}
+
+        {loading && (
+          <LoadingSpinner size="xs" />
+        )}
+      </div>
+    );
+  }
+
+  // Full view
   return (
     <div className={`space-y-3 ${className}`}>
-      {connectionName && (
-        <div className="flex items-center mb-4">
+      {/* Header with refresh button */}
+      <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center">
           <ClockIcon className="h-5 w-5 text-gray-400 mr-2" />
           <h4 className="text-sm font-medium text-gray-900">
-            Next Scheduled Runs - {connectionName}
+            Next Scheduled Runs{connectionName ? ` - ${connectionName}` : ''}
           </h4>
         </div>
-      )}
 
+        <div className="flex items-center space-x-2">
+          {loading && <LoadingSpinner size="xs" />}
+          {error && consecutiveErrors > 0 && (
+            <span className="text-xs text-yellow-600">
+              {consecutiveErrors} error{consecutiveErrors !== 1 ? 's' : ''}
+            </span>
+          )}
+          <button
+            onClick={handleRefresh}
+            disabled={loading || circuitBreakerOpen}
+            className="p-1 text-gray-400 hover:text-gray-600 disabled:opacity-50 disabled:cursor-not-allowed"
+            title="Refresh schedules"
+          >
+            <ArrowPathIcon className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+          </button>
+        </div>
+      </div>
+
+      {/* Runs list */}
       {sortedRuns.map(([automationType, runData]) => {
         const statusColor = getNextRunStatusColor(runData);
         const nextRunText = formatNextRunTime(runData);
@@ -145,6 +262,18 @@ const NextRunDisplay = ({ connectionId, connectionName, className = '', showManu
           </div>
         );
       })}
+
+      {/* Error indicator at bottom if there are runs but also errors */}
+      {error && hasEnabledRuns && (
+        <div className="text-center">
+          <p className="text-xs text-yellow-600">
+            {circuitBreakerOpen
+              ? 'Schedule updates paused due to errors'
+              : 'Some schedule data may be outdated'
+            }
+          </p>
+        </div>
+      )}
     </div>
   );
 };

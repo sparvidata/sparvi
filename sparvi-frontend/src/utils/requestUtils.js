@@ -1,9 +1,9 @@
 /**
- * Request deduplication and circuit breaker utilities
+ * Enhanced request deduplication and circuit breaker utilities
  * Prevents infinite loops and manages failed requests gracefully
  */
 
-// Store for tracking ongoing requests
+// Store for tracking ongoing requests with timestamps
 const ongoingRequests = new Map();
 
 // Circuit breaker state for different endpoints
@@ -11,6 +11,11 @@ const circuitBreakers = new Map();
 
 // Store for abort controllers by request ID
 const abortControllers = new Map();
+
+// Request frequency tracking
+const requestFrequency = new Map();
+const REQUEST_THROTTLE_WINDOW = 5000; // 5 seconds
+const MAX_REQUESTS_PER_WINDOW = 3;
 
 // Configuration
 const CIRCUIT_BREAKER_CONFIG = {
@@ -26,7 +31,7 @@ const RETRY_CONFIG = {
 };
 
 /**
- * Circuit breaker implementation
+ * Enhanced Circuit breaker implementation
  */
 class CircuitBreaker {
   constructor(key, config = CIRCUIT_BREAKER_CONFIG) {
@@ -53,6 +58,7 @@ class CircuitBreaker {
       case 'OPEN':
         if (now >= this.nextAttemptTime) {
           this.state = 'HALF_OPEN';
+          console.log(`Circuit breaker HALF_OPEN for ${this.key}`);
           return true;
         }
         return false;
@@ -69,6 +75,7 @@ class CircuitBreaker {
     this.failures = [];
     this.state = 'CLOSED';
     this.nextAttemptTime = null;
+    console.log(`Circuit breaker CLOSED for ${this.key}`);
   }
 
   recordFailure() {
@@ -104,13 +111,50 @@ function getCircuitBreaker(key) {
 }
 
 /**
- * Generate a unique key for request deduplication
+ * Enhanced request key generation with better uniqueness
  */
-function getRequestKey(url, method = 'GET', params = {}) {
+function getRequestKey(url, method = 'GET', params = {}, requestId = null) {
   const paramString = Object.keys(params).length > 0
     ? `?${new URLSearchParams(params).toString()}`
     : '';
-  return `${method}:${url}${paramString}`;
+
+  const baseKey = `${method}:${url}${paramString}`;
+
+  // If requestId is provided, use it for uniqueness
+  if (requestId) {
+    return `${baseKey}#${requestId}`;
+  }
+
+  return baseKey;
+}
+
+/**
+ * Check request frequency to prevent spam
+ */
+function checkRequestFrequency(key) {
+  const now = Date.now();
+
+  if (!requestFrequency.has(key)) {
+    requestFrequency.set(key, []);
+  }
+
+  const requests = requestFrequency.get(key);
+
+  // Clean old requests outside the window
+  const recentRequests = requests.filter(time => now - time < REQUEST_THROTTLE_WINDOW);
+  requestFrequency.set(key, recentRequests);
+
+  // Check if we're over the limit
+  if (recentRequests.length >= MAX_REQUESTS_PER_WINDOW) {
+    console.warn(`Request frequency limit exceeded for ${key}. ${recentRequests.length} requests in last ${REQUEST_THROTTLE_WINDOW}ms`);
+    return false;
+  }
+
+  // Record this request
+  recentRequests.push(now);
+  requestFrequency.set(key, recentRequests);
+
+  return true;
 }
 
 /**
@@ -138,11 +182,22 @@ export async function safeFetch(url, options = {}) {
     params = {},
     retries = RETRY_CONFIG.maxRetries,
     timeout = 10000,
+    requestId = null,
+    skipDeduplication = false,
+    skipFrequencyCheck = false,
     ...fetchOptions
   } = options;
 
   // Generate unique key for this request
-  const requestKey = getRequestKey(url, method, params);
+  const requestKey = getRequestKey(url, method, params, requestId);
+  const frequencyKey = getRequestKey(url, method, params); // Without requestId for frequency check
+
+  // Check request frequency (unless skipped)
+  if (!skipFrequencyCheck && !checkRequestFrequency(frequencyKey)) {
+    const error = new Error(`Request frequency limit exceeded for ${url}`);
+    error.frequencyLimited = true;
+    throw error;
+  }
 
   // Check circuit breaker
   const circuitBreaker = getCircuitBreaker(url);
@@ -153,8 +208,8 @@ export async function safeFetch(url, options = {}) {
     throw error;
   }
 
-  // Check for ongoing identical request
-  if (ongoingRequests.has(requestKey)) {
+  // Check for ongoing identical request (unless skipped)
+  if (!skipDeduplication && ongoingRequests.has(requestKey)) {
     console.log(`Deduplicating request: ${requestKey}`);
     return ongoingRequests.get(requestKey);
   }
@@ -166,22 +221,30 @@ export async function safeFetch(url, options = {}) {
     retries,
     timeout,
     circuitBreaker,
+    requestId,
     ...fetchOptions
   });
 
-  // Store the promise for deduplication
-  ongoingRequests.set(requestKey, requestPromise);
+  // Store the promise for deduplication (unless skipped)
+  if (!skipDeduplication) {
+    ongoingRequests.set(requestKey, requestPromise);
+  }
 
   try {
     const result = await requestPromise;
     circuitBreaker.recordSuccess();
     return result;
   } catch (error) {
-    circuitBreaker.recordFailure();
+    // Don't record failure for cancelled or frequency limited requests
+    if (!error.cancelled && !error.frequencyLimited) {
+      circuitBreaker.recordFailure();
+    }
     throw error;
   } finally {
     // Clean up the ongoing request
-    ongoingRequests.delete(requestKey);
+    if (!skipDeduplication) {
+      ongoingRequests.delete(requestKey);
+    }
   }
 }
 
@@ -189,7 +252,7 @@ export async function safeFetch(url, options = {}) {
  * Execute request with retry logic
  */
 async function executeRequestWithRetry(url, options) {
-  const { method, params, retries, timeout, circuitBreaker, ...fetchOptions } = options;
+  const { method, params, retries, timeout, circuitBreaker, requestId, ...fetchOptions } = options;
 
   // Build full URL with params
   const fullUrl = Object.keys(params).length > 0
@@ -203,6 +266,8 @@ async function executeRequestWithRetry(url, options) {
       // Create abort controller for timeout
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), timeout);
+
+      console.log(`Making request (attempt ${attempt}/${retries + 1}): ${method} ${fullUrl}${requestId ? ` [${requestId}]` : ''}`);
 
       const response = await fetch(fullUrl, {
         method,
@@ -229,25 +294,36 @@ async function executeRequestWithRetry(url, options) {
       }
 
       const data = await response.json();
+      console.log(`Request successful: ${method} ${fullUrl}${requestId ? ` [${requestId}]` : ''}`);
       return data;
 
     } catch (error) {
       lastError = error;
 
+      // Handle abort errors
+      if (error.name === 'AbortError') {
+        const timeoutError = new Error('Request timeout');
+        timeoutError.timeout = true;
+        timeoutError.cancelled = true;
+        throw timeoutError;
+      }
+
       // Don't retry on auth errors (401, 403) or client errors (400-499)
       if (error.status && error.status >= 400 && error.status < 500) {
+        console.warn(`Non-retryable error (${error.status}): ${error.message}`);
         break;
       }
 
       // Don't retry if circuit breaker is open
-      if (error.name === 'AbortError' || error.circuitBreakerOpen) {
+      if (error.circuitBreakerOpen) {
+        console.warn('Circuit breaker open, not retrying');
         break;
       }
 
       // If we have more attempts, wait before retrying
       if (attempt <= retries) {
         const delay = calculateBackoffDelay(attempt);
-        console.warn(`Request failed (attempt ${attempt}/${retries + 1}), retrying in ${delay}ms:`, error.message);
+        console.warn(`Request failed (attempt ${attempt}/${retries + 1}), retrying in ${delay}ms: ${error.message}`);
         await sleep(delay);
       }
     }
@@ -303,28 +379,54 @@ export function debounce(func, wait, immediate = false) {
 }
 
 /**
- * Batch multiple requests into a single API call
+ * Enhanced batch requests with better error handling
  * @param {Array} requests - Array of request objects
  * @param {Object} options - Request options
  * @returns {Promise} Promise resolving to batch results
  */
 export async function batchRequests(requests, options = {}) {
-  const { timeout = 30000 } = options;
+  const {
+    timeout = 30000,
+    waitForAuthentication = true,
+    retries = 1,
+    signal = null
+  } = options;
+
+  // Filter out empty or invalid requests
+  const validRequests = requests.filter(req => req && req.path);
+
+  if (validRequests.length === 0) {
+    console.warn('No valid requests to batch');
+    return {};
+  }
 
   try {
-    // Use safeFetch for the batch request
+    console.log(`Making batch request with ${validRequests.length} requests`);
+
+    // Use safeFetch for the batch request with proper deduplication
     const response = await safeFetch('/batch', {
       method: 'POST',
-      body: JSON.stringify({ requests }),
+      body: JSON.stringify({ requests: validRequests }),
       timeout,
+      requestId: `batch-${Date.now()}`,
+      skipDeduplication: false, // Allow deduplication for batch requests
+      skipFrequencyCheck: true, // Skip frequency check for batch requests
       headers: {
         'Content-Type': 'application/json'
-      }
+      },
+      signal
     });
 
     return response.results || {};
   } catch (error) {
     console.error('Batch request failed:', error);
+
+    // Return partial results if available
+    if (error.response && error.data && error.data.results) {
+      console.warn('Returning partial batch results due to error');
+      return error.data.results;
+    }
+
     throw error;
   }
 }
@@ -355,7 +457,9 @@ export function resetCircuitBreaker(key) {
  */
 export function resetAllCircuitBreakers() {
   circuitBreakers.clear();
-  console.log('All circuit breakers reset');
+  ongoingRequests.clear();
+  requestFrequency.clear();
+  console.log('All circuit breakers and request tracking reset');
 }
 
 /**
@@ -366,13 +470,53 @@ export function getOngoingRequests() {
 }
 
 /**
+ * Get request frequency stats for monitoring
+ */
+export function getRequestFrequencyStats() {
+  const stats = {};
+  for (const [key, requests] of requestFrequency.entries()) {
+    stats[key] = {
+      count: requests.length,
+      lastRequest: requests.length > 0 ? new Date(Math.max(...requests)) : null
+    };
+  }
+  return stats;
+}
+
+/**
  * Cancel all ongoing requests (useful for cleanup)
  */
 export function cancelAllRequests() {
+  console.log('Cancelling all ongoing requests');
   ongoingRequests.clear();
+
   // Also abort all ongoing controllers
   for (const controller of abortControllers.values()) {
-    controller.abort();
+    try {
+      controller.abort();
+    } catch (error) {
+      console.warn('Error aborting controller:', error);
+    }
   }
   abortControllers.clear();
 }
+
+/**
+ * Clear old tracking data (useful for cleanup)
+ */
+export function cleanupOldTracking() {
+  const now = Date.now();
+
+  // Clean up old request frequency data
+  for (const [key, requests] of requestFrequency.entries()) {
+    const recentRequests = requests.filter(time => now - time < REQUEST_THROTTLE_WINDOW * 2);
+    if (recentRequests.length === 0) {
+      requestFrequency.delete(key);
+    } else {
+      requestFrequency.set(key, recentRequests);
+    }
+  }
+}
+
+// Periodic cleanup
+setInterval(cleanupOldTracking, 60000); // Every minute
