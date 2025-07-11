@@ -51,7 +51,7 @@ const NextRunDisplay = ({
   };
 
   // Memoize the filtered and sorted runs to prevent unnecessary recalculations
-  const { nextRunEntries, sortedRuns, hasEnabledRuns } = useMemo(() => {
+  const { sortedRuns, hasEnabledRuns } = useMemo(() => {
     const entries = Object.entries(nextRuns).filter(([_, runData]) => runData?.enabled);
     const sorted = entries.sort((a, b) => {
       const aTime = a[1]?.next_run_timestamp || Infinity;
@@ -60,7 +60,6 @@ const NextRunDisplay = ({
     });
 
     return {
-      nextRunEntries: entries,
       sortedRuns: sorted,
       hasEnabledRuns: entries.length > 0
     };

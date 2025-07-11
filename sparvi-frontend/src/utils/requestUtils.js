@@ -387,8 +387,6 @@ export function debounce(func, wait, immediate = false) {
 export async function batchRequests(requests, options = {}) {
   const {
     timeout = 30000,
-    waitForAuthentication = true,
-    retries = 1,
     signal = null
   } = options;
 

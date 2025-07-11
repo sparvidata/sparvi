@@ -452,9 +452,7 @@ const AutomationPage = () => {
 // Overview Tab Component - Updated to handle errors gracefully
 const OverviewTab = ({ connections, allNextRuns, nextRunsLoading, nextRunsError, globalEnabled, onConnectionSelect, jobs }) => {
   // Calculate summary statistics with error handling
-  const { totalConnections, connectionsWithAutomation, allUpcomingRuns } = useMemo(() => {
-    const total = connections.length;
-
+  const { connectionsWithAutomation, allUpcomingRuns } = useMemo(() => {
     // Count connections with automation by checking if any have enabled schedules
     const withAutomation = connections.filter(conn => {
       const connectionRuns = allNextRuns[conn.id];
@@ -483,7 +481,6 @@ const OverviewTab = ({ connections, allNextRuns, nextRunsLoading, nextRunsError,
     upcomingRuns.sort((a, b) => (a.next_run_timestamp || Infinity) - (b.next_run_timestamp || Infinity));
 
     return {
-      totalConnections: total,
       connectionsWithAutomation: withAutomation,
       allUpcomingRuns: upcomingRuns
     };
