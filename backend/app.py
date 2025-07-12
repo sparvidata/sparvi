@@ -5516,24 +5516,28 @@ def get_tables_for_connection(current_user, organization_id, connection_id):
 @app.route("/api/connections/<connection_id>/validations/<table_name>/trends", methods=["GET"])
 @token_required
 def get_validation_trends(current_user, organization_id, connection_id, table_name):
-    """Get validation trends over time for a specific table"""
+    """
+    Get validation trends over time for a specific table
+    Completely rewritten for better maintainability and debugging
+    """
     try:
         # Get query parameters
-        days = int(request.args.get("days", 30))  # Default to 30 days
+        days = int(request.args.get("days", 30))
 
         # Check access to connection
         connection = connection_access_check(connection_id, organization_id)
         if not connection:
             return jsonify({"error": "Connection not found or access denied"}), 404
 
-        # Calculate the start date (UTC)
-        start_date = datetime.now(timezone.utc) - timedelta(days=days)
+        logger.info(f"=== VALIDATION TRENDS v2 START ===")
+        logger.info(f"Request: table={table_name}, connection={connection_id}, days={days}, org={organization_id}")
 
-        # Get rule IDs for this table
+        # Step 1: Get validation rules
         validation_manager = SupabaseValidationManager()
         rules = validation_manager.get_rules(organization_id, table_name, connection_id)
 
         if not rules:
+            logger.warning(f"No validation rules found for table {table_name}")
             return jsonify({
                 "trends": [],
                 "message": "No validation rules found for this table",
@@ -5543,161 +5547,249 @@ def get_validation_trends(current_user, organization_id, connection_id, table_na
             }), 200
 
         rule_ids = [rule["id"] for rule in rules]
-        logger.info(f"Processing trends for {len(rule_ids)} rules in table {table_name}")
+        logger.info(f"Step 1 Complete: Found {len(rule_ids)} validation rules")
 
-        # Use direct Supabase queries
+        # Step 2: Calculate date range in UTC
+        end_date = datetime.now(timezone.utc)
+        start_date = end_date - timedelta(days=days)
+
+        logger.info(f"Step 2 Complete: Date range {start_date.date()} to {end_date.date()} (UTC)")
+
+        # Step 3: Get validation results with simplified query
         supabase_mgr = SupabaseManager()
 
-        try:
-            # Generate date series in Python
-            date_series = []
-            current_date = start_date
-            end_date = datetime.now(timezone.utc)
+        logger.info("Step 3: Fetching validation results...")
+        query_results = supabase_mgr.supabase.table("validation_results") \
+            .select("rule_id, is_valid, run_at, actual_value") \
+            .eq("organization_id", organization_id) \
+            .eq("connection_id", connection_id) \
+            .in_("rule_id", rule_ids) \
+            .gte("run_at", start_date.isoformat()) \
+            .lte("run_at", end_date.isoformat()) \
+            .order("run_at") \
+            .execute()
 
-            while current_date <= end_date:
-                date_series.append(current_date.date().isoformat())
-                current_date += timedelta(days=1)
+        raw_results = query_results.data if query_results.data else []
+        logger.info(f"Step 3 Complete: Retrieved {len(raw_results)} raw validation results")
 
-            logger.info(f"Generated date series: {len(date_series)} days from {date_series[0]} to {date_series[-1]}")
+        # Step 4: Process and group results by date
+        logger.info("Step 4: Processing results by date...")
+        daily_aggregates = process_validation_results_by_date(raw_results, rule_ids)
+        logger.info(f"Step 4 Complete: Processed {len(daily_aggregates)} daily aggregates")
 
-            # Get all validation results for the date range and rules
-            all_results = []
+        # Step 5: Generate complete date series with trends
+        logger.info("Step 5: Generating trends for complete date series...")
+        trends = generate_trends_for_date_range(start_date, end_date, daily_aggregates, len(rules))
+        logger.info(f"Step 5 Complete: Generated {len(trends)} trend points")
 
-            # Batch the rule IDs to avoid URL length limits
-            batch_size = 50
-            for i in range(0, len(rule_ids), batch_size):
-                batch_rule_ids = rule_ids[i:i + batch_size]
+        # Step 6: Calculate summary metrics
+        current_health_score = calculate_current_health_score_v2(rules, organization_id, connection_id)
+        active_days = len([t for t in trends if t["total_validations"] > 0])
 
-                logger.info(f"Fetching results for batch {i // batch_size + 1} ({len(batch_rule_ids)} rules)")
+        logger.info(f"Step 6 Complete: Health score={current_health_score}, Active days={active_days}")
 
-                response = supabase_mgr.supabase.table("validation_results") \
-                    .select("rule_id, is_valid, run_at") \
-                    .eq("organization_id", organization_id) \
-                    .in_("rule_id", batch_rule_ids) \
-                    .gte("run_at", start_date.isoformat()) \
-                    .order("run_at") \
-                    .execute()
+        # Step 7: Build response
+        response_data = {
+            "trends": trends,
+            "table_name": table_name,
+            "days": days,
+            "rule_count": len(rules),
+            "current_health_score": current_health_score,
+            "data_points": active_days
+        }
 
-                if response.data:
-                    all_results.extend(response.data)
-                    logger.info(f"Found {len(response.data)} results in batch")
+        logger.info(f"=== VALIDATION TRENDS v2 SUCCESS ===")
+        logger.info(f"Returning {len(trends)} trends, {active_days} active days")
 
-            logger.info(f"Total validation results found: {len(all_results)}")
-
-            # Process results into daily aggregates
-            daily_results = {}
-
-            for result in all_results:
-                try:
-                    # Extract date from timestamp (handle both Z and +00:00 formats)
-                    run_at = result["run_at"]
-                    if run_at.endswith('Z'):
-                        run_at = run_at[:-1] + '+00:00'
-
-                    run_date = datetime.fromisoformat(run_at).date().isoformat()
-                    rule_id = result["rule_id"]
-
-                    # Initialize date if needed
-                    if run_date not in daily_results:
-                        daily_results[run_date] = {}
-
-                    # Only keep the latest result for each rule per day
-                    if rule_id not in daily_results[run_date] or result["run_at"] > daily_results[run_date][rule_id][
-                        "run_at"]:
-                        daily_results[run_date][rule_id] = {
-                            "is_valid": result["is_valid"],
-                            "run_at": result["run_at"]
-                        }
-                except Exception as parse_error:
-                    logger.warning(f"Error parsing result timestamp {result.get('run_at')}: {parse_error}")
-                    continue
-
-            logger.info(f"Processed into {len(daily_results)} days with data")
-
-            # Build complete trends data
-            complete_trends = []
-
-            for day in date_series:
-                if day in daily_results:
-                    # Count results for this day
-                    day_results = daily_results[day]
-                    total = len(day_results)
-                    passed = sum(1 for r in day_results.values() if r["is_valid"] is True)
-                    failed = sum(1 for r in day_results.values() if r["is_valid"] is False)
-                    errored = sum(1 for r in day_results.values() if r["is_valid"] is None)
-                    not_run = len(rules) - total
-
-                    # Calculate health score (only count valid/invalid, not errors)
-                    valid_results = passed + failed
-                    health_score = (passed / valid_results * 100) if valid_results > 0 else 0
-
-                    complete_trends.append({
-                        "day": day,
-                        "timestamp": f"{day}T00:00:00Z",  # Add timestamp for frontend charts
-                        "total_validations": total,
-                        "passed": passed,
-                        "failed": failed,
-                        "errored": errored,
-                        "health_score": round(health_score, 2),
-                        "not_run": not_run
-                    })
-                else:
-                    # No data for this day
-                    complete_trends.append({
-                        "day": day,
-                        "timestamp": f"{day}T00:00:00Z",
-                        "total_validations": 0,
-                        "passed": 0,
-                        "failed": 0,
-                        "errored": 0,
-                        "health_score": 0,
-                        "not_run": len(rules)
-                    })
-
-            # Calculate current health score
-            current_health_score = 0
-            if rules:
-                try:
-                    current_health_score = calculate_current_health_score(rules, organization_id, connection_id)
-                except Exception as health_error:
-                    logger.warning(f"Could not calculate current health score: {health_error}")
-
-            logger.info(f"Successfully processed trends: {len(complete_trends)} data points")
-
-            return jsonify({
-                "trends": complete_trends,
-                "table_name": table_name,
-                "days": days,
-                "rule_count": len(rules),
-                "current_health_score": current_health_score,
-                "data_points": len([t for t in complete_trends if t["total_validations"] > 0])
-            })
-
-        except Exception as query_error:
-            logger.error(f"Error processing validation trends: {str(query_error)}")
-            logger.error(traceback.format_exc())
-
-            # Return error response with empty trends
-            return jsonify({
-                "error": f"Error processing validation trends: {str(query_error)}",
-                "trends": [],
-                "table_name": table_name,
-                "days": days,
-                "rule_count": len(rules) if rules else 0,
-                "current_health_score": 0
-            }), 500
+        return jsonify(response_data)
 
     except Exception as e:
-        logger.error(f"Error getting validation trends: {str(e)}")
+        logger.error(f"=== VALIDATION TRENDS v2 ERROR ===")
+        logger.error(f"Error: {str(e)}")
         logger.error(traceback.format_exc())
+
         return jsonify({
-            "error": str(e),
+            "error": f"Failed to get validation trends: {str(e)}",
             "trends": [],
-            "table_name": table_name if 'table_name' in locals() else "unknown",
-            "days": days if 'days' in locals() else 30,
-            "rule_count": 0
+            "table_name": table_name,
+            "days": days,
+            "rule_count": 0,
+            "current_health_score": 0
         }), 500
 
+
+def process_validation_results_by_date(raw_results, rule_ids):
+    """
+    Process raw validation results and group by date
+    Returns a dictionary of {date_string: {rule_id: latest_result}}
+    """
+    logger.info("Processing validation results by date...")
+
+    daily_data = {}
+    processed_count = 0
+    july_count = 0
+
+    for result in raw_results:
+        try:
+            # Parse the timestamp
+            run_at_str = result.get("run_at")
+            if not run_at_str:
+                continue
+
+            # Handle different timestamp formats consistently
+            if run_at_str.endswith('Z'):
+                dt = datetime.fromisoformat(run_at_str[:-1] + '+00:00')
+            elif '+' in run_at_str or run_at_str.endswith('+00:00'):
+                dt = datetime.fromisoformat(run_at_str)
+            else:
+                dt = datetime.fromisoformat(run_at_str + '+00:00')
+
+            # Extract date in YYYY-MM-DD format
+            date_key = dt.date().isoformat()
+            rule_id = result.get("rule_id")
+
+            # Track July data specifically
+            if date_key.startswith('2025-07'):
+                july_count += 1
+                if july_count <= 5:  # Log first 5 July results
+                    logger.info(f"July result: date={date_key}, rule={rule_id}, valid={result.get('is_valid')}")
+
+            # Initialize date if needed
+            if date_key not in daily_data:
+                daily_data[date_key] = {}
+
+            # Keep only the latest result per rule per day
+            if rule_id not in daily_data[date_key] or result["run_at"] > daily_data[date_key][rule_id]["run_at"]:
+                daily_data[date_key][rule_id] = {
+                    "is_valid": result.get("is_valid"),
+                    "actual_value": result.get("actual_value"),
+                    "run_at": result.get("run_at")
+                }
+
+            processed_count += 1
+
+        except Exception as e:
+            logger.warning(f"Error processing result: {e}")
+            continue
+
+    logger.info(f"Processed {processed_count} results into {len(daily_data)} daily groups")
+    logger.info(f"Found {july_count} July results")
+
+    # Log July dates that have data
+    july_dates = [date for date in daily_data.keys() if date.startswith('2025-07')]
+    if july_dates:
+        logger.info(f"July dates with data: {sorted(july_dates)}")
+        for date in sorted(july_dates)[:3]:  # Log first 3 July dates
+            rules_count = len(daily_data[date])
+            logger.info(f"July {date}: {rules_count} rules with results")
+
+    return daily_data
+
+
+def generate_trends_for_date_range(start_date, end_date, daily_aggregates, total_rules):
+    """
+    Generate trend data for the complete date range
+    Returns a list of trend points, one for each day
+    """
+    logger.info("Generating trends for complete date range...")
+
+    trends = []
+    current_date = start_date.date()
+    end_date_only = end_date.date()
+    july_trend_count = 0
+
+    while current_date <= end_date_only:
+        date_key = current_date.isoformat()
+
+        # Get data for this date
+        day_results = daily_aggregates.get(date_key, {})
+
+        # Calculate metrics
+        total_validations = len(day_results)
+        passed = sum(1 for r in day_results.values() if r["is_valid"] is True)
+        failed = sum(1 for r in day_results.values() if r["is_valid"] is False)
+        errored = sum(1 for r in day_results.values() if r["is_valid"] is None)
+        not_run = total_rules - total_validations
+
+        # Calculate health score
+        valid_results = passed + failed
+        health_score = (passed / valid_results * 100) if valid_results > 0 else 0
+
+        trend_point = {
+            "day": date_key,
+            "timestamp": f"{date_key}T00:00:00Z",
+            "total_validations": total_validations,
+            "passed": passed,
+            "failed": failed,
+            "errored": errored,
+            "health_score": round(health_score, 2),
+            "not_run": not_run
+        }
+
+        trends.append(trend_point)
+
+        # Log July trends specifically
+        if date_key.startswith('2025-07'):
+            july_trend_count += 1
+            if july_trend_count <= 5:  # Log first 5 July trends
+                logger.info(
+                    f"July trend: {date_key} -> total={total_validations}, passed={passed}, failed={failed}, health={health_score:.1f}%")
+
+        # Move to next day
+        current_date += timedelta(days=1)
+
+    logger.info(f"Generated {len(trends)} trend points")
+    logger.info(f"July trend points: {july_trend_count}")
+
+    # Summary for July
+    july_trends = [t for t in trends if t['day'].startswith('2025-07')]
+    july_with_data = [t for t in july_trends if t['total_validations'] > 0]
+    logger.info(f"July summary: {len(july_trends)} total days, {len(july_with_data)} with validation data")
+
+    return trends
+
+
+def calculate_current_health_score_v2(rules, organization_id, connection_id):
+    """
+    Simplified current health score calculation
+    """
+    try:
+        if not rules:
+            return 0
+
+        # Get latest results for all rules
+        rule_ids = [rule["id"] for rule in rules]
+        supabase_mgr = SupabaseManager()
+
+        # Get the most recent result for each rule
+        latest_results = {}
+        for rule_id in rule_ids:
+            result = supabase_mgr.supabase.table("validation_results") \
+                .select("is_valid") \
+                .eq("organization_id", organization_id) \
+                .eq("connection_id", connection_id) \
+                .eq("rule_id", rule_id) \
+                .order("run_at", desc=True) \
+                .limit(1) \
+                .execute()
+
+            if result.data:
+                latest_results[rule_id] = result.data[0]["is_valid"]
+
+        # Calculate health score
+        total_with_results = len(latest_results)
+        if total_with_results == 0:
+            return 0
+
+        passed = sum(1 for is_valid in latest_results.values() if is_valid is True)
+        failed = sum(1 for is_valid in latest_results.values() if is_valid is False)
+        valid_results = passed + failed
+
+        return round((passed / valid_results * 100), 2) if valid_results > 0 else 0
+
+    except Exception as e:
+        logger.error(f"Error calculating current health score: {e}")
+        return 0
 
 def calculate_current_health_score(rules, organization_id, connection_id):
     """Calculate the current health score for validation rules"""

@@ -56,21 +56,76 @@ class SupabaseValidationManager:
             logging.info(
                 f"Getting validation rules for org {organization_id}, table {table_name}, connection {connection_id}")
 
-            # Try to pass connection_id parameter
+            # Direct Supabase query to ensure we get the right data
             try:
-                return self.supabase.get_validation_rules(organization_id, table_name, connection_id)
-            except TypeError:
-                # If it fails due to unexpected argument, fall back to old method
-                rules = self.supabase.get_validation_rules(organization_id, table_name)
+                query = self.supabase.supabase.table("validation_rules") \
+                    .select("*") \
+                    .eq("organization_id", organization_id) \
+                    .eq("table_name", table_name) \
+                    .eq("is_active", True)  # Only get active rules
 
-                # Filter manually if connection_id is provided
-                if connection_id and rules:
-                    rules = [rule for rule in rules if rule.get('connection_id') == connection_id]
+                # Add connection_id filter if provided
+                if connection_id:
+                    query = query.eq("connection_id", connection_id)
+
+                response = query.execute()
+
+                rules = response.data if response.data else []
+
+                logging.info(f"Found {len(rules)} validation rules for table {table_name}")
+
+                # Log some details about the rules found
+                if rules:
+                    rule_ids = [rule.get('id') for rule in rules]
+                    connection_ids = list(set([rule.get('connection_id') for rule in rules]))
+                    logging.info(f"Rule IDs: {rule_ids[:3]}..." if len(rule_ids) > 3 else f"Rule IDs: {rule_ids}")
+                    logging.info(f"Connection IDs in rules: {connection_ids}")
+                else:
+                    # DEBUG: Check if there are ANY rules for this table (without connection filter)
+                    debug_response = self.supabase.supabase.table("validation_rules") \
+                        .select("id, connection_id, is_active") \
+                        .eq("organization_id", organization_id) \
+                        .eq("table_name", table_name) \
+                        .execute()
+
+                    debug_rules = debug_response.data if debug_response.data else []
+                    logging.warning(f"No rules found with connection filter. Total rules for table: {len(debug_rules)}")
+
+                    if debug_rules:
+                        active_rules = [r for r in debug_rules if r.get('is_active', True)]
+                        inactive_rules = [r for r in debug_rules if not r.get('is_active', True)]
+                        connections_in_rules = list(set([r.get('connection_id') for r in debug_rules]))
+
+                        logging.warning(f"Debug - Active rules: {len(active_rules)}, Inactive: {len(inactive_rules)}")
+                        logging.warning(f"Debug - Connection IDs found: {connections_in_rules}")
+                        logging.warning(f"Debug - Looking for connection: {connection_id}")
 
                 return rules
+
+            except Exception as direct_error:
+                logging.error(f"Direct Supabase query failed: {str(direct_error)}")
+
+                # Fallback to the original method
+                try:
+                    return self.supabase.get_validation_rules(organization_id, table_name, connection_id)
+                except TypeError:
+                    # If it fails due to unexpected argument, fall back to old method
+                    rules = self.supabase.get_validation_rules(organization_id, table_name)
+
+                    # Filter manually if connection_id is provided
+                    if connection_id and rules:
+                        original_count = len(rules)
+                        rules = [rule for rule in rules if rule.get('connection_id') == connection_id]
+                        logging.info(
+                            f"Manual filtering: {original_count} -> {len(rules)} rules after connection filter")
+
+                    return rules
+
         except Exception as e:
             logging.error(f"Error getting validation rules: {str(e)}")
+            logging.error(traceback.format_exc())
             return []
+
 
     def add_rule(self, organization_id: str, table_name: str, connection_id: str, rule: Dict[str, Any]) -> str:
         """
