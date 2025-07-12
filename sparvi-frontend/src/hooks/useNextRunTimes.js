@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { automationAPI } from '../api/enhancedApiService';
 
 /**
- * Simplified hook for fetching next run times - no infinite loops
+ * Fixed hook for fetching next run times - eliminates infinite loops
  */
 export const useNextRunTimes = (connectionId, options = {}) => {
   const {
@@ -16,159 +16,164 @@ export const useNextRunTimes = (connectionId, options = {}) => {
   const [error, setError] = useState(null);
   const [lastFetchTime, setLastFetchTime] = useState(null);
 
-  // Refs for cleanup and control
+  // Use refs to avoid dependency issues
   const intervalRef = useRef(null);
+  const mountedRef = useRef(true);
   const consecutiveErrorsRef = useRef(0);
-  const isMountedRef = useRef(true);
-  const requestInProgressRef = useRef(false);
+  const circuitBreakerRef = useRef(false);
+  const currentConnectionIdRef = useRef(connectionId);
 
-  // Circuit breaker state
-  const [circuitBreakerOpen, setCircuitBreakerOpen] = useState(false);
+  // Update connection ref when it changes
+  useEffect(() => {
+    currentConnectionIdRef.current = connectionId;
+  }, [connectionId]);
 
-  /**
-   * Fetch next run times - simplified version
-   */
-  const fetchNextRuns = useCallback(async () => {
-    // Prevent multiple simultaneous requests
-    if (requestInProgressRef.current || !enabled || circuitBreakerOpen) {
+  // Stable fetch function that doesn't change on every render
+  const fetchNextRuns = useCallback(async (isManualRefresh = false) => {
+    const currentConnectionId = currentConnectionIdRef.current;
+
+    console.log('[useNextRunTimes] fetchNextRuns called', {
+      connectionId: currentConnectionId,
+      enabled,
+      circuitBreakerOpen: circuitBreakerRef.current,
+      isManualRefresh
+    });
+
+    // Skip if disabled or circuit breaker is open (unless manual refresh)
+    if (!enabled || (!isManualRefresh && circuitBreakerRef.current)) {
       return;
     }
 
-    requestInProgressRef.current = true;
+    if (!mountedRef.current) {
+      console.log('[useNextRunTimes] Component unmounted, skipping fetch');
+      return;
+    }
+
     setLoading(true);
     setError(null);
 
     try {
       let response;
 
-      if (connectionId) {
-        console.log(`Fetching next runs for connection: ${connectionId}`);
-        response = await automationAPI.getNextRunTimes(connectionId, {
-          forceFresh: true,
-          requestId: `next-runs-${connectionId}-${Date.now()}`
+      if (currentConnectionId) {
+        console.log(`[useNextRunTimes] Fetching next runs for connection: ${currentConnectionId}`);
+        response = await automationAPI.getNextRunTimes(currentConnectionId, {
+          forceFresh: true
         });
       } else {
-        console.log('Fetching next runs for all connections');
+        console.log('[useNextRunTimes] Fetching next runs for all connections');
         response = await automationAPI.getAllNextRunTimes({
-          forceFresh: true,
-          requestId: `next-runs-all-${Date.now()}`
+          forceFresh: true
         });
       }
 
-      // Only update state if component is still mounted
-      if (isMountedRef.current) {
-        let runs = {};
+      if (!mountedRef.current) return;
 
-        if (connectionId) {
-          runs = response?.next_runs || {};
-        } else {
-          if (response?.next_runs_by_connection) {
-            runs = response.next_runs_by_connection;
-          } else if (response?.schedules_by_connection) {
-            runs = response.schedules_by_connection;
-          }
+      let runs = {};
+
+      if (currentConnectionId) {
+        runs = response?.next_runs || {};
+      } else {
+        if (response?.next_runs_by_connection) {
+          runs = response.next_runs_by_connection;
+        } else if (response?.schedules_by_connection) {
+          runs = response.schedules_by_connection;
         }
-
-        setNextRuns(runs);
-        setLastFetchTime(new Date());
-        setError(null);
-        consecutiveErrorsRef.current = 0;
-        setCircuitBreakerOpen(false);
       }
+
+      console.log('[useNextRunTimes] Successfully fetched next runs:', runs);
+
+      setNextRuns(runs);
+      setLastFetchTime(new Date());
+      setError(null);
+      consecutiveErrorsRef.current = 0;
+      circuitBreakerRef.current = false;
 
     } catch (err) {
-      console.error('Error fetching next run times:', err);
+      console.error('[useNextRunTimes] Error fetching next run times:', err);
 
-      if (isMountedRef.current) {
-        consecutiveErrorsRef.current += 1;
+      if (!mountedRef.current) return;
 
-        const errorInfo = {
-          message: err.message || 'Failed to fetch next run times',
-          type: 'api_error',
-          consecutiveErrors: consecutiveErrorsRef.current
-        };
+      consecutiveErrorsRef.current += 1;
 
-        setError(errorInfo);
+      const errorInfo = {
+        message: err.message || 'Failed to fetch next run times',
+        type: 'api_error',
+        consecutiveErrors: consecutiveErrorsRef.current
+      };
 
-        if (onError) {
-          try {
-            onError(errorInfo);
-          } catch (callbackError) {
-            console.error('Error in onError callback:', callbackError);
-          }
-        }
+      setError(errorInfo);
 
-        // Open circuit breaker if too many consecutive errors
-        if (consecutiveErrorsRef.current >= 3) {
-          console.warn('Opening circuit breaker due to consecutive errors');
-          setCircuitBreakerOpen(true);
-
-          // Auto-reset circuit breaker after 5 minutes
-          setTimeout(() => {
-            if (isMountedRef.current) {
-              console.log('Auto-resetting circuit breaker');
-              setCircuitBreakerOpen(false);
-              consecutiveErrorsRef.current = 0;
-            }
-          }, 5 * 60 * 1000);
+      if (onError) {
+        try {
+          onError(errorInfo);
+        } catch (callbackError) {
+          console.error('[useNextRunTimes] Error in onError callback:', callbackError);
         }
       }
+
+      // Open circuit breaker after 3 consecutive errors
+      if (consecutiveErrorsRef.current >= 3) {
+        console.warn('[useNextRunTimes] Opening circuit breaker due to consecutive errors');
+        circuitBreakerRef.current = true;
+
+        // Auto-reset circuit breaker after 5 minutes
+        setTimeout(() => {
+          if (mountedRef.current) {
+            console.log('[useNextRunTimes] Auto-resetting circuit breaker');
+            circuitBreakerRef.current = false;
+            consecutiveErrorsRef.current = 0;
+          }
+        }, 5 * 60 * 1000);
+      }
     } finally {
-      requestInProgressRef.current = false;
-      if (isMountedRef.current) {
+      if (mountedRef.current) {
         setLoading(false);
       }
     }
-  }, [connectionId, enabled, circuitBreakerOpen, onError]);
+  }, [enabled, onError]); // Minimal dependencies
 
-  /**
-   * Manual refresh function
-   */
+  // Manual refresh function
   const refresh = useCallback(async () => {
-    console.log('Manual refresh requested');
-
-    // Clear circuit breaker and errors
-    setCircuitBreakerOpen(false);
+    console.log('[useNextRunTimes] Manual refresh requested');
+    circuitBreakerRef.current = false;
     consecutiveErrorsRef.current = 0;
-    setError(null);
-
-    // Fetch immediately
-    await fetchNextRuns();
+    await fetchNextRuns(true);
   }, [fetchNextRuns]);
 
-  /**
-   * Manual trigger for automation
-   */
+  // Manual trigger function
   const triggerManualRun = useCallback(async (automationType) => {
-    if (!connectionId) {
-      console.warn('Cannot trigger manual run without connectionId');
+    const currentConnectionId = currentConnectionIdRef.current;
+
+    if (!currentConnectionId) {
+      console.warn('[useNextRunTimes] Cannot trigger manual run without connectionId');
       return false;
     }
 
     try {
-      console.log(`Triggering manual run for ${automationType} on connection ${connectionId}`);
-      const response = await automationAPI.triggerImmediate(connectionId, automationType);
+      console.log(`[useNextRunTimes] Triggering manual run for ${automationType} on connection ${currentConnectionId}`);
+      const response = await automationAPI.triggerImmediate(currentConnectionId, automationType);
 
       // Refresh next runs after triggering (with delay)
       setTimeout(() => {
-        if (isMountedRef.current) {
+        if (mountedRef.current) {
           fetchNextRuns();
         }
       }, 2000);
 
       return response?.success || response?.result || !response?.error;
     } catch (error) {
-      console.error('Error triggering manual run:', error);
+      console.error('[useNextRunTimes] Error triggering manual run:', error);
       return false;
     }
-  }, [connectionId, fetchNextRuns]);
+  }, [fetchNextRuns]);
 
-  // Single effect to manage polling - SIMPLIFIED
+  // Single effect to handle polling - FIXED
   useEffect(() => {
-    console.log('useNextRunTimes effect triggered', {
+    console.log('[useNextRunTimes] Setting up polling effect', {
       enabled,
-      circuitBreakerOpen,
-      connectionId: connectionId || 'all'
+      connectionId,
+      refreshInterval
     });
 
     // Clear any existing interval
@@ -177,57 +182,57 @@ export const useNextRunTimes = (connectionId, options = {}) => {
       intervalRef.current = null;
     }
 
-    // Only start polling if enabled and circuit breaker is closed
-    if (enabled && !circuitBreakerOpen) {
-      console.log('Starting polling for next runs');
-
-      // Initial fetch with small delay
-      const initialTimeout = setTimeout(() => {
-        if (isMountedRef.current && !requestInProgressRef.current) {
-          fetchNextRuns();
-        }
-      }, 500);
-
-      // Set up interval
-      intervalRef.current = setInterval(() => {
-        if (isMountedRef.current && !requestInProgressRef.current) {
-          fetchNextRuns();
-        }
-      }, refreshInterval);
-
-      // Cleanup function
-      return () => {
-        clearTimeout(initialTimeout);
-        if (intervalRef.current) {
-          clearInterval(intervalRef.current);
-          intervalRef.current = null;
-        }
-      };
+    // Only start if enabled
+    if (!enabled) {
+      console.log('[useNextRunTimes] Polling disabled');
+      return;
     }
 
-    // If not enabled or circuit breaker is open, no cleanup needed
-    return () => {};
-  }, [enabled, circuitBreakerOpen, refreshInterval, fetchNextRuns, connectionId]);
+    // Initial fetch with small delay
+    const initialTimeout = setTimeout(() => {
+      if (mountedRef.current) {
+        fetchNextRuns();
+      }
+    }, 500);
+
+    // Set up recurring interval
+    intervalRef.current = setInterval(() => {
+      if (mountedRef.current && !circuitBreakerRef.current) {
+        fetchNextRuns();
+      }
+    }, refreshInterval);
+
+    console.log('[useNextRunTimes] Polling started with interval:', refreshInterval);
+
+    // Cleanup function
+    return () => {
+      console.log('[useNextRunTimes] Cleaning up polling');
+      clearTimeout(initialTimeout);
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current);
+        intervalRef.current = null;
+      }
+    };
+  }, [enabled, connectionId, refreshInterval]); // Remove fetchNextRuns from dependencies!
+
+  // Reset errors when connectionId changes
+  useEffect(() => {
+    setError(null);
+    circuitBreakerRef.current = false;
+    consecutiveErrorsRef.current = 0;
+  }, [connectionId]);
 
   // Cleanup on unmount
   useEffect(() => {
     return () => {
-      console.log('useNextRunTimes cleanup on unmount');
-      isMountedRef.current = false;
-
+      console.log('[useNextRunTimes] Component unmounting');
+      mountedRef.current = false;
       if (intervalRef.current) {
         clearInterval(intervalRef.current);
         intervalRef.current = null;
       }
     };
   }, []); // Empty dependency array - only run on mount/unmount
-
-  // Reset errors when connectionId changes
-  useEffect(() => {
-    setError(null);
-    setCircuitBreakerOpen(false);
-    consecutiveErrorsRef.current = 0;
-  }, [connectionId]);
 
   return {
     nextRuns,
@@ -236,10 +241,7 @@ export const useNextRunTimes = (connectionId, options = {}) => {
     lastFetchTime,
     refresh,
     triggerManualRun,
-    circuitBreakerOpen,
+    circuitBreakerOpen: circuitBreakerRef.current,
     consecutiveErrors: consecutiveErrorsRef.current
   };
 };
-
-// Export alias for backwards compatibility
-export const useAutomationNextRun = useNextRunTimes;

@@ -1,9 +1,7 @@
-// COMPLETE REPLACEMENT for your RefreshControls.js component
-
 import React from 'react';
 import { Link } from 'react-router-dom';
 import { useUI } from '../../../contexts/UIContext';
-import { useAutomationStatus } from '../../../hooks/useAutomationStatus';
+import { useScheduleConfig } from '../../../hooks/useScheduleConfig';
 import { useNextRunTimes } from '../../../hooks/useNextRunTimes';
 import LoadingSpinner from '../../../components/common/LoadingSpinner';
 import ColumnsIcon from '../../../components/icons/ColumnsIcon';
@@ -18,6 +16,7 @@ import {
   Cog6ToothIcon,
   CalendarIcon
 } from '@heroicons/react/24/outline';
+import { formatNextRunTime, getNextRunStatusColor, hasEnabledAutomation } from '../../../utils/scheduleUtils';
 
 const RefreshControls = ({
   connectionId,
@@ -29,8 +28,23 @@ const RefreshControls = ({
   onViewSchemaChanges
 }) => {
   const { showNotification } = useUI();
-  const { status: automationStatus, toggleAutomation, triggerManualRun, loading: statusLoading } = useAutomationStatus(connectionId);
-  const { nextRuns, loading: nextRunsLoading, refresh: refreshNextRuns } = useNextRunTimes(connectionId);
+  const { schedule, loading: scheduleLoading, updateSchedule } = useScheduleConfig(connectionId);
+
+  const {
+    nextRuns,
+    loading: nextRunsLoading,
+    error: nextRunsError,
+    refresh: refreshNextRuns,
+    triggerManualRun,
+    circuitBreakerOpen,
+    consecutiveErrors
+  } = useNextRunTimes(connectionId, {
+    refreshInterval: 60000, // Update every minute
+    enabled: !!connectionId,
+    onError: (error) => {
+      console.warn(`Metadata automation error for connection ${connectionId}:`, error);
+    }
+  });
 
   // Refresh a specific type of metadata
   const handleRefresh = (type) => {
@@ -71,14 +85,24 @@ const RefreshControls = ({
 
   // Toggle automation for metadata refresh
   const handleToggleMetadataAutomation = async () => {
-    const success = await toggleAutomation('metadata_refresh', !automationStatus.connection_config?.metadata_refresh?.enabled);
+    if (!schedule) return;
+
+    const updatedSchedule = {
+      ...schedule,
+      metadata_refresh: {
+        ...schedule.metadata_refresh,
+        enabled: !schedule.metadata_refresh?.enabled
+      }
+    };
+
+    const success = await updateSchedule(updatedSchedule);
     if (success) {
       showNotification(
-        `Metadata automation ${!automationStatus.connection_config?.metadata_refresh?.enabled ? 'enabled' : 'disabled'}`,
+        `Metadata automation ${!schedule.metadata_refresh?.enabled ? 'enabled' : 'disabled'}`,
         'success'
       );
       // Refresh next runs after toggling
-      refreshNextRuns();
+      setTimeout(() => refreshNextRuns(), 1000);
     } else {
       showNotification('Failed to toggle metadata automation', 'error');
     }
@@ -86,26 +110,38 @@ const RefreshControls = ({
 
   // Toggle automation for schema change detection
   const handleToggleSchemaAutomation = async () => {
-    const success = await toggleAutomation('schema_change_detection', !automationStatus.connection_config?.schema_change_detection?.enabled);
+    if (!schedule) return;
+
+    const updatedSchedule = {
+      ...schedule,
+      schema_change_detection: {
+        ...schedule.schema_change_detection,
+        enabled: !schedule.schema_change_detection?.enabled
+      }
+    };
+
+    const success = await updateSchedule(updatedSchedule);
     if (success) {
       showNotification(
-        `Schema change detection ${!automationStatus.connection_config?.schema_change_detection?.enabled ? 'enabled' : 'disabled'}`,
+        `Schema change detection ${!schedule.schema_change_detection?.enabled ? 'enabled' : 'disabled'}`,
         'success'
       );
       // Refresh next runs after toggling
-      refreshNextRuns();
+      setTimeout(() => refreshNextRuns(), 1000);
     } else {
       showNotification('Failed to toggle schema automation', 'error');
     }
   };
 
   // Trigger automated runs manually
-  const handleTriggerAutomatedRun = async (type) => {
-    const success = await triggerManualRun(type);
+  const handleTriggerAutomatedRun = async (automationType) => {
+    const success = await triggerManualRun(automationType);
     if (success) {
-      showNotification(`${type.replace('_', ' ')} automation triggered`, 'success');
+      showNotification(`${automationType.replace('_', ' ')} automation triggered`, 'success');
+      // Refresh next runs after triggering
+      setTimeout(() => refreshNextRuns(), 2000);
     } else {
-      showNotification(`Failed to trigger ${type.replace('_', ' ')} automation`, 'error');
+      showNotification(`Failed to trigger ${automationType.replace('_', ' ')} automation`, 'error');
     }
   };
 
@@ -126,31 +162,22 @@ const RefreshControls = ({
 
   // Get automation status for display
   const getAutomationStatus = (automationType) => {
-    if (statusLoading) return { enabled: null, interval: null, lastRun: null, loading: true };
+    if (scheduleLoading) return { enabled: null, schedule: null, loading: true };
 
-    const config = automationStatus.connection_config?.[automationType];
-    const lastRun = automationStatus.last_runs?.[automationType];
+    const config = schedule?.[automationType];
+    const nextRun = nextRuns?.[automationType];
 
     return {
       enabled: config?.enabled || false,
-      interval: config?.interval_hours,
-      lastRun: lastRun?.completed_at,
-      status: lastRun?.status,
+      schedule: config,
+      nextRun: nextRun,
       loading: false
     };
   };
 
   const metadataAutomation = getAutomationStatus('metadata_refresh');
   const schemaAutomation = getAutomationStatus('schema_change_detection');
-
-  // Format time until next run
-  const formatTimeUntil = (nextRunData) => {
-    if (!nextRunData) return null;
-
-    if (nextRunData.currently_running) return 'Running now';
-    if (nextRunData.is_overdue) return 'Overdue';
-    return nextRunData.time_until_next;
-  };
+  const hasAnyAutomation = hasEnabledAutomation(schedule);
 
   return (
     <div className="space-y-4">
@@ -162,7 +189,7 @@ const RefreshControls = ({
             Automation Status
           </h4>
           <Link
-            to="/settings/automation"
+            to={`/settings/automation?connection=${connectionId}`}
             className="text-xs text-primary-600 hover:text-primary-700 flex items-center"
           >
             <Cog6ToothIcon className="h-3 w-3 mr-1" />
@@ -176,9 +203,9 @@ const RefreshControls = ({
             <div className="flex items-center justify-between">
               <div className="flex items-center">
                 <span className="text-xs text-secondary-700">Metadata Refresh</span>
-                {metadataAutomation.enabled && metadataAutomation.interval && !metadataAutomation.loading && (
+                {metadataAutomation.enabled && metadataAutomation.schedule && !metadataAutomation.loading && (
                   <span className="ml-2 text-xs text-secondary-500">
-                    (Every {metadataAutomation.interval}h)
+                    ({metadataAutomation.schedule.schedule_type === 'daily' ? 'Daily' : 'Weekly'} at {metadataAutomation.schedule.time})
                   </span>
                 )}
               </div>
@@ -187,7 +214,7 @@ const RefreshControls = ({
                   <button
                     onClick={() => handleTriggerAutomatedRun('metadata_refresh')}
                     className="text-xs text-primary-600 hover:text-primary-700"
-                    title="Trigger automated refresh now"
+                    title="Trigger metadata refresh now"
                   >
                     <PlayIcon className="h-3 w-3" />
                   </button>
@@ -204,7 +231,7 @@ const RefreshControls = ({
                 ) : (
                   <button
                     onClick={handleToggleMetadataAutomation}
-                    disabled={statusLoading}
+                    disabled={scheduleLoading}
                     className={`flex items-center px-2 py-1 rounded text-xs font-medium transition-all duration-200 ${
                       metadataAutomation.enabled
                         ? 'bg-accent-100 text-accent-800 hover:bg-accent-200'
@@ -235,21 +262,26 @@ const RefreshControls = ({
                     <LoadingSpinner size="xs" className="mr-1" />
                     Loading next run...
                   </div>
-                ) : nextRuns.metadata_refresh ? (
-                  <div className={`flex items-center ${
-                    nextRuns.metadata_refresh.is_overdue 
-                      ? 'text-warning-600' 
-                      : nextRuns.metadata_refresh.currently_running
-                      ? 'text-primary-600'
-                      : 'text-secondary-500'
-                  }`}>
+                ) : nextRunsError && !circuitBreakerOpen ? (
+                  <div className="text-warning-600 flex items-center">
+                    <ExclamationTriangleIcon className="h-3 w-3 mr-1" />
+                    Error loading schedule
+                    {consecutiveErrors > 0 && ` (${consecutiveErrors} errors)`}
+                  </div>
+                ) : circuitBreakerOpen ? (
+                  <div className="text-danger-600 flex items-center">
+                    <ExclamationTriangleIcon className="h-3 w-3 mr-1" />
+                    Schedule loading paused
+                  </div>
+                ) : metadataAutomation.nextRun ? (
+                  <div className={`flex items-center ${getNextRunStatusColor(metadataAutomation.nextRun)}`}>
                     <CalendarIcon className="h-3 w-3 mr-1" />
-                    {nextRuns.metadata_refresh.currently_running ? (
+                    {metadataAutomation.nextRun.currently_running ? (
                       'Currently running'
-                    ) : nextRuns.metadata_refresh.is_overdue ? (
+                    ) : metadataAutomation.nextRun.is_overdue ? (
                       'Next run overdue'
                     ) : (
-                      `Next: ${nextRuns.metadata_refresh.time_until_next}`
+                      `Next: ${formatNextRunTime(metadataAutomation.nextRun)}`
                     )}
                   </div>
                 ) : (
@@ -267,9 +299,9 @@ const RefreshControls = ({
             <div className="flex items-center justify-between">
               <div className="flex items-center">
                 <span className="text-xs text-secondary-700">Schema Detection</span>
-                {schemaAutomation.enabled && schemaAutomation.interval && !schemaAutomation.loading && (
+                {schemaAutomation.enabled && schemaAutomation.schedule && !schemaAutomation.loading && (
                   <span className="ml-2 text-xs text-secondary-500">
-                    (Every {schemaAutomation.interval}h)
+                    ({schemaAutomation.schedule.schedule_type === 'daily' ? 'Daily' : 'Weekly'} at {schemaAutomation.schedule.time})
                   </span>
                 )}
               </div>
@@ -295,7 +327,7 @@ const RefreshControls = ({
                 ) : (
                   <button
                     onClick={handleToggleSchemaAutomation}
-                    disabled={statusLoading}
+                    disabled={scheduleLoading}
                     className={`flex items-center px-2 py-1 rounded text-xs font-medium transition-all duration-200 ${
                       schemaAutomation.enabled
                         ? 'bg-accent-100 text-accent-800 hover:bg-accent-200'
@@ -326,21 +358,26 @@ const RefreshControls = ({
                     <LoadingSpinner size="xs" className="mr-1" />
                     Loading next run...
                   </div>
-                ) : nextRuns.schema_change_detection ? (
-                  <div className={`flex items-center ${
-                    nextRuns.schema_change_detection.is_overdue 
-                      ? 'text-warning-600' 
-                      : nextRuns.schema_change_detection.currently_running
-                      ? 'text-primary-600'
-                      : 'text-secondary-500'
-                  }`}>
+                ) : nextRunsError && !circuitBreakerOpen ? (
+                  <div className="text-warning-600 flex items-center">
+                    <ExclamationTriangleIcon className="h-3 w-3 mr-1" />
+                    Error loading schedule
+                    {consecutiveErrors > 0 && ` (${consecutiveErrors} errors)`}
+                  </div>
+                ) : circuitBreakerOpen ? (
+                  <div className="text-danger-600 flex items-center">
+                    <ExclamationTriangleIcon className="h-3 w-3 mr-1" />
+                    Schedule loading paused
+                  </div>
+                ) : schemaAutomation.nextRun ? (
+                  <div className={`flex items-center ${getNextRunStatusColor(schemaAutomation.nextRun)}`}>
                     <CalendarIcon className="h-3 w-3 mr-1" />
-                    {nextRuns.schema_change_detection.currently_running ? (
+                    {schemaAutomation.nextRun.currently_running ? (
                       'Currently running'
-                    ) : nextRuns.schema_change_detection.is_overdue ? (
+                    ) : schemaAutomation.nextRun.is_overdue ? (
                       'Next run overdue'
                     ) : (
-                      `Next: ${nextRuns.schema_change_detection.time_until_next}`
+                      `Next: ${formatNextRunTime(schemaAutomation.nextRun)}`
                     )}
                   </div>
                 ) : (
@@ -353,19 +390,19 @@ const RefreshControls = ({
             )}
           </div>
 
-          {/* Global automation disabled warning */}
-          {!automationStatus.global_enabled && (
-            <div className="mt-2 p-2 bg-warning-50 border border-warning-200 rounded flex items-start">
-              <ExclamationTriangleIcon className="h-4 w-4 text-warning-400 mr-2 mt-0.5" />
+          {/* No automation configured message */}
+          {!hasAnyAutomation && !scheduleLoading && (
+            <div className="mt-2 p-2 bg-secondary-50 border border-secondary-200 rounded flex items-start">
+              <ExclamationTriangleIcon className="h-4 w-4 text-secondary-400 mr-2 mt-0.5" />
               <div>
-                <p className="text-xs text-warning-800">
-                  Global automation is disabled.
+                <p className="text-xs text-secondary-800">
+                  No automation is configured for this connection.
                 </p>
                 <Link
-                  to="/settings/automation"
-                  className="text-xs text-warning-600 hover:text-warning-700 underline"
+                  to={`/settings/automation?connection=${connectionId}`}
+                  className="text-xs text-secondary-600 hover:text-secondary-700 underline"
                 >
-                  Enable in settings →
+                  Configure automation schedules →
                 </Link>
               </div>
             </div>

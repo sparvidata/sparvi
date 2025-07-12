@@ -3,7 +3,8 @@ import { useSearchParams } from 'react-router-dom';
 import { useConnection } from '../../contexts/EnhancedConnectionContext';
 import { useUI } from '../../contexts/UIContext';
 import { useAutomationConfig } from '../../hooks/useAutomationConfig';
-import { getSession } from '../../api/supabase';
+import { ScheduleConfig } from '../../components/automation';
+import { NextRunDisplay } from '../../components/automation';
 import {
   ClockIcon,
   BellIcon,
@@ -11,9 +12,7 @@ import {
   PauseIcon,
   Cog6ToothIcon,
   ExclamationTriangleIcon,
-  ClipboardDocumentCheckIcon,
-  TableCellsIcon,
-  CommandLineIcon
+  CalendarIcon
 } from '@heroicons/react/24/outline';
 import LoadingSpinner from '../../components/common/LoadingSpinner';
 
@@ -21,7 +20,7 @@ const AutomationSettingsPage = () => {
   const [searchParams] = useSearchParams();
   const { connections, activeConnection, setCurrentConnection } = useConnection();
   const { showNotification } = useUI();
-  const { globalConfig, connectionConfigs, loading, updateGlobalConfig, updateConnectionConfig } = useAutomationConfig();
+  const { globalConfig, loading, updateGlobalConfig } = useAutomationConfig();
 
   // Get connection from URL params if specified
   const urlConnectionId = searchParams.get('connection');
@@ -38,60 +37,12 @@ const AutomationSettingsPage = () => {
     }
   }, [urlConnectionId, connections, setCurrentConnection]);
 
-  const [automationStatus, setAutomationStatus] = useState({});
-  const [statusLoading, setStatusLoading] = useState(true);
-
-  // Load automation status for selected connection
-  useEffect(() => {
-    if (!selectedConnectionId) {
-      setStatusLoading(false);
-      return;
-    }
-
-    const loadStatus = async () => {
-      try {
-        const session = await getSession();
-        const token = session?.access_token;
-
-        if (!token) return;
-
-        const response = await fetch(`/api/automation/status/${selectedConnectionId}`, {
-          headers: { 'Authorization': `Bearer ${token}` }
-        });
-
-        if (response.ok) {
-          const data = await response.json();
-          setAutomationStatus(data);
-        }
-      } catch (error) {
-        console.error('Error loading automation status:', error);
-      } finally {
-        setStatusLoading(false);
-      }
-    };
-
-    loadStatus();
-
-    // Refresh status every 30 seconds
-    const interval = setInterval(loadStatus, 30000);
-    return () => clearInterval(interval);
-  }, [selectedConnectionId]);
-
   const saveGlobalConfig = async (newConfig) => {
     const success = await updateGlobalConfig(newConfig);
     if (success) {
       showNotification('Global automation settings saved', 'success');
     } else {
       showNotification('Failed to save global settings', 'error');
-    }
-  };
-
-  const saveConnectionConfig = async (connectionId, config) => {
-    const success = await updateConnectionConfig(connectionId, config);
-    if (success) {
-      showNotification('Connection automation settings saved', 'success');
-    } else {
-      showNotification('Failed to save connection settings', 'error');
     }
   };
 
@@ -106,6 +57,10 @@ const AutomationSettingsPage = () => {
     await saveGlobalConfig(newConfig);
   };
 
+  const handleScheduleUpdate = (newSchedule) => {
+    showNotification('Automation schedule updated successfully', 'success');
+  };
+
   if (loading) {
     return (
       <div className="flex justify-center py-12">
@@ -114,6 +69,8 @@ const AutomationSettingsPage = () => {
       </div>
     );
   }
+
+  const selectedConnection = connections.find(c => c.id === selectedConnectionId);
 
   return (
     <div className="space-y-6">
@@ -363,13 +320,16 @@ const AutomationSettingsPage = () => {
         </div>
       </div>
 
-      {/* Connection Selection */}
+      {/* Connection Selection and Schedule Configuration */}
       {connections.length > 0 && (
         <div className="bg-white border border-secondary-200 rounded-lg">
           <div className="px-6 py-4 border-b border-secondary-200">
-            <h3 className="text-lg font-medium text-secondary-900">Connection-Specific Automation</h3>
+            <h3 className="text-lg font-medium text-secondary-900 flex items-center">
+              <CalendarIcon className="h-5 w-5 mr-2 text-primary-600" />
+              Connection Automation Schedules
+            </h3>
             <p className="mt-1 text-sm text-secondary-500">
-              Configure automation settings for individual database connections
+              Configure when automated processes run for your database connections
             </p>
           </div>
 
@@ -393,17 +353,24 @@ const AutomationSettingsPage = () => {
               </select>
             </div>
 
-            {/* Connection Configuration */}
+            {/* Schedule Configuration */}
             {selectedConnectionId && (
-              <ConnectionAutomationConfig
-                connectionId={selectedConnectionId}
-                connection={connections.find(c => c.id === selectedConnectionId)}
-                config={connectionConfigs[selectedConnectionId]}
-                onSave={(config) => saveConnectionConfig(selectedConnectionId, config)}
-                automationStatus={automationStatus}
-                globalEnabled={globalConfig?.automation_enabled}
-                loading={statusLoading}
-              />
+              <div className="space-y-6">
+                <ScheduleConfig
+                  connectionId={selectedConnectionId}
+                  onUpdate={handleScheduleUpdate}
+                />
+
+                {/* Next Run Display */}
+                <div className="border-t pt-6">
+                  <NextRunDisplay
+                    connectionId={selectedConnectionId}
+                    connectionName={selectedConnection?.name}
+                    showManualTriggers={true}
+                    compact={false}
+                  />
+                </div>
+              </div>
             )}
           </div>
         </div>
@@ -422,311 +389,34 @@ const AutomationSettingsPage = () => {
               </h3>
               <div className="mt-2 text-sm text-warning-700">
                 <p>
-                  All automated processes are currently paused. Connection-specific settings will take effect once global automation is enabled.
+                  All automated processes are currently paused. Connection-specific schedules will take effect once global automation is enabled.
                 </p>
               </div>
             </div>
           </div>
         </div>
       )}
-    </div>
-  );
-};
 
-// Component for individual connection automation config
-const ConnectionAutomationConfig = ({
-  connectionId,
-  connection,
-  config,
-  onSave,
-  automationStatus,
-  globalEnabled,
-  loading
-}) => {
-  const [localConfig, setLocalConfig] = useState({
-    metadata_refresh: {
-      enabled: false,
-      interval_hours: 24,
-      types: ['tables', 'columns', 'statistics']
-    },
-    schema_change_detection: {
-      enabled: false,
-      interval_hours: 6,
-      auto_acknowledge_safe_changes: false
-    },
-    validation_automation: {
-      enabled: false,
-      interval_hours: 12,
-      auto_generate_for_new_tables: true,
-      notification_threshold: 'failures_only'
-    },
-    ...config
-  });
-
-  const updateConfig = (section, field, value) => {
-    setLocalConfig(prev => ({
-      ...prev,
-      [section]: {
-        ...prev[section],
-        [field]: value
-      }
-    }));
-  };
-
-  const handleSave = () => {
-    onSave(localConfig);
-  };
-
-  const getStatusIndicator = (type) => {
-    if (loading) return <LoadingSpinner size="xs" />;
-
-    const status = automationStatus?.last_runs?.[type];
-    if (!status) return null;
-
-    const statusColors = {
-      running: 'text-primary-500',
-      completed: 'text-accent-500',
-      failed: 'text-danger-500',
-      scheduled: 'text-secondary-500'
-    };
-
-    return (
-      <span className={`text-xs ${statusColors[status.status]} ml-2`}>
-        {status.status} {status.last_run && `(${new Date(status.last_run).toLocaleDateString()})`}
-      </span>
-    );
-  };
-
-  if (!connection) return null;
-
-  return (
-    <div className="space-y-6">
-      <div className="bg-secondary-50 border border-secondary-200 rounded-lg p-4">
-        <h4 className="font-medium text-secondary-900 mb-2">
-          {connection.name} Automation Settings
-        </h4>
-        <p className="text-sm text-secondary-600">
-          Configure automated processes for this database connection
-        </p>
-      </div>
-
-      <div className="space-y-6">
-        {/* Metadata Refresh */}
-        <div className="border border-secondary-200 rounded-lg p-4">
-          <div className="flex items-center justify-between mb-4">
-            <div className="flex items-center">
-              <TableCellsIcon className="h-5 w-5 text-primary-600 mr-2" />
-              <div>
-                <div className="text-sm font-medium text-secondary-900">
-                  Metadata Refresh
-                  {getStatusIndicator('metadata_refresh')}
-                </div>
-                <div className="text-xs text-secondary-500">
-                  Automatic refresh of table, column, and statistics metadata
-                </div>
+      {/* No connections warning */}
+      {connections.length === 0 && (
+        <div className="rounded-md bg-secondary-50 p-4">
+          <div className="flex">
+            <div className="flex-shrink-0">
+              <ExclamationTriangleIcon className="h-5 w-5 text-secondary-400" aria-hidden="true" />
+            </div>
+            <div className="ml-3">
+              <h3 className="text-sm font-medium text-secondary-800">
+                No database connections found
+              </h3>
+              <div className="mt-2 text-sm text-secondary-700">
+                <p>
+                  Create a database connection first to configure automation schedules.
+                </p>
               </div>
             </div>
-            <label className="flex items-center">
-              <input
-                type="checkbox"
-                checked={localConfig.metadata_refresh.enabled}
-                onChange={(e) => updateConfig('metadata_refresh', 'enabled', e.target.checked)}
-                className="rounded border-secondary-300 text-primary-600 shadow-sm focus:border-primary-300 focus:ring focus:ring-primary-200 focus:ring-opacity-50"
-              />
-              <span className="ml-2 text-sm">Enable</span>
-            </label>
           </div>
-
-          {localConfig.metadata_refresh.enabled && (
-            <div className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-secondary-700">
-                  Refresh Interval
-                </label>
-                <select
-                  value={localConfig.metadata_refresh.interval_hours}
-                  onChange={(e) => updateConfig('metadata_refresh', 'interval_hours', parseInt(e.target.value))}
-                  className="mt-1 block w-full border-secondary-300 rounded-md shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
-                >
-                  <option value={1}>Every hour</option>
-                  <option value={6}>Every 6 hours</option>
-                  <option value={12}>Every 12 hours</option>
-                  <option value={24}>Daily</option>
-                  <option value={168}>Weekly</option>
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-secondary-700 mb-2">
-                  Metadata Types to Refresh
-                </label>
-                <div className="space-y-2">
-                  {['tables', 'columns', 'statistics'].map(type => (
-                    <label key={type} className="flex items-center">
-                      <input
-                        type="checkbox"
-                        checked={localConfig.metadata_refresh.types.includes(type)}
-                        onChange={(e) => {
-                          const types = e.target.checked
-                            ? [...localConfig.metadata_refresh.types, type]
-                            : localConfig.metadata_refresh.types.filter(t => t !== type);
-                          updateConfig('metadata_refresh', 'types', types);
-                        }}
-                        className="rounded border-secondary-300 text-primary-600 shadow-sm focus:border-primary-300 focus:ring focus:ring-primary-200 focus:ring-opacity-50"
-                      />
-                      <span className="ml-2 text-sm text-secondary-900 capitalize">
-                        {type}
-                      </span>
-                    </label>
-                  ))}
-                </div>
-              </div>
-            </div>
-          )}
         </div>
-
-        {/* Schema Change Detection */}
-        <div className="border border-secondary-200 rounded-lg p-4">
-          <div className="flex items-center justify-between mb-4">
-            <div className="flex items-center">
-              <CommandLineIcon className="h-5 w-5 text-primary-600 mr-2" />
-              <div>
-                <div className="text-sm font-medium text-secondary-900">
-                  Schema Change Detection
-                  {getStatusIndicator('schema_change_detection')}
-                </div>
-                <div className="text-xs text-secondary-500">
-                  Automatic detection of database schema changes
-                </div>
-              </div>
-            </div>
-            <label className="flex items-center">
-              <input
-                type="checkbox"
-                checked={localConfig.schema_change_detection.enabled}
-                onChange={(e) => updateConfig('schema_change_detection', 'enabled', e.target.checked)}
-                className="rounded border-secondary-300 text-primary-600 shadow-sm focus:border-primary-300 focus:ring focus:ring-primary-200 focus:ring-opacity-50"
-              />
-              <span className="ml-2 text-sm">Enable</span>
-            </label>
-          </div>
-
-          {localConfig.schema_change_detection.enabled && (
-            <div className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-secondary-700">
-                  Detection Interval
-                </label>
-                <select
-                  value={localConfig.schema_change_detection.interval_hours}
-                  onChange={(e) => updateConfig('schema_change_detection', 'interval_hours', parseInt(e.target.value))}
-                  className="mt-1 block w-full border-secondary-300 rounded-md shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
-                >
-                  <option value={1}>Every hour</option>
-                  <option value={6}>Every 6 hours</option>
-                  <option value={12}>Every 12 hours</option>
-                  <option value={24}>Daily</option>
-                </select>
-              </div>
-
-              <label className="flex items-center">
-                <input
-                  type="checkbox"
-                  checked={localConfig.schema_change_detection.auto_acknowledge_safe_changes}
-                  onChange={(e) => updateConfig('schema_change_detection', 'auto_acknowledge_safe_changes', e.target.checked)}
-                  className="rounded border-secondary-300 text-primary-600 shadow-sm focus:border-primary-300 focus:ring focus:ring-primary-200 focus:ring-opacity-50"
-                />
-                <span className="ml-2 text-sm text-secondary-900">
-                  Auto-acknowledge non-breaking changes
-                </span>
-              </label>
-            </div>
-          )}
-        </div>
-
-        {/* Validation Automation */}
-        <div className="border border-secondary-200 rounded-lg p-4">
-          <div className="flex items-center justify-between mb-4">
-            <div className="flex items-center">
-              <ClipboardDocumentCheckIcon className="h-5 w-5 text-primary-600 mr-2" />
-              <div>
-                <div className="text-sm font-medium text-secondary-900">
-                  Validation Automation
-                  {getStatusIndicator('validation_automation')}
-                </div>
-                <div className="text-xs text-secondary-500">
-                  Automatic validation rule execution and monitoring
-                </div>
-              </div>
-            </div>
-            <label className="flex items-center">
-              <input
-                type="checkbox"
-                checked={localConfig.validation_automation.enabled}
-                onChange={(e) => updateConfig('validation_automation', 'enabled', e.target.checked)}
-                className="rounded border-secondary-300 text-primary-600 shadow-sm focus:border-primary-300 focus:ring focus:ring-primary-200 focus:ring-opacity-50"
-              />
-              <span className="ml-2 text-sm">Enable</span>
-            </label>
-          </div>
-
-          {localConfig.validation_automation.enabled && (
-            <div className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-secondary-700">
-                  Execution Interval
-                </label>
-                <select
-                  value={localConfig.validation_automation.interval_hours}
-                  onChange={(e) => updateConfig('validation_automation', 'interval_hours', parseInt(e.target.value))}
-                  className="mt-1 block w-full border-secondary-300 rounded-md shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
-                >
-                  <option value={6}>Every 6 hours</option>
-                  <option value={12}>Every 12 hours</option>
-                  <option value={24}>Daily</option>
-                  <option value={168}>Weekly</option>
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-secondary-700">
-                  Notification Threshold
-                </label>
-                <select
-                  value={localConfig.validation_automation.notification_threshold}
-                  onChange={(e) => updateConfig('validation_automation', 'notification_threshold', e.target.value)}
-                  className="mt-1 block w-full border-secondary-300 rounded-md shadow-sm focus:border-primary-500 focus:ring-primary-500 sm:text-sm"
-                >
-                  <option value="all">All validation results</option>
-                  <option value="failures_only">Failures only</option>
-                  <option value="none">No notifications</option>
-                </select>
-              </div>
-
-              <label className="flex items-center">
-                <input
-                  type="checkbox"
-                  checked={localConfig.validation_automation.auto_generate_for_new_tables}
-                  onChange={(e) => updateConfig('validation_automation', 'auto_generate_for_new_tables', e.target.checked)}
-                  className="rounded border-secondary-300 text-primary-600 shadow-sm focus:border-primary-300 focus:ring focus:ring-primary-200 focus:ring-opacity-50"
-                />
-                <span className="ml-2 text-sm text-secondary-900">
-                  Auto-generate validations for new tables
-                </span>
-              </label>
-            </div>
-          )}
-        </div>
-      </div>
-
-      <div className="flex justify-end">
-        <button
-          onClick={handleSave}
-          className="px-4 py-2 bg-primary-600 text-white text-sm rounded-md hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500"
-        >
-          Save Configuration
-        </button>
-      </div>
+      )}
     </div>
   );
 };
