@@ -1,11 +1,14 @@
+# backend/core/utils/validation_automation_integration.py - FIXED VERSION
+
 import logging
+import json
 from typing import Dict, List, Any, Optional
 
 logger = logging.getLogger(__name__)
 
 
 class ValidationAutomationIntegrator:
-    """Integrates validation system with automation for automated validation runs"""
+    """FIXED: Integrates validation system with automation for automated validation runs"""
 
     def __init__(self, validation_manager, supabase_manager):
         """
@@ -20,8 +23,7 @@ class ValidationAutomationIntegrator:
 
     def run_automated_validations(self, connection_id: str, organization_id: str) -> Dict[str, Any]:
         """
-        Run automated validations for all tables configured for automation
-        This is called by the automation scheduler
+        FIXED: Run automated validations for all tables with validation rules
 
         Args:
             connection_id: Database connection ID
@@ -41,8 +43,10 @@ class ValidationAutomationIntegrator:
             # Build connection string
             connection_string = self._build_connection_string(connection)
 
-            # Get all tables that have automation enabled
-            automated_tables = self._get_automated_validation_tables(connection_id, organization_id)
+            # FIXED: Get ALL tables that have validation rules (not just automation-enabled ones)
+            tables_with_rules = self._get_tables_with_validation_rules(connection_id, organization_id)
+
+            logger.info(f"Found {len(tables_with_rules)} tables with validation rules")
 
             results_summary = {
                 "tables_processed": 0,
@@ -50,14 +54,25 @@ class ValidationAutomationIntegrator:
                 "passed_rules": 0,
                 "failed_rules": 0,
                 "tables_with_failures": [],
-                "errors": []
+                "errors": [],
+                "execution_details": []
             }
 
-            for table_name in automated_tables:
+            if not tables_with_rules:
+                logger.info("No tables found with validation rules - creating default validations")
+
+                # Try to get some tables and create default validations
+                self._create_default_validations_if_needed(connection_id, organization_id, connection_string)
+
+                # Try again after creating defaults
+                tables_with_rules = self._get_tables_with_validation_rules(connection_id, organization_id)
+                logger.info(f"After creating defaults, found {len(tables_with_rules)} tables with rules")
+
+            for table_name in tables_with_rules:
                 try:
                     logger.info(f"Running validations for table: {table_name}")
 
-                    # Execute validation rules for this table
+                    # FIXED: Execute validation rules for this table
                     validation_results = self.validation_manager.execute_rules(
                         organization_id=organization_id,
                         connection_string=connection_string,
@@ -75,20 +90,38 @@ class ValidationAutomationIntegrator:
                     results_summary["passed_rules"] += passed
                     results_summary["failed_rules"] += failed
 
+                    execution_detail = {
+                        "table_name": table_name,
+                        "rules_executed": len(validation_results),
+                        "passed": passed,
+                        "failed": failed,
+                        "success": True
+                    }
+
                     if failed > 0:
-                        results_summary["tables_with_failures"].append({
+                        failure_details = {
                             "table_name": table_name,
                             "failed_rules": failed,
                             "total_rules": len(validation_results),
                             "failures": [r for r in validation_results if not r.get("is_valid", False)]
-                        })
+                        }
+                        results_summary["tables_with_failures"].append(failure_details)
+                        execution_detail["failure_details"] = failure_details
+
+                    results_summary["execution_details"].append(execution_detail)
 
                     logger.info(f"Completed validations for {table_name}: {passed} passed, {failed} failed")
 
                 except Exception as table_error:
                     logger.error(f"Error validating table {table_name}: {str(table_error)}")
-                    results_summary["errors"].append({
+                    error_detail = {
                         "table_name": table_name,
+                        "error": str(table_error)
+                    }
+                    results_summary["errors"].append(error_detail)
+                    results_summary["execution_details"].append({
+                        "table_name": table_name,
+                        "success": False,
                         "error": str(table_error)
                     })
 
@@ -113,41 +146,77 @@ class ValidationAutomationIntegrator:
                 "passed_rules": 0,
                 "failed_rules": 0,
                 "tables_with_failures": [],
-                "errors": [{"error": str(e)}]
+                "errors": [{"error": str(e)}],
+                "execution_details": []
             }
 
-    def _get_automated_validation_tables(self, connection_id: str, organization_id: str) -> List[str]:
-        """Get list of tables that have validation automation enabled"""
+    def _get_tables_with_validation_rules(self, connection_id: str, organization_id: str) -> List[str]:
+        """FIXED: Get list of tables that have ANY validation rules"""
         try:
-            # Get table-level automation configs
-            response = self.supabase_manager.supabase.table("automation_table_configs") \
+            # Get all tables that have validation rules for this connection
+            response = self.supabase_manager.supabase.table("validation_rules") \
                 .select("table_name") \
                 .eq("connection_id", connection_id) \
-                .eq("auto_run_validations", True) \
+                .eq("organization_id", organization_id) \
+                .eq("is_active", True) \
                 .execute()
 
-            table_configs = response.data or []
+            if not response.data:
+                logger.info(f"No validation rules found for connection {connection_id}")
+                return []
 
-            # If no table-specific configs, check connection-level config
-            if not table_configs:
-                conn_response = self.supabase_manager.supabase.table("automation_connection_configs") \
-                    .select("validation_automation") \
-                    .eq("connection_id", connection_id) \
-                    .execute()
+            # Get unique table names
+            tables = list(set(rule["table_name"] for rule in response.data))
+            logger.info(f"Found validation rules for tables: {tables}")
 
-                if (conn_response.data and
-                        conn_response.data[0].get("validation_automation", {}).get("enabled", False)):
-                    # Get all tables that have validation rules
-                    tables_with_validations = self.validation_manager.get_tables_with_validations(
-                        organization_id, connection_id
-                    )
-                    return tables_with_validations
-
-            return [config["table_name"] for config in table_configs]
+            return tables
 
         except Exception as e:
-            logger.error(f"Error getting automated validation tables: {str(e)}")
+            logger.error(f"Error getting tables with validation rules: {str(e)}")
             return []
+
+    def _create_default_validations_if_needed(self, connection_id: str, organization_id: str, connection_string: str):
+        """Create default validations for tables if none exist"""
+        try:
+            logger.info("Creating default validations for tables without rules")
+
+            # Get some tables from the connection to create validations for
+            from core.metadata.connector_factory import ConnectorFactory
+
+            connector_factory = ConnectorFactory(self.supabase_manager)
+            connector = connector_factory.create_connector(connection_id)
+
+            if connector:
+                # Get first few tables
+                tables = connector.get_tables()
+                limited_tables = tables[:3]  # Just do first 3 tables
+
+                logger.info(f"Creating default validations for tables: {limited_tables}")
+
+                for table_name in limited_tables:
+                    try:
+                        # Import and use the default validation generator
+                        from core.validations.default_validations import add_default_validations
+
+                        result = add_default_validations(
+                            validation_manager=self.validation_manager,
+                            connection_string=connection_string,
+                            table_name=table_name,
+                            connection_id=connection_id
+                        )
+
+                        logger.info(f"Created {result.get('added', 0)} default validations for {table_name}")
+
+                    except Exception as table_error:
+                        logger.warning(f"Could not create defaults for {table_name}: {str(table_error)}")
+
+        except Exception as e:
+            logger.warning(f"Could not create default validations: {str(e)}")
+
+    def _get_automated_validation_tables(self, connection_id: str, organization_id: str) -> List[str]:
+        """DEPRECATED: Get list of tables that have validation automation enabled"""
+        # This method is kept for backwards compatibility but we now use _get_tables_with_validation_rules
+        return self._get_tables_with_validation_rules(connection_id, organization_id)
 
     def _build_connection_string(self, connection: Dict[str, Any]) -> str:
         """Build connection string from connection details"""
@@ -265,14 +334,12 @@ class ValidationAutomationIntegrator:
             conn_config = conn_response.data[0] if conn_response.data else {}
             validation_automation = conn_config.get("validation_automation", {})
 
-            # Check table-level automation configs
-            table_response = self.supabase_manager.supabase.table("automation_table_configs") \
-                .select("table_name, auto_run_validations") \
-                .eq("connection_id", connection_id) \
-                .eq("auto_run_validations", True) \
-                .execute()
-
-            automated_tables = table_response.data or []
+            # Parse validation_automation if it's a JSON string
+            if isinstance(validation_automation, str):
+                try:
+                    validation_automation = json.loads(validation_automation)
+                except json.JSONDecodeError:
+                    validation_automation = {}
 
             # Check if there are any validation rules
             rules_response = self.supabase_manager.supabase.table("validation_rules") \
@@ -282,16 +349,23 @@ class ValidationAutomationIntegrator:
 
             total_rules = rules_response.count or 0
 
+            # Get list of tables with rules
+            tables_response = self.supabase_manager.supabase.table("validation_rules") \
+                .select("table_name") \
+                .eq("connection_id", connection_id) \
+                .execute()
+
+            tables_with_rules = list(set(r["table_name"] for r in (tables_response.data or [])))
+
             return {
                 "connection_automation_enabled": validation_automation.get("enabled", False),
                 "connection_interval_hours": validation_automation.get("interval_hours", 12),
                 "auto_generate_for_new_tables": validation_automation.get("auto_generate_for_new_tables", True),
-                "table_level_automation_count": len(automated_tables),
-                "automated_tables": [t["table_name"] for t in automated_tables],
                 "total_validation_rules": total_rules,
-                "properly_configured": (
-                                               validation_automation.get("enabled", False) or len(automated_tables) > 0
-                                       ) and total_rules > 0
+                "tables_with_rules": tables_with_rules,
+                "tables_with_rules_count": len(tables_with_rules),
+                "properly_configured": total_rules > 0,
+                "recommendation": "Create validation rules for tables" if total_rules == 0 else "Configuration looks good"
             }
 
         except Exception as e:
@@ -317,31 +391,3 @@ def create_validation_automation_integrator():
     except Exception as e:
         logger.error(f"Error creating validation automation integrator: {str(e)}")
         raise
-
-
-# Usage example for automation scheduler:
-"""
-# In automation scheduler when executing validation_run job:
-
-def _execute_validation_run(self, job_id: str, connection_id: str, config: Dict[str, Any]):
-    try:
-        # Create integrator
-        integrator = create_validation_automation_integrator()
-
-        # Get organization ID from connection
-        connection = self.supabase.get_connection(connection_id)
-        organization_id = connection.get("organization_id")
-
-        # Run automated validations
-        results = integrator.run_automated_validations(connection_id, organization_id)
-
-        # Update job status
-        self._update_job_status(job_id, "completed", result_summary=results)
-
-        return results
-
-    except Exception as e:
-        logger.error(f"Error in validation automation job: {str(e)}")
-        self._update_job_status(job_id, "failed", error_message=str(e))
-        return {"error": str(e)}
-"""

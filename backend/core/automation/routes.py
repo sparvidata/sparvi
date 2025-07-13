@@ -1308,7 +1308,7 @@ def register_automation_routes(app, token_required):
                             "timezone": "America/New_York"
                         },
                         "validation_automation": {
-                            "enabled": True,
+                            "enabled": True,  # FIXED: Use boolean True not string "true"
                             "schedule_type": "daily",
                             "time": "08:00",
                             "timezone": "America/New_York"
@@ -1332,7 +1332,7 @@ def register_automation_routes(app, token_required):
                             "timezone": "UTC"
                         },
                         "validation_automation": {
-                            "enabled": false,
+                            "enabled": False,  # FIXED: Use boolean False not string "false"
                             "schedule_type": "daily",
                             "time": "04:00",
                             "timezone": "UTC"
@@ -1378,14 +1378,14 @@ def register_automation_routes(app, token_required):
                             "days": ["sunday"]
                         },
                         "schema_change_detection": {
-                            "enabled": false,
+                            "enabled": False,  # FIXED: Use boolean False
                             "schedule_type": "weekly",
                             "time": "03:00",
                             "timezone": "UTC",
                             "days": ["sunday"]
                         },
                         "validation_automation": {
-                            "enabled": false,
+                            "enabled": False,  # FIXED: Use boolean False
                             "schedule_type": "weekly",
                             "time": "04:00",
                             "timezone": "UTC",

@@ -424,50 +424,51 @@ class SchemaChangeDetector:
 
         return False
 
-    def _store_schema_changes(self, connection_id: str, changes: List[Dict], supabase_manager) -> int:
-        """Store schema changes in the database with verification"""
-        stored_count = 0
-
+    def _store_schema_changes(self, connection_id: str, changes: List[Dict[str, Any]], storage_service) -> List[
+        Dict[str, Any]]:
+        """FIXED: Store schema changes with correct column names"""
         try:
-            logger.info(f"Storing {len(changes)} schema changes for connection {connection_id}")
+            if not storage_service or not changes:
+                return []
 
+            stored_changes = []
             for change in changes:
                 try:
-                    # Prepare change record
+                    # FIXED: Use correct column names that match your schema
                     change_record = {
                         "connection_id": connection_id,
-                        "table_name": change.get("table", "unknown"),
-                        "column_name": change.get("column"),  # May be None for table-level changes
                         "change_type": change.get("type", "unknown"),
-                        "change_details": change,
-                        "detected_at": change.get("timestamp", datetime.now(timezone.utc).isoformat()),
-                        "acknowledged": False,
-                        "important": change.get("type") in ["table_removed", "column_removed", "column_type_changed",
-                                                            "primary_key_changed"]
+                        "table_name": change.get("table"),
+                        "column_name": change.get("column"),
+                        "details": change.get("details", {}),  # FIXED: Use 'details' not 'change_details'
+                        "detected_at": datetime.now(timezone.utc).isoformat(),
                     }
 
-                    # Insert into schema_changes table
-                    response = supabase_manager.supabase.table("schema_changes").insert(change_record).execute()
+                    # Get organization_id from connection
+                    connection = storage_service.get_connection(connection_id)
+                    if connection and connection.get("organization_id"):
+                        change_record["organization_id"] = connection["organization_id"]
+                    else:
+                        logger.warning(f"Could not get organization_id for connection {connection_id}")
+                        continue
+
+                    response = storage_service.supabase.table("schema_changes") \
+                        .insert(change_record) \
+                        .execute()
 
                     if response.data:
-                        stored_count += 1
-                        logger.debug(f"Stored schema change: {change.get('type')} for table {change.get('table')}")
+                        stored_changes.extend(response.data)
                     else:
-                        logger.error(f"Failed to store schema change: {change}")
+                        logger.warning(f"Failed to store schema change: {change}")
 
                 except Exception as change_error:
                     logger.error(f"Error storing individual schema change: {str(change_error)}")
-                    logger.error(f"Change data: {change}")
-                    continue
 
-            logger.info(f"Successfully stored {stored_count} out of {len(changes)} schema changes")
-            return stored_count
+            return stored_changes
 
         except Exception as e:
             logger.error(f"Error storing schema changes: {str(e)}")
-            import traceback
-            logger.error(traceback.format_exc())
-            return stored_count
+            return []
 
     def _store_schema_changes_alternative(self, connection_id: str, changes: List[Dict], supabase_manager) -> int:
         """Alternative method to store schema changes (batch insert)"""
