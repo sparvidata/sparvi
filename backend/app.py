@@ -5063,8 +5063,8 @@ def acknowledge_schema_changes(current_user, organization_id, connection_id):
         supabase_key = os.getenv("SUPABASE_SERVICE_KEY")
         direct_client = create_client(supabase_url, supabase_key)
 
-        # Update acknowledgment status
-        current_time = datetime.datetime.now(timezone.utc).isoformat()
+        # Fix: Use correct datetime import
+        current_time = datetime.now(timezone.utc).isoformat()
         acknowledged_count = 0
 
         # Handle current_user safely
