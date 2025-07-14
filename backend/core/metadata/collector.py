@@ -555,10 +555,6 @@ class MetadataCollector:
                 "collected_at": datetime.now(timezone.utc).isoformat()
             }
 
-    # backend/core/metadata/collector.py - ADD THIS METHOD TO EXISTING FILE
-
-    # Add this method to the MetadataCollector class in collector.py:
-
     def collect_table_statistics(self, table_name):
         """
         Collect detailed statistics for a specific table (Tier 5)
@@ -587,30 +583,6 @@ class MetadataCollector:
             except Exception as e:
                 logger.warning(f"Could not get row count for {table_name}: {str(e)}")
                 statistics["row_count"] = None
-
-            # Table size information (if available)
-            try:
-                # For Snowflake, we can get table size information
-                if hasattr(self.connector, 'get_database_type') and self.connector.get_database_type() == "snowflake":
-                    size_query = f"""
-                        SELECT 
-                            TABLE_CATALOG as database_name,
-                            TABLE_SCHEMA as schema_name,
-                            TABLE_NAME as table_name,
-                            ROW_COUNT,
-                            BYTES,
-                            CLUSTERING_KEY
-                        FROM INFORMATION_SCHEMA.TABLES 
-                        WHERE TABLE_NAME = '{table_name}'
-                        AND TABLE_TYPE = 'BASE TABLE'
-                    """
-                    size_result = self.connector.execute_query(size_query)
-                    if size_result and len(size_result) > 0:
-                        size_info = size_result[0]
-                        statistics["bytes"] = size_info[2] if len(size_info) > 2 else None
-                        statistics["clustering_key"] = size_info[3] if len(size_info) > 3 else None
-            except Exception as e:
-                logger.warning(f"Could not get size information for {table_name}: {str(e)}")
 
             # Primary keys
             try:
@@ -660,11 +632,11 @@ class MetadataCollector:
 
             # Sample some column-level statistics for key columns
             try:
-                # Limit to first 10 columns to avoid performance issues
+                # Limit to first 5 columns to avoid performance issues
                 columns = self.collect_columns(table_name)
                 column_stats = {}
 
-                for column in columns[:10]:
+                for column in columns[:5]:
                     try:
                         col_name = column["name"]
                         col_type = column["type"].lower() if isinstance(column["type"], str) else str(
@@ -685,30 +657,6 @@ class MetadataCollector:
             except Exception as e:
                 logger.warning(f"Could not collect column-level statistics for {table_name}: {str(e)}")
                 statistics["column_statistics"] = {}
-
-            # Data freshness - when was data last modified (if available)
-            try:
-                # Look for common timestamp columns that might indicate last modification
-                timestamp_columns = ["updated_at", "modified_at", "last_updated", "created_at"]
-                columns = self.collect_columns(table_name)
-
-                for ts_col in timestamp_columns:
-                    matching_cols = [col for col in columns if col["name"].lower() == ts_col]
-                    if matching_cols:
-                        try:
-                            latest_query = f"SELECT MAX({ts_col}) FROM {table_name}"
-                            result = self.connector.execute_query(latest_query)
-                            if result and result[0][0]:
-                                statistics["latest_timestamp"] = result[0][0].isoformat() if hasattr(result[0][0],
-                                                                                                     'isoformat') else str(
-                                    result[0][0])
-                                statistics["latest_timestamp_column"] = ts_col
-                                break
-                        except Exception:
-                            continue
-
-            except Exception as e:
-                logger.warning(f"Could not determine data freshness for {table_name}: {str(e)}")
 
             # Table health score (basic calculation)
             try:

@@ -116,7 +116,6 @@ def request_cache(func):
     return wrapper
 
 
-# Add this function near the top of app.py
 def configure_logging():
     """Configure logging to handle Unicode properly"""
     import logging
@@ -1183,7 +1182,6 @@ def setup_comprehensive_logging():
     logging.getLogger('automation.scheduler').setLevel(logging.INFO)
     logging.getLogger('automation.api').setLevel(logging.INFO)
 
-    # REDUCE NOISY LOGGERS - Add this section
     logging.getLogger('core.storage.supabase_manager').setLevel(logging.WARNING)
     logging.getLogger('core.utils.performance_optimizations').setLevel(logging.WARNING)
     logging.getLogger('core.metadata.storage_service').setLevel(logging.WARNING)
@@ -1433,9 +1431,6 @@ def automation_health_detailed(current_user, organization_id):
 
     health_result, status_code = automation_health_endpoint()
     return jsonify(health_result), status_code
-
-
-# Add this route to your app.py after the initialize_anomaly_detection() call
 
 @app.route("/api/debug/anomaly-status", methods=["GET"])
 @token_required
@@ -2577,7 +2572,6 @@ def get_validations_summary(current_user, organization_id):
             if has_failures:
                 tables_with_failures += 1
 
-            # Add this table's results to the aggregate data
             validations_by_table[table] = table_results
 
         # Calculate overall health score
@@ -3521,8 +3515,6 @@ def setup_user():
         return jsonify({"error": str(e)}), 500
 
 
-# These routes will be added to your backend/app.py file
-
 @app.route("/api/admin/users", methods=["GET"])
 @token_required
 def get_users(current_user, organization_id):
@@ -3685,7 +3677,6 @@ def update_organization(current_user, organization_id):
         return jsonify({"error": str(e)}), 500
 
 
-# Add this new endpoint for data preview
 @app.route("/api/preview", methods=["GET"])
 @token_required
 def get_data_preview(current_user, organization_id):
@@ -4246,7 +4237,7 @@ def get_connection_credentials(connection_id):
 def get_profile_history(current_user, organization_id):
     """Get history of profile runs for a table"""
     table_name = request.args.get("table")
-    connection_id = request.args.get("connection_id")  # Add this line
+    connection_id = request.args.get("connection_id")
     limit = request.args.get("limit", 10, type=int)
 
     if not table_name:

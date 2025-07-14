@@ -284,8 +284,6 @@ class MetadataStorage:
             logger.error(f"Error retrieving metadata: {str(e)}")
             return []
 
-    # In backend/core/metadata/storage_service.py - add these methods
-
     def get_table_columns(self, connection_id: str, table_name: str) -> Optional[List[Dict]]:
         """Get columns for a specific table"""
         try:

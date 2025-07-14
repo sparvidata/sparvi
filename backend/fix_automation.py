@@ -1,5 +1,3 @@
-# backend/fix_automation.py - FIXED VERSION
-
 import logging
 import sys
 import os

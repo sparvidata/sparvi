@@ -46,7 +46,6 @@
     @apply bg-red-100 text-red-800;
   }
 
-  /* Add this new rule with standard Tailwind colors */
   input:not([type="checkbox"]):not([type="radio"]),
   textarea,
   select {

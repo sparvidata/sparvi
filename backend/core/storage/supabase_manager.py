@@ -373,7 +373,7 @@ class SupabaseManager:
             data = {
                 "organization_id": organization_id,
                 "table_name": table_name,
-                "connection_id": connection_id,  # Add this field!
+                "connection_id": connection_id,
                 "rule_name": rule.get("name", ""),
                 "description": rule.get("description", ""),
                 "query": rule.get("query", ""),

@@ -6,18 +6,20 @@ from typing import Dict, Any, List, Optional
 from datetime import datetime, timedelta, timezone
 
 from core.storage.supabase_manager import SupabaseManager
-from .scheduler import AutomationScheduler
+from .simplified_scheduler import SimplifiedAutomationScheduler
+from .schedule_manager import ScheduleManager
 from .events import AutomationEventType, publish_automation_event
 
 logger = logging.getLogger(__name__)
 
 
 class AutomationAPI:
-    """API for managing automation configurations and jobs"""
+    """API for managing automation configurations and jobs - Updated for simplified scheduler"""
 
     def __init__(self):
         self.supabase = SupabaseManager()
-        self.scheduler = AutomationScheduler()
+        self.scheduler = SimplifiedAutomationScheduler()
+        self.schedule_manager = ScheduleManager(self.supabase)
 
     # Global Configuration Management
     def get_global_config(self) -> Dict[str, Any]:
@@ -92,8 +94,6 @@ class AutomationAPI:
             return {"error": str(e)}
 
     # Connection-Level Configuration
-
-
     def get_connection_configs(self, organization_id: str) -> List[Dict[str, Any]]:
         """Get all connection configurations for an organization"""
         try:
@@ -107,17 +107,15 @@ class AutomationAPI:
                 return []
 
             connection_ids = [conn["id"] for conn in connections_response.data]
-
-            # Create a lookup dict for connection info
             connections_lookup = {conn["id"]: conn for conn in connections_response.data}
 
-            # Get automation configs for these connections (without join)
+            # Get automation configs for these connections
             response = self.supabase.supabase.table("automation_connection_configs") \
                 .select("*") \
                 .in_("connection_id", connection_ids) \
                 .execute()
 
-            # Manually add connection info to avoid join issues
+            # Add connection info to configs
             configs = response.data if response.data else []
             for config in configs:
                 connection_info = connections_lookup.get(config["connection_id"])
@@ -132,7 +130,7 @@ class AutomationAPI:
             return []
 
     def get_connection_config(self, connection_id: str) -> Optional[Dict[str, Any]]:
-        """Get automation configuration for a specific connection - FIXED"""
+        """Get automation configuration for a specific connection"""
         try:
             response = self.supabase.supabase.table("automation_connection_configs") \
                 .select("*") \
@@ -142,11 +140,17 @@ class AutomationAPI:
             if response.data and len(response.data) > 0:
                 config_row = response.data[0]
 
-                parsed_config = {
-                    "connection_id": connection_id
-                }
+                # Check if this has schedule_config (new format)
+                if config_row.get("schedule_config"):
+                    return {
+                        "connection_id": connection_id,
+                        "schedule_config": config_row["schedule_config"],
+                        "legacy_format": False
+                    }
 
-                # FIXED: Handle both JSON strings (old data) and objects (new data)
+                # Handle legacy format - convert to schedule format for API compatibility
+                parsed_config = {"connection_id": connection_id}
+
                 for field in ["metadata_refresh", "schema_change_detection", "validation_automation"]:
                     try:
                         field_value = config_row.get(field)
@@ -154,17 +158,14 @@ class AutomationAPI:
                         if field_value is None:
                             parsed_config[field] = {}
                         elif isinstance(field_value, str):
-                            # Old format: JSON string - parse it
                             try:
                                 parsed_config[field] = json.loads(field_value)
                             except json.JSONDecodeError as e:
                                 logger.error(f"Error parsing {field} JSON for connection {connection_id}: {str(e)}")
                                 parsed_config[field] = {}
                         elif isinstance(field_value, dict):
-                            # New format: Already a dict object - use directly
                             parsed_config[field] = field_value
                         else:
-                            # Unexpected type
                             logger.warning(f"Unexpected type for {field}: {type(field_value)}")
                             parsed_config[field] = {}
 
@@ -172,6 +173,7 @@ class AutomationAPI:
                         logger.error(f"Error processing {field} for connection {connection_id}: {str(e)}")
                         parsed_config[field] = {}
 
+                parsed_config["legacy_format"] = True
                 return parsed_config
 
             # Return default config if none exists
@@ -191,7 +193,8 @@ class AutomationAPI:
                     "enabled": False,
                     "interval_hours": 24,
                     "auto_generate_for_new_tables": True
-                }
+                },
+                "legacy_format": True
             }
 
         except Exception as e:
@@ -199,14 +202,37 @@ class AutomationAPI:
             return None
 
     def update_connection_config(self, connection_id: str, config_data: Dict[str, Any], user_id: str) -> Dict[str, Any]:
-        """Update automation configuration for a connection - SUPABASE FIX"""
+        """Update automation configuration for a connection"""
         try:
+            # Check if this is a schedule_config update (new format)
+            if "schedule_config" in config_data:
+                result = self.schedule_manager.update_connection_schedule(
+                    connection_id, config_data["schedule_config"], user_id
+                )
+
+                if "error" in result:
+                    return result
+
+                # Update the scheduler with new configuration
+                if self.scheduler:
+                    self.scheduler.update_connection_schedule(connection_id, config_data["schedule_config"])
+
+                # Publish event
+                publish_automation_event(
+                    event_type=AutomationEventType.CONFIG_UPDATED,
+                    data=result,
+                    connection_id=connection_id,
+                    user_id=user_id
+                )
+
+                return result
+
+            # Handle legacy format update
             clean_config_data = {
                 "updated_at": datetime.now(timezone.utc).isoformat()
             }
 
-            # CRITICAL FIX: Store as dict/object directly, not JSON string
-            # Supabase will handle the JSON serialization automatically
+            # Store legacy fields as JSON
             for field in ["metadata_refresh", "schema_change_detection", "validation_automation"]:
                 if field in config_data:
                     field_data = config_data[field]
@@ -214,20 +240,16 @@ class AutomationAPI:
                     if field_data is None:
                         clean_config_data[field] = None
                     else:
-                        # FIXED: Store the dict/object directly, don't json.dumps() it
-                        # Supabase Python client will serialize it properly
                         if isinstance(field_data, str):
                             try:
-                                # If it's a string, parse it back to object first
                                 clean_config_data[field] = json.loads(field_data)
                             except json.JSONDecodeError:
                                 logger.error(f"Invalid JSON string for {field}: {field_data}")
                                 return {"error": f"Invalid JSON for {field}"}
                         else:
-                            # It's already a dict/list, store it directly
                             clean_config_data[field] = field_data
 
-            logger.info(f"Storing config data: {clean_config_data}")
+            logger.info(f"Storing legacy config data: {clean_config_data}")
 
             # Check if config exists
             existing = self.supabase.supabase.table("automation_connection_configs") \
@@ -250,9 +272,6 @@ class AutomationAPI:
                     .execute()
 
             if response.data:
-                # Update scheduler with new configuration
-                self.scheduler.update_connection_schedule(connection_id, response.data[0])
-
                 # Publish event
                 publish_automation_event(
                     event_type=AutomationEventType.CONFIG_UPDATED,
@@ -269,7 +288,7 @@ class AutomationAPI:
             logger.error(f"Error updating connection config: {str(e)}")
             return {"error": str(e)}
 
-    # Table-Level Configuration
+    # Table-Level Configuration (unchanged)
     def get_table_config(self, connection_id: str, table_name: str) -> Optional[Dict[str, Any]]:
         """Get automation configuration for a specific table"""
         try:
@@ -429,12 +448,22 @@ class AutomationAPI:
             if not config:
                 return {"error": "Connection config not found"}
 
-            # Update all automation types
-            config["metadata_refresh"]["enabled"] = enabled
-            config["schema_change_detection"]["enabled"] = enabled
-            config["validation_automation"]["enabled"] = enabled
+            # Handle both legacy and new formats
+            if config.get("schedule_config"):
+                # New schedule format
+                schedule_config = config["schedule_config"]
+                for automation_type in ["metadata_refresh", "schema_change_detection", "validation_automation"]:
+                    if automation_type in schedule_config:
+                        schedule_config[automation_type]["enabled"] = enabled
 
-            return self.update_connection_config(connection_id, config, user_id)
+                return self.update_connection_config(connection_id, {"schedule_config": schedule_config}, user_id)
+            else:
+                # Legacy format
+                config["metadata_refresh"]["enabled"] = enabled
+                config["schema_change_detection"]["enabled"] = enabled
+                config["validation_automation"]["enabled"] = enabled
+
+                return self.update_connection_config(connection_id, config, user_id)
 
         except Exception as e:
             logger.error(f"Error toggling connection automation: {str(e)}")
@@ -444,7 +473,7 @@ class AutomationAPI:
         str, Any]:
         """Manually trigger automation for a connection"""
         try:
-            # Schedule immediate automation run
+            # Use simplified scheduler for immediate runs
             result = self.scheduler.schedule_immediate_run(
                 connection_id=connection_id,
                 automation_type=automation_type,
@@ -457,7 +486,7 @@ class AutomationAPI:
                     event_type=AutomationEventType.MANUAL_TRIGGER,
                     data={
                         "automation_type": automation_type,
-                        "job_id": result.get("job_id")
+                        "jobs_created": result.get("jobs_created", [])
                     },
                     connection_id=connection_id,
                     user_id=user_id
@@ -479,8 +508,7 @@ class AutomationAPI:
                 .execute()
 
             if response.data:
-                # Notify scheduler to cancel the job
-                self.scheduler.cancel_job(job_id)
+                # Notify scheduler to cancel the job (simplified scheduler doesn't need complex cancellation)
                 return {"success": True, "message": "Job cancelled successfully"}
             else:
                 return {"error": "Job not found"}
@@ -492,12 +520,12 @@ class AutomationAPI:
     def get_next_run_times(self, organization_id: str, connection_id: str) -> Dict[str, Any]:
         """
         Get next estimated run times for all automation types for a connection
-        Enhanced with better error handling and logging
+        SIMPLIFIED: Uses schedule manager instead of complex interval calculations
         """
         try:
             logger.info(f"Getting next run times for connection {connection_id} in organization {organization_id}")
 
-            # First verify the connection exists and belongs to the organization
+            # Verify the connection exists and belongs to the organization
             connection_response = self.supabase.supabase.table("database_connections") \
                 .select("id, name") \
                 .eq("id", connection_id) \
@@ -515,80 +543,29 @@ class AutomationAPI:
             connection_name = connection_response.data[0]["name"]
             logger.info(f"Found connection: {connection_name}")
 
-            # Get connection config
-            config_response = self.supabase.supabase.table("automation_connection_configs") \
-                .select("*") \
-                .eq("connection_id", connection_id) \
-                .execute()
+            # Get schedule configuration for this connection
+            schedule_data = self.schedule_manager.get_connection_schedule(connection_id)
 
-            if not config_response.data:
-                logger.info(f"No automation configuration found for connection {connection_id}")
+            if "error" in schedule_data:
+                logger.warning(f"Error getting schedule for connection {connection_id}: {schedule_data['error']}")
                 return {
                     "connection_id": connection_id,
                     "connection_name": connection_name,
                     "next_runs": {},
-                    "message": "No automation configuration found"
+                    "error": schedule_data["error"]
                 }
 
-            config = config_response.data[0]
-            logger.info(f"Found automation config for connection {connection_id}")
+            # Extract next runs from schedule data
+            next_runs = schedule_data.get("next_runs", {})
 
-            # Get recent jobs to determine last run times
-            try:
-                recent_jobs_response = self.supabase.supabase.table("automation_jobs") \
-                    .select("job_type, status, created_at, completed_at, started_at") \
-                    .eq("connection_id", connection_id) \
-                    .in_("status", ["completed", "failed", "running"]) \
-                    .gte("created_at", (datetime.now(timezone.utc) - timedelta(days=14)).isoformat()) \
-                    .order("created_at", desc=True) \
-                    .execute()
+            # If no schedule configured, check for legacy interval-based config
+            if not next_runs:
+                logger.info(f"No schedule found for connection {connection_id}, checking legacy config")
+                legacy_config = self.get_connection_config(connection_id)
 
-                jobs_by_type = {}
-                if recent_jobs_response.data:
-                    for job in recent_jobs_response.data:
-                        job_type = job.get("job_type")
-                        if job_type:
-                            if job_type not in jobs_by_type:
-                                jobs_by_type[job_type] = []
-                            jobs_by_type[job_type].append(job)
-
-                logger.info(f"Found {len(recent_jobs_response.data or [])} recent jobs for connection {connection_id}")
-
-            except Exception as jobs_error:
-                logger.warning(f"Error fetching recent jobs for connection {connection_id}: {str(jobs_error)}")
-                jobs_by_type = {}
-
-            # Calculate next run times for each automation type
-            next_runs = {}
-            automation_types = [
-                ("metadata_refresh", "metadata_refresh"),
-                ("schema_change_detection", "schema_change_detection"),
-                ("validation_automation", "validation_automation")
-            ]
-
-            for config_key, job_type in automation_types:
-                try:
-                    automation_config = config.get(config_key, {})
-
-                    if automation_config and automation_config.get("enabled", False):
-                        logger.info(f"Calculating next run for {job_type}")
-
-                        next_run_info = self._calculate_next_run_simple(
-                            automation_config,
-                            jobs_by_type.get(job_type, []),
-                            job_type
-                        )
-
-                        if next_run_info:
-                            next_runs[job_type] = next_run_info
-                            logger.info(f"Next run for {job_type}: {next_run_info.get('time_until_next', 'unknown')}")
-                    else:
-                        logger.info(f"Automation {job_type} is disabled for connection {connection_id}")
-
-                except Exception as calc_error:
-                    logger.error(f"Error calculating next run for {job_type}: {str(calc_error)}")
-                    # Continue with other automation types
-                    continue
+                if legacy_config and legacy_config.get("legacy_format"):
+                    # Convert legacy config to simple next run estimates
+                    next_runs = self._convert_legacy_to_next_runs(legacy_config)
 
             result = {
                 "connection_id": connection_id,
@@ -610,415 +587,71 @@ class AutomationAPI:
                 "error": str(e)
             }
 
-    def _calculate_next_run_simple(self, config: Dict[str, Any], recent_jobs: List[Dict[str, Any]],
-                                   job_type: str) -> Dict[str, Any]:
-        """
-        Simplified calculation for next run times with better error handling
-        """
+    def _convert_legacy_to_next_runs(self, legacy_config: Dict[str, Any]) -> Dict[str, Any]:
+        """Convert legacy interval-based config to next run estimates for API compatibility"""
+        next_runs = {}
+
         try:
-            if not config or not isinstance(config, dict):
-                logger.warning(f"Invalid config for job type {job_type}")
-                return None
-
-            interval_hours = config.get("interval_hours", 24)
-            if not isinstance(interval_hours, (int, float)) or interval_hours <= 0:
-                logger.warning(f"Invalid interval_hours for job type {job_type}: {interval_hours}")
-                interval_hours = 24
-
-            interval_seconds = interval_hours * 3600
             now = datetime.now(timezone.utc)
 
-            next_run_info = {
-                "enabled": True,
-                "interval_hours": interval_hours,
-                "next_run_timestamp": None,
-                "next_run_iso": None,
-                "time_until_next": None,
-                "is_overdue": False,
-                "last_run": None,
-                "last_run_status": None,
-                "currently_running": False,
-                "calculation_method": None
-            }
+            automation_types = ["metadata_refresh", "schema_change_detection", "validation_automation"]
 
-            # Find running jobs
-            running_jobs = [job for job in recent_jobs if job.get("status") == "running"]
-            if running_jobs:
-                next_run_info["currently_running"] = True
-                # Estimate next run after current job completes
-                next_run_time = now + timedelta(minutes=10) + timedelta(seconds=interval_seconds)
-                next_run_info.update({
-                    "next_run_timestamp": next_run_time.timestamp(),
-                    "next_run_iso": next_run_time.isoformat(),
-                    "time_until_next": self._format_time_until(next_run_time, now),
-                    "calculation_method": "from_running_job"
-                })
-                return next_run_info
+            for automation_type in automation_types:
+                config = legacy_config.get(automation_type, {})
 
-            # Find completed jobs
-            completed_jobs = [job for job in recent_jobs if job.get("status") in ["completed", "failed"]]
-            if completed_jobs:
-                # Use most recent completed job
-                last_job = completed_jobs[0]
-                last_run_time_str = last_job.get("completed_at") or last_job.get("created_at")
+                if config.get("enabled", False):
+                    interval_hours = config.get("interval_hours", 24)
 
-                if last_run_time_str:
-                    try:
-                        last_run_time = datetime.fromisoformat(last_run_time_str.replace('Z', '+00:00'))
-                        next_run_time = last_run_time + timedelta(seconds=interval_seconds)
+                    # Simple estimate: current time + interval
+                    next_run_time = now + timedelta(hours=interval_hours)
 
-                        is_overdue = next_run_time < now
-
-                        next_run_info.update({
-                            "next_run_timestamp": next_run_time.timestamp(),
-                            "next_run_iso": next_run_time.isoformat(),
-                            "time_until_next": self._format_time_until(next_run_time, now),
-                            "is_overdue": is_overdue,
-                            "last_run": last_run_time_str,
-                            "last_run_status": last_job.get("status"),
-                            "calculation_method": "from_last_completion"
-                        })
-                        return next_run_info
-
-                    except Exception as time_error:
-                        logger.warning(f"Error parsing job completion time for {job_type}: {str(time_error)}")
-
-            # No job history - estimate based on current time
-            next_run_time = now + timedelta(seconds=interval_seconds)
-            next_run_info.update({
-                "next_run_timestamp": next_run_time.timestamp(),
-                "next_run_iso": next_run_time.isoformat(),
-                "time_until_next": self._format_time_until(next_run_time, now),
-                "calculation_method": "current_time_estimate"
-            })
-
-            return next_run_info
-
-        except Exception as e:
-            logger.error(f"Error calculating next run for {job_type}: {str(e)}")
-            return None
-
-    def _get_automation_enable_history(self, connection_id: str) -> Dict[str, Any]:
-        """
-        Get history of when each automation type was enabled
-        This could come from audit logs, or we can approximate from config updates
-        """
-        try:
-            # For now, we'll use a simple approach - look at recent config updates
-            # In a more sophisticated system, you'd have an audit log of enable/disable events
-
-            # If you want to track enable times more precisely, you could:
-            # 1. Add individual timestamps for when each automation was enabled
-            # 2. Create an automation_events table to track enable/disable history
-            # 3. Use the updated_at field as a proxy for "last configuration change"
-
-            # For this implementation, we'll return empty dict and rely on config timestamps
-            return {}
-
-        except Exception as e:
-            logger.warning(f"Error getting automation enable history: {str(e)}")
-            return {}
-
-    def _calculate_next_run_enhanced(self, config: Dict[str, Any], recent_jobs: List[Dict[str, Any]],
-                                     job_type: str, enable_time: str = None) -> Dict[str, Any]:
-        """
-        Enhanced calculation that considers automation enable time
-
-        Args:
-            config: Automation configuration
-            recent_jobs: List of recent jobs for this automation type
-            job_type: Type of automation
-            enable_time: When this automation was enabled (ISO string)
-
-        Returns:
-            Next run information or None if calculation fails
-        """
-        try:
-            if not config or not isinstance(config, dict):
-                logger.warning(f"Invalid config for job type {job_type}")
-                return None
-
-            interval_hours = config.get("interval_hours", 24)
-            if not isinstance(interval_hours, (int, float)) or interval_hours <= 0:
-                logger.warning(f"Invalid interval_hours for job type {job_type}: {interval_hours}")
-                interval_hours = 24
-
-            interval_seconds = interval_hours * 3600
-            now = datetime.now(timezone.utc)
-
-            # Find the most recent completed or running job
-            completed_jobs = []
-            running_jobs = []
-
-            if recent_jobs and isinstance(recent_jobs, list):
-                for job in recent_jobs:
-                    if not isinstance(job, dict):
-                        continue
-
-                    job_status = job.get("status")
-                    if job_status in ["completed", "failed"]:
-                        completed_jobs.append(job)
-                    elif job_status == "running":
-                        running_jobs.append(job)
-
-            next_run_info = {
-                "enabled": True,
-                "interval_hours": interval_hours,
-                "next_run_timestamp": None,
-                "next_run_iso": None,
-                "time_until_next": None,
-                "is_overdue": False,
-                "last_run": None,
-                "last_run_status": None,
-                "currently_running": len(running_jobs) > 0,
-                "calculation_method": None  # Track how we calculated this
-            }
-
-            # Priority 1: If there's a currently running job
-            if running_jobs:
-                running_job = running_jobs[0]
-                if running_job.get("started_at"):
-                    try:
-                        started_time = datetime.fromisoformat(running_job["started_at"].replace('Z', '+00:00'))
-                        # Estimate completion in 10 minutes, then add interval
-                        estimated_completion = started_time + timedelta(minutes=10)
-                        next_run_time = estimated_completion + timedelta(seconds=interval_seconds)
-                    except Exception:
-                        next_run_time = now + timedelta(minutes=10) + timedelta(seconds=interval_seconds)
-                else:
-                    next_run_time = now + timedelta(minutes=10) + timedelta(seconds=interval_seconds)
-
-                next_run_info.update({
-                    "next_run_timestamp": next_run_time.timestamp(),
-                    "next_run_iso": next_run_time.isoformat(),
-                    "time_until_next": self._format_time_until(next_run_time, now),
-                    "currently_running": True,
-                    "last_run_status": "running",
-                    "calculation_method": "from_running_job"
-                })
-
-            # Priority 2: If we have completed jobs, use the last completion time
-            elif completed_jobs:
-                last_job = completed_jobs[0]
-                last_run_time_str = last_job.get("completed_at") or last_job.get("created_at")
-
-                if last_run_time_str:
-                    try:
-                        last_run_time = datetime.fromisoformat(last_run_time_str.replace('Z', '+00:00'))
-                        next_run_time = last_run_time + timedelta(seconds=interval_seconds)
-
-                        is_overdue = next_run_time < now
-
-                        next_run_info.update({
-                            "next_run_timestamp": next_run_time.timestamp(),
-                            "next_run_iso": next_run_time.isoformat(),
-                            "time_until_next": self._format_time_until(next_run_time, now),
-                            "is_overdue": is_overdue,
-                            "last_run": last_run_time_str,
-                            "last_run_status": last_job.get("status"),
-                            "calculation_method": "from_last_completion"
-                        })
-                    except Exception as time_error:
-                        logger.warning(f"Error parsing job completion time for {job_type}: {str(time_error)}")
-                        # Fall through to enable time calculation
-                        completed_jobs = []
-                else:
-                    # No valid completion time, fall through to enable time calculation
-                    completed_jobs = []
-
-            # Priority 3: No job history - calculate from when automation was enabled
-            if not running_jobs and not completed_jobs:
-                enable_timestamp = None
-                calculation_method = "from_enable_time"
-
-                # Try to get enable time from various sources
-                if enable_time:
-                    try:
-                        enable_timestamp = datetime.fromisoformat(enable_time.replace('Z', '+00:00'))
-                        calculation_method = "from_explicit_enable_time"
-                    except Exception:
-                        pass
-
-                # If no explicit enable time, try to infer from first job creation
-                # (This helps if jobs were created but failed/cancelled)
-                if not enable_timestamp and recent_jobs:
-                    try:
-                        # Use the oldest job creation time as a proxy for enable time
-                        oldest_job = min(recent_jobs, key=lambda x: x.get("created_at", ""))
-                        oldest_job_time = oldest_job.get("created_at")
-                        if oldest_job_time:
-                            enable_timestamp = datetime.fromisoformat(oldest_job_time.replace('Z', '+00:00'))
-                            calculation_method = "from_first_job_creation"
-                    except Exception:
-                        pass
-
-                # Calculate next run from enable time
-                if enable_timestamp:
-                    # Calculate what the next run should be based on enable time + intervals
-                    intervals_since_enable = int((now - enable_timestamp).total_seconds() / interval_seconds)
-                    next_run_time = enable_timestamp + timedelta(
-                        seconds=(intervals_since_enable + 1) * interval_seconds)
-
-                    # Check if we're overdue (next run time has passed)
-                    is_overdue = next_run_time < now
-
-                    next_run_info.update({
+                    next_runs[automation_type] = {
+                        "enabled": True,
+                        "interval_hours": interval_hours,
                         "next_run_timestamp": next_run_time.timestamp(),
                         "next_run_iso": next_run_time.isoformat(),
                         "time_until_next": self._format_time_until(next_run_time, now),
-                        "is_overdue": is_overdue,
+                        "is_overdue": False,
                         "last_run": None,
                         "last_run_status": None,
-                        "calculation_method": calculation_method,
-                        "enabled_at": enable_time
-                    })
-                else:
-                    # Absolute fallback - current time + interval
-                    next_run_time = now + timedelta(seconds=interval_seconds)
-                    next_run_info.update({
-                        "next_run_timestamp": next_run_time.timestamp(),
-                        "next_run_iso": next_run_time.isoformat(),
-                        "time_until_next": self._format_time_until(next_run_time, now),
-                        "last_run": None,
-                        "last_run_status": None,
-                        "calculation_method": "current_time_fallback"
-                    })
+                        "currently_running": False,
+                        "calculation_method": "legacy_interval_estimate"
+                    }
 
-            return next_run_info
+            return next_runs
 
         except Exception as e:
-            logger.error(f"Error calculating enhanced next run for {job_type}: {str(e)}")
-            return None
-
-    def _calculate_next_run(self, config: Dict[str, Any], recent_jobs: List[Dict[str, Any]], job_type: str) -> Dict[
-        str, Any]:
-        """
-        Calculate next run time for a specific automation type
-
-        Args:
-            config: Automation configuration
-            recent_jobs: List of recent jobs for this automation type
-            job_type: Type of automation
-
-        Returns:
-            Next run information
-        """
-        interval_hours = config.get("interval_hours", 24)
-        interval_seconds = interval_hours * 3600
-        now = datetime.now(timezone.utc)
-
-        # Find the most recent completed or running job
-        completed_jobs = [job for job in recent_jobs if job["status"] in ["completed", "failed"]]
-        running_jobs = [job for job in recent_jobs if job["status"] == "running"]
-
-        next_run_info = {
-            "enabled": True,
-            "interval_hours": interval_hours,
-            "next_run_timestamp": None,
-            "next_run_iso": None,
-            "time_until_next": None,
-            "is_overdue": False,
-            "last_run": None,
-            "last_run_status": None,
-            "currently_running": len(running_jobs) > 0
-        }
-
-        # If there's a currently running job, next run is interval from when it completes
-        if running_jobs:
-            running_job = running_jobs[0]
-            # Estimate completion time (assume current job will complete soon)
-            # For now, use started time + 10 minutes as estimated completion
-            if running_job.get("started_at"):
-                started_time = datetime.fromisoformat(running_job["started_at"].replace('Z', '+00:00'))
-                estimated_completion = started_time + timedelta(minutes=10)
-                next_run_time = estimated_completion + timedelta(seconds=interval_seconds)
-            else:
-                # Job is running but no start time, assume it will complete soon
-                next_run_time = now + timedelta(minutes=10) + timedelta(seconds=interval_seconds)
-
-            next_run_info.update({
-                "next_run_timestamp": next_run_time.timestamp(),
-                "next_run_iso": next_run_time.isoformat(),
-                "time_until_next": self._format_time_until(next_run_time, now),
-                "currently_running": True,
-                "last_run_status": "running"
-            })
-
-        elif completed_jobs:
-            # Base next run on last completed job
-            last_job = completed_jobs[0]
-            last_run_time_str = last_job.get("completed_at") or last_job.get("created_at")
-
-            if last_run_time_str:
-                last_run_time = datetime.fromisoformat(last_run_time_str.replace('Z', '+00:00'))
-                next_run_time = last_run_time + timedelta(seconds=interval_seconds)
-
-                # Check if overdue
-                is_overdue = next_run_time < now
-
-                next_run_info.update({
-                    "next_run_timestamp": next_run_time.timestamp(),
-                    "next_run_iso": next_run_time.isoformat(),
-                    "time_until_next": self._format_time_until(next_run_time, now),
-                    "is_overdue": is_overdue,
-                    "last_run": last_run_time_str,
-                    "last_run_status": last_job["status"]
-                })
-            else:
-                # No valid timestamp, estimate based on current time
-                next_run_time = now + timedelta(seconds=interval_seconds)
-                next_run_info.update({
-                    "next_run_timestamp": next_run_time.timestamp(),
-                    "next_run_iso": next_run_time.isoformat(),
-                    "time_until_next": self._format_time_until(next_run_time, now),
-                    "last_run_status": last_job["status"]
-                })
-        else:
-            # No previous jobs - estimate based on current time + interval
-            next_run_time = now + timedelta(seconds=interval_seconds)
-            next_run_info.update({
-                "next_run_timestamp": next_run_time.timestamp(),
-                "next_run_iso": next_run_time.isoformat(),
-                "time_until_next": self._format_time_until(next_run_time, now),
-                "last_run": None,
-                "last_run_status": None
-            })
-
-        return next_run_info
+            logger.error(f"Error converting legacy config: {str(e)}")
+            return {}
 
     def _format_time_until(self, target_time: datetime, current_time: datetime) -> str:
         """Format time until target as human readable string"""
-        diff = target_time - current_time
+        try:
+            diff = target_time - current_time
 
-        if diff.total_seconds() <= 0:
-            return "Overdue"
+            if diff.total_seconds() <= 0:
+                return "Overdue"
 
-        total_seconds = int(diff.total_seconds())
+            total_seconds = int(diff.total_seconds())
 
-        days = total_seconds // 86400
-        hours = (total_seconds % 86400) // 3600
-        minutes = (total_seconds % 3600) // 60
+            days = total_seconds // 86400
+            hours = (total_seconds % 86400) // 3600
+            minutes = (total_seconds % 3600) // 60
 
-        if days > 0:
-            return f"in {days}d {hours}h"
-        elif hours > 0:
-            return f"in {hours}h {minutes}m"
-        elif minutes > 0:
-            return f"in {minutes}m"
-        else:
-            return "in <1m"
+            if days > 0:
+                return f"in {days}d {hours}h"
+            elif hours > 0:
+                return f"in {hours}h {minutes}m"
+            elif minutes > 0:
+                return f"in {minutes}m"
+            else:
+                return "in <1m"
+
+        except Exception:
+            return "unknown"
 
     def get_automation_status_with_next_runs(self, organization_id: str, connection_id: str = None) -> Dict[str, Any]:
-        """
-        Enhanced status method that includes next run times
-
-        Args:
-            organization_id: Organization ID
-            connection_id: Optional connection ID to filter
-
-        Returns:
-            Status with next run information
-        """
+        """Enhanced status method that includes next run times"""
         try:
             # Get base status
             base_status = self.get_automation_status(organization_id, connection_id)

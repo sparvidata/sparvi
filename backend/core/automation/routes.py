@@ -10,7 +10,7 @@ from functools import wraps
 
 logger = logging.getLogger(__name__)
 
-# Initialize API
+# Initialize API (now uses SimplifiedAutomationScheduler internally)
 automation_api = AutomationAPI()
 
 # Initialize schedule manager
@@ -231,7 +231,7 @@ def register_automation_routes(app, token_required):
         """Manually trigger automation for a connection"""
         try:
             data = request.json or {}
-            automation_type = data.get("automation_type")  # metadata_refresh, schema_detection, validation_run
+            automation_type = data.get("automation_type")  # metadata_refresh, schema_change_detection, validation_automation
 
             result = automation_api.trigger_automation(connection_id, automation_type, current_user)
 
@@ -276,10 +276,20 @@ def register_automation_routes(app, token_required):
             connection_configs = automation_api.get_connection_configs(organization_id)
 
             # Calculate summary statistics
-            enabled_connections = len([c for c in connection_configs if
-                                       c.get("metadata_refresh", {}).get("enabled") or
-                                       c.get("schema_change_detection", {}).get("enabled") or
-                                       c.get("validation_automation", {}).get("enabled")])
+            enabled_connections = 0
+            for config in connection_configs:
+                # Check both new schedule format and legacy format
+                if config.get("schedule_config"):
+                    schedule_config = config["schedule_config"]
+                    if any(schedule_config.get(auto_type, {}).get("enabled", False)
+                          for auto_type in ["metadata_refresh", "schema_change_detection", "validation_automation"]):
+                        enabled_connections += 1
+                else:
+                    # Legacy format check
+                    if (config.get("metadata_refresh", {}).get("enabled") or
+                        config.get("schema_change_detection", {}).get("enabled") or
+                        config.get("validation_automation", {}).get("enabled")):
+                        enabled_connections += 1
 
             dashboard_data = {
                 "status": status,
@@ -431,7 +441,7 @@ def register_automation_routes(app, token_required):
             if user_role not in ['admin', 'owner']:
                 return jsonify({"error": "Insufficient permissions"}), 403
 
-            scheduler_stats = automation_api.scheduler.get_scheduler_stats()
+            scheduler_stats = automation_api.scheduler.get_scheduler_stats() if automation_api.scheduler else {"status": "not_available"}
             return jsonify({"scheduler": scheduler_stats}), 200
 
         except Exception as e:
@@ -452,8 +462,9 @@ def register_automation_routes(app, token_required):
                 return jsonify({"error": "Insufficient permissions"}), 403
 
             # Stop and restart scheduler
-            automation_api.scheduler.stop()
-            automation_api.scheduler.start()
+            if automation_api.scheduler:
+                automation_api.scheduler.stop()
+                automation_api.scheduler.start()
 
             return jsonify({"message": "Scheduler restarted successfully"}), 200
 
@@ -483,7 +494,6 @@ def register_automation_routes(app, token_required):
             return decorated_function
 
         return decorator
-
 
     @app.route("/api/automation/next-runs", methods=["GET"])
     @token_required
@@ -801,7 +811,7 @@ def register_automation_routes(app, token_required):
                 return jsonify({"error": "Connection not found"}), 404
 
             data = request.json or {}
-            automation_type = data.get("automation_type")  # metadata_refresh, schema_detection, validation_run
+            automation_type = data.get("automation_type")  # metadata_refresh, schema_change_detection, validation_automation
 
             # Trigger the automation
             result = automation_api.trigger_automation(connection_id, automation_type, current_user)
@@ -827,7 +837,6 @@ def register_automation_routes(app, token_required):
             return jsonify({"error": str(e)}), 500
 
     logger.info("Automation monitoring routes registered successfully")
-
 
     @app.route("/api/automation/verify-storage/<connection_id>", methods=["POST"])
     @token_required
@@ -1071,9 +1080,7 @@ def register_automation_routes(app, token_required):
 
             # Get scheduler stats
             try:
-                debug_info[
-                    "scheduler_stats"] = automation_api.scheduler.get_scheduler_stats() if automation_api.scheduler else {
-                    "status": "not_available"}
+                debug_info["scheduler_stats"] = automation_api.scheduler.get_scheduler_stats() if automation_api.scheduler else {"status": "not_available"}
             except Exception as e:
                 debug_info["scheduler_stats"] = {"error": str(e)}
 
@@ -1085,6 +1092,7 @@ def register_automation_routes(app, token_required):
 
             # Get environment info
             import os
+            import sys
             debug_info["environment_info"] = {
                 "environment": os.getenv("ENVIRONMENT", "unknown"),
                 "scheduler_enabled": os.getenv("ENABLE_AUTOMATION_SCHEDULER", "false"),
@@ -1103,8 +1111,9 @@ def register_automation_routes(app, token_required):
 
         except Exception as e:
             logger.error(f"Error getting automation debug info: {str(e)}")
-            return jsonify({"error": str(e)}), 5
+            return jsonify({"error": str(e)}), 500
 
+    # Schedule Management Routes
     @app.route("/api/automation/schedules/<connection_id>", methods=["GET"])
     @token_required
     def get_connection_schedule(current_user, organization_id, connection_id):
@@ -1308,7 +1317,7 @@ def register_automation_routes(app, token_required):
                             "timezone": "America/New_York"
                         },
                         "validation_automation": {
-                            "enabled": True,  # FIXED: Use boolean True not string "true"
+                            "enabled": True,
                             "schedule_type": "daily",
                             "time": "08:00",
                             "timezone": "America/New_York"
@@ -1332,7 +1341,7 @@ def register_automation_routes(app, token_required):
                             "timezone": "UTC"
                         },
                         "validation_automation": {
-                            "enabled": False,  # FIXED: Use boolean False not string "false"
+                            "enabled": False,
                             "schedule_type": "daily",
                             "time": "04:00",
                             "timezone": "UTC"
@@ -1378,14 +1387,14 @@ def register_automation_routes(app, token_required):
                             "days": ["sunday"]
                         },
                         "schema_change_detection": {
-                            "enabled": False,  # FIXED: Use boolean False
+                            "enabled": False,
                             "schedule_type": "weekly",
                             "time": "03:00",
                             "timezone": "UTC",
                             "days": ["sunday"]
                         },
                         "validation_automation": {
-                            "enabled": False,  # FIXED: Use boolean False
+                            "enabled": False,
                             "schedule_type": "weekly",
                             "time": "04:00",
                             "timezone": "UTC",
@@ -1521,7 +1530,7 @@ def register_automation_routes(app, token_required):
             logger.error(f"Error enabling default schedule: {str(e)}")
             return jsonify({"error": str(e)}), 500
 
-    # Update existing connection config route to handle both old and new formats
+    # Enhanced connection config route to handle both old and new formats
     @app.route("/api/automation/connection-configs/<connection_id>", methods=["PUT"])
     @token_required
     def update_automation_connection_config_enhanced(current_user, organization_id, connection_id):

@@ -1,5 +1,3 @@
-# backend/core/utils/validation_automation_integration.py - FIXED VERSION
-
 import logging
 import json
 from typing import Dict, List, Any, Optional

@@ -1,5 +1,3 @@
-# backend/core/utils/automation_diagnostics.py
-
 import logging
 import traceback
 from datetime import datetime, timezone, timedelta

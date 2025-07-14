@@ -235,7 +235,7 @@ class SimplifiedAutomationScheduler:
                 del self.active_jobs[job_id]
 
     def _execute_metadata_refresh(self, job_id: str, connection_id: str, config: Dict[str, Any]):
-        """Execute metadata refresh job"""
+        """FIXED: Execute metadata refresh job with statistics collection"""
         run_id = None
         metadata_task_id = None
 
@@ -259,14 +259,16 @@ class SimplifiedAutomationScheduler:
 
             logger.info(f"Collecting metadata for connection: {connection.get('name')}")
 
-            # Submit metadata collection task
+            # FIXED: Submit metadata collection task with statistics
             collection_params = {
-                "depth": "standard",
+                "depth": "comprehensive",  # CHANGED: Use comprehensive to collect statistics
                 "table_limit": 50,
                 "automation_trigger": True,
                 "automation_job_id": job_id,
-                "refresh_types": ["tables", "columns", "statistics"],
-                "timeout_minutes": 30
+                "refresh_types": ["tables", "columns", "statistics"],  # FIXED: Include statistics
+                "timeout_minutes": 45,  # INCREASED: Give more time for statistics
+                "collect_statistics": True,  # ADDED: Explicitly request statistics
+                "statistics_sample_size": 100000  # ADDED: Limit sample size for performance
             }
 
             metadata_task_id = self.metadata_task_manager.submit_collection_task(
@@ -277,14 +279,20 @@ class SimplifiedAutomationScheduler:
 
             logger.info(f"Submitted metadata task {metadata_task_id}")
 
-            # Wait for completion
-            task_completed = self._wait_for_task_completion(metadata_task_id, timeout_minutes=30)
+            # INCREASED: Wait longer for completion to allow for statistics collection
+            task_completed = self._wait_for_task_completion(metadata_task_id, timeout_minutes=45)
 
             if task_completed:
                 task_status = self.metadata_task_manager.get_task_status(metadata_task_id)
+                task_result = task_status.get("result", {})
+
+                # ADDED: Verify that statistics were collected
+                stats_collected = self._verify_statistics_collection(connection_id, task_result)
+
                 results = {
                     "metadata_task_id": metadata_task_id,
-                    "task_result": task_status.get("result", {}),
+                    "task_result": task_result,
+                    "statistics_collected": stats_collected,
                     "success": True,
                     "trigger": "user_schedule"
                 }
@@ -305,7 +313,7 @@ class SimplifiedAutomationScheduler:
                     connection_id=connection_id
                 )
 
-                logger.info(f"Completed metadata refresh job {job_id}")
+                logger.info(f"Completed metadata refresh job {job_id} - Statistics collected: {stats_collected}")
             else:
                 error_msg = f"Metadata task {metadata_task_id} timed out"
                 self._handle_job_failure(job_id, run_id, connection_id, error_msg)
@@ -314,6 +322,33 @@ class SimplifiedAutomationScheduler:
             error_msg = str(e)
             logger.error(f"Metadata refresh job {job_id} failed: {error_msg}")
             self._handle_job_failure(job_id, run_id, connection_id, error_msg)
+
+    def _verify_statistics_collection(self, connection_id: str, task_result: Dict[str, Any]) -> bool:
+        """ADDED: Verify that statistics were actually collected"""
+        try:
+            # Check if statistics are in the task result
+            if "statistics" in task_result or "statistics_by_table" in task_result:
+                logger.info("Statistics found in task result")
+                return True
+
+            # Check database for recent statistics metadata
+            response = self.supabase.supabase.table("connection_metadata") \
+                .select("id, collected_at") \
+                .eq("connection_id", connection_id) \
+                .eq("metadata_type", "statistics") \
+                .gte("collected_at", (datetime.now(timezone.utc) - timedelta(minutes=10)).isoformat()) \
+                .execute()
+
+            if response.data and len(response.data) > 0:
+                logger.info(f"Found recent statistics metadata for connection {connection_id}")
+                return True
+
+            logger.warning(f"No recent statistics found for connection {connection_id}")
+            return False
+
+        except Exception as e:
+            logger.error(f"Error verifying statistics collection: {str(e)}")
+            return False
 
     def _execute_schema_detection(self, job_id: str, connection_id: str, config: Dict[str, Any]):
         """Execute schema change detection job"""

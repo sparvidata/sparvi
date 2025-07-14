@@ -1,5 +1,3 @@
-// Update the ValidationErrorHandler.js file to fix the undefined functions
-
 import React from 'react';
 import {
   ExclamationTriangleIcon,
@@ -20,8 +18,8 @@ const ValidationErrorHandler = ({
   onRefresh,
   connectionId,
   tableName,
-  onRefreshMetadata, // Add this as an optional prop
-  onDebugErrors // Add this as an optional prop
+  onRefreshMetadata,
+  onDebugErrors
 }) => {
   // Enhanced error pattern detection with more categories
   const getErrorType = (errorMessage) => {

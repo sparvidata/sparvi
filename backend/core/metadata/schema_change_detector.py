@@ -1,7 +1,6 @@
-# backend/core/metadata/schema_change_detector.py - ENHANCED VERSION
-
 import logging
 import json
+import traceback
 from datetime import datetime, timezone, timedelta
 from typing import List, Dict, Any, Tuple, Optional
 
@@ -9,7 +8,7 @@ logger = logging.getLogger(__name__)
 
 
 class SchemaChangeDetector:
-    """Enhanced schema change detector with proper storage verification"""
+    """FIXED: Schema change detector with correct column mapping"""
 
     def __init__(self, storage_service=None):
         """
@@ -61,9 +60,6 @@ class SchemaChangeDetector:
                 # Verify storage
                 if stored_count == 0 and len(changes) > 0:
                     logger.error("Failed to store any schema changes - this is a serious issue!")
-                    # Try alternative storage method
-                    stored_count = self._store_schema_changes_alternative(connection_id, changes, supabase_manager)
-                    logger.info(f"Alternative storage method stored {stored_count} changes")
 
             return changes, important_changes
 
@@ -253,7 +249,7 @@ class SchemaChangeDetector:
             return []
 
     def _compare_table_columns(self, table_name: str, current_columns: List[Dict], previous_columns: List[Dict]) -> \
-    List[Dict]:
+            List[Dict]:
         """Compare columns between current and previous table schemas"""
         changes = []
 
@@ -424,86 +420,59 @@ class SchemaChangeDetector:
 
         return False
 
-    def _store_schema_changes(self, connection_id: str, changes: List[Dict[str, Any]], storage_service) -> List[
-        Dict[str, Any]]:
+    def _store_schema_changes(self, connection_id: str, changes: List[Dict[str, Any]], supabase_manager) -> int:
         """FIXED: Store schema changes with correct column names"""
         try:
-            if not storage_service or not changes:
-                return []
+            if not supabase_manager or not changes:
+                return 0
 
-            stored_changes = []
+            # Get organization_id from connection
+            connection = supabase_manager.get_connection(connection_id)
+            if not connection or not connection.get("organization_id"):
+                logger.warning(f"Could not get organization_id for connection {connection_id}")
+                return 0
+
+            organization_id = connection["organization_id"]
+            stored_count = 0
+
             for change in changes:
                 try:
                     # FIXED: Use correct column names that match your schema
                     change_record = {
                         "connection_id": connection_id,
+                        "organization_id": organization_id,
                         "change_type": change.get("type", "unknown"),
                         "table_name": change.get("table"),
                         "column_name": change.get("column"),
                         "details": change.get("details", {}),  # FIXED: Use 'details' not 'change_details'
-                        "detected_at": datetime.now(timezone.utc).isoformat(),
+                        "detected_at": change.get("timestamp", datetime.now(timezone.utc).isoformat()),
+                        "acknowledged": False
                     }
 
-                    # Get organization_id from connection
-                    connection = storage_service.get_connection(connection_id)
-                    if connection and connection.get("organization_id"):
-                        change_record["organization_id"] = connection["organization_id"]
-                    else:
-                        logger.warning(f"Could not get organization_id for connection {connection_id}")
-                        continue
+                    # Remove None values for optional fields
+                    if change_record["column_name"] is None:
+                        del change_record["column_name"]
 
-                    response = storage_service.supabase.table("schema_changes") \
+                    response = supabase_manager.supabase.table("schema_changes") \
                         .insert(change_record) \
                         .execute()
 
                     if response.data:
-                        stored_changes.extend(response.data)
+                        stored_count += 1
                     else:
                         logger.warning(f"Failed to store schema change: {change}")
 
                 except Exception as change_error:
                     logger.error(f"Error storing individual schema change: {str(change_error)}")
+                    logger.error(f"Change data: {change}")
+                    continue
 
-            return stored_changes
+            logger.info(f"Successfully stored {stored_count} schema changes")
+            return stored_count
 
         except Exception as e:
             logger.error(f"Error storing schema changes: {str(e)}")
-            return []
-
-    def _store_schema_changes_alternative(self, connection_id: str, changes: List[Dict], supabase_manager) -> int:
-        """Alternative method to store schema changes (batch insert)"""
-        try:
-            logger.info(f"Attempting alternative storage method for {len(changes)} schema changes")
-
-            # Prepare all records
-            change_records = []
-            for change in changes:
-                change_record = {
-                    "connection_id": connection_id,
-                    "table_name": change.get("table", "unknown"),
-                    "column_name": change.get("column"),
-                    "change_type": change.get("type", "unknown"),
-                    "change_details": change,
-                    "detected_at": change.get("timestamp", datetime.now(timezone.utc).isoformat()),
-                    "acknowledged": False,
-                    "important": change.get("type") in ["table_removed", "column_removed", "column_type_changed",
-                                                        "primary_key_changed"]
-                }
-                change_records.append(change_record)
-
-            # Batch insert
-            response = supabase_manager.supabase.table("schema_changes").insert(change_records).execute()
-
-            if response.data:
-                stored_count = len(response.data)
-                logger.info(f"Alternative storage method successfully stored {stored_count} changes")
-                return stored_count
-            else:
-                logger.error("Alternative storage method failed")
-                return 0
-
-        except Exception as e:
-            logger.error(f"Error in alternative storage method: {str(e)}")
+            logger.error(traceback.format_exc())
             return 0
 
     def _store_schema_baseline(self, connection_id: str, schema: Dict, supabase_manager):
@@ -511,60 +480,37 @@ class SchemaChangeDetector:
         try:
             logger.info(f"Storing schema baseline for connection {connection_id}")
 
-            # Store a baseline record
+            # Get organization_id from connection
+            connection = supabase_manager.get_connection(connection_id)
+            if not connection or not connection.get("organization_id"):
+                logger.error(f"Could not get organization_id for connection {connection_id}")
+                return
+
+            organization_id = connection["organization_id"]
+
+            # Store a baseline record with correct column names
             baseline_record = {
                 "connection_id": connection_id,
+                "organization_id": organization_id,
                 "table_name": "BASELINE",
                 "change_type": "baseline_created",
-                "change_details": {
+                "details": {  # FIXED: Use 'details' not 'change_details'
                     "type": "baseline_created",
                     "table_count": len(schema),
                     "timestamp": datetime.now(timezone.utc).isoformat(),
                     "tables": list(schema.keys())
                 },
                 "detected_at": datetime.now(timezone.utc).isoformat(),
-                "acknowledged": True,
-                "important": False
+                "acknowledged": True
             }
 
-            supabase_manager.supabase.table("schema_changes").insert(baseline_record).execute()
-            logger.info("Schema baseline stored successfully")
+            response = supabase_manager.supabase.table("schema_changes").insert(baseline_record).execute()
+
+            if response.data:
+                logger.info("Schema baseline stored successfully")
+            else:
+                logger.error("Failed to store schema baseline - no data returned")
 
         except Exception as e:
             logger.error(f"Error storing schema baseline: {str(e)}")
-
-    def publish_changes_as_events(self, connection_id: str, changes: List[Dict], organization_id: str = None) -> List[
-        str]:
-        """Publish schema changes as metadata events"""
-        task_ids = []
-
-        try:
-            # Import here to avoid circular imports
-            from .events import publish_metadata_event, MetadataEventType
-
-            for change in changes:
-                # Publish event for each change
-                task_id = publish_metadata_event(
-                    event_type=MetadataEventType.SCHEMA_CHANGE,
-                    connection_id=connection_id,
-                    details={
-                        "table_name": change.get("table"),
-                        "column_name": change.get("column"),
-                        "change_type": change.get("type"),
-                        "change_details": change
-                    },
-                    organization_id=organization_id
-                )
-
-                if task_id:
-                    task_ids.append(task_id)
-
-            logger.info(f"Published {len(task_ids)} schema change events")
-            return task_ids
-
-        except ImportError:
-            logger.warning("Metadata events system not available")
-            return []
-        except Exception as e:
-            logger.error(f"Error publishing schema change events: {str(e)}")
-            return []
+            logger.error(traceback.format_exc())

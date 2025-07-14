@@ -379,20 +379,8 @@ class MetadataWorker:
 
         # Process based on task type
         if task.task_type == "full_collection":
-            # Full metadata collection
-            table_limit = task.params.get("table_limit", 50)
-            depth = task.params.get("depth", "medium")
-
-            # Run comprehensive collection
-            metadata = collector.collect_comprehensive_metadata(table_limit, depth)
-
-            # Store in database
-            self._store_metadata(task.connection_id, metadata)
-
-            return {
-                "tables_processed": len(metadata.get("tables", [])),
-                "collection_time": metadata.get("collection_metadata", {}).get("duration_seconds")
-            }
+            # Use the new comprehensive collection method
+            return self._execute_full_collection(task.id, task.connection_id, task.params)
 
         elif task.task_type == "table_metadata":
             # Collect metadata for specific table
@@ -456,10 +444,30 @@ class MetadataWorker:
             raise ValueError(f"Unknown task type: {task.task_type}")
 
     def _get_connection_details(self, connection_id):
-        """Get connection details from database"""
-        # To be implemented based on your storage system
-        # This could query Supabase for the connection details
-        raise NotImplementedError("_get_connection_details must be implemented")
+        """Get connection details from Supabase"""
+        try:
+            # Use the storage service's supabase manager to get connection
+            if hasattr(self.storage_service, 'supabase'):
+                connection = self.storage_service.supabase.get_connection(connection_id)
+                if connection:
+                    return connection
+                else:
+                    raise Exception(f"Connection {connection_id} not found")
+
+            # Fallback: try to get from connector factory
+            elif hasattr(self.connector_factory, 'supabase_manager'):
+                connection = self.connector_factory.supabase_manager.get_connection(connection_id)
+                if connection:
+                    return connection
+                else:
+                    raise Exception(f"Connection {connection_id} not found")
+
+            else:
+                raise Exception("No supabase manager available to get connection details")
+
+        except Exception as e:
+            logger.error(f"Error getting connection details for {connection_id}: {str(e)}")
+            raise
 
     def _store_metadata(self, connection_id, metadata):
         """Store comprehensive metadata in database"""
@@ -683,8 +691,6 @@ class MetadataWorker:
         except Exception as e:
             logger.error(f"Error recording changes: {str(e)}")
 
-    # Add this to the _process_task method in your MetadataWorker
-    # Find the block that processes 'table_metadata' tasks and add this code:
     """
     elif task.task_type == "table_metadata":
         # Collect metadata for specific table
@@ -780,3 +786,172 @@ class MetadataWorker:
                     })
 
         return changes if changes else None
+
+    def _execute_full_collection(self, task_id, connection_id, params):
+        """Execute full metadata collection including statistics"""
+        try:
+            logger.info(f"Starting full metadata collection for connection {connection_id}")
+
+            # Get parameters
+            depth = params.get("depth", "standard")
+            table_limit = params.get("table_limit", 50)
+            collect_statistics = params.get("collect_statistics", True)
+            refresh_types = params.get("refresh_types", ["tables", "columns", "statistics"])
+
+            # Get connection and create collector
+            connection = self._get_connection_details(connection_id)
+            if not connection:
+                raise Exception(f"Connection {connection_id} not found")
+
+            # Create connector
+            connector = self.connector_factory.create_connector(connection)
+
+            # Create collector
+            from .collector import MetadataCollector
+            collector = MetadataCollector(connection_id, connector)
+
+            # Initialize results
+            results = {
+                "connection_id": connection_id,
+                "tables_collected": False,
+                "columns_collected": False,
+                "statistics_collected": False,
+                "errors": []
+            }
+
+            # STEP 1: Collect tables metadata
+            if "tables" in refresh_types:
+                try:
+                    logger.info("Collecting tables metadata...")
+                    tables = collector.collect_table_list()
+
+                    # Format table metadata
+                    table_metadata = []
+                    for table_name in tables:
+                        table_info = {
+                            "name": table_name,
+                            "id": str(uuid.uuid4())
+                        }
+                        table_metadata.append(table_info)
+
+                    # Store tables metadata
+                    if self.storage_service.store_tables_metadata(connection_id, table_metadata):
+                        results["tables_collected"] = True
+                        results["tables_count"] = len(table_metadata)
+                        logger.info(f"Successfully stored {len(table_metadata)} tables")
+                    else:
+                        results["errors"].append("Failed to store tables metadata")
+
+                except Exception as e:
+                    error_msg = f"Error collecting tables: {str(e)}"
+                    logger.error(error_msg)
+                    results["errors"].append(error_msg)
+
+            # STEP 2: Collect columns metadata
+            if "columns" in refresh_types:
+                try:
+                    logger.info("Collecting columns metadata...")
+
+                    # Get tables to process
+                    tables = collector.collect_table_list()
+                    tables_to_process = tables[:table_limit]
+
+                    columns_by_table = {}
+                    for table_name in tables_to_process:
+                        try:
+                            columns = collector.collect_columns(table_name)
+                            if columns:
+                                columns_by_table[table_name] = columns
+                        except Exception as table_error:
+                            logger.warning(f"Error collecting columns for {table_name}: {str(table_error)}")
+
+                    # Store columns metadata
+                    if columns_by_table and self.storage_service.store_columns_metadata(connection_id,
+                                                                                        columns_by_table):
+                        results["columns_collected"] = True
+                        results["columns_tables_count"] = len(columns_by_table)
+                        logger.info(f"Successfully stored columns for {len(columns_by_table)} tables")
+                    else:
+                        results["errors"].append("Failed to store columns metadata")
+
+                except Exception as e:
+                    error_msg = f"Error collecting columns: {str(e)}"
+                    logger.error(error_msg)
+                    results["errors"].append(error_msg)
+
+            # STEP 3: Collect statistics metadata (FIXED)
+            if "statistics" in refresh_types and collect_statistics:
+                try:
+                    logger.info("Collecting statistics metadata...")
+
+                    # Get tables to collect statistics for
+                    tables = collector.collect_table_list()
+                    stats_table_limit = min(table_limit, 10)  # Limit statistics to 10 tables max
+                    tables_for_stats = tables[:stats_table_limit]
+
+                    logger.info(f"Collecting statistics for {len(tables_for_stats)} tables")
+
+                    statistics_by_table = {}
+
+                    for table_name in tables_for_stats:
+                        try:
+                            logger.info(f"Collecting statistics for table: {table_name}")
+
+                            # Use the collect_table_statistics method
+                            table_stats = collector.collect_table_statistics(table_name)
+
+                            if table_stats and not table_stats.get("error"):
+                                statistics_by_table[table_name] = table_stats
+                                logger.info(f"Successfully collected statistics for {table_name}")
+                            else:
+                                logger.warning(
+                                    f"Failed to collect statistics for {table_name}: {table_stats.get('error', 'Unknown error')}")
+
+                        except Exception as table_stats_error:
+                            logger.warning(f"Error collecting statistics for {table_name}: {str(table_stats_error)}")
+                            continue
+
+                    # Store statistics metadata if we collected any
+                    if statistics_by_table:
+                        logger.info(f"Storing statistics for {len(statistics_by_table)} tables")
+
+                        if self.storage_service.store_statistics_metadata(connection_id, statistics_by_table):
+                            results["statistics_collected"] = True
+                            results["statistics_tables_count"] = len(statistics_by_table)
+                            logger.info(f"Successfully stored statistics for {len(statistics_by_table)} tables")
+                        else:
+                            results["errors"].append("Failed to store statistics metadata")
+                            logger.error("Failed to store statistics metadata")
+                    else:
+                        results["errors"].append("No statistics data collected")
+                        logger.warning("No statistics data was collected")
+
+                except Exception as e:
+                    error_msg = f"Error collecting statistics: {str(e)}"
+                    logger.error(error_msg)
+                    results["errors"].append(error_msg)
+
+            # Calculate completion
+            total_operations = len(refresh_types)
+            completed_operations = sum([
+                results.get("tables_collected", False),
+                results.get("columns_collected", False),
+                results.get("statistics_collected", False)
+            ])
+
+            results["completion_rate"] = completed_operations / total_operations if total_operations > 0 else 0
+            results["success"] = completed_operations > 0
+            results["completed_at"] = datetime.now(timezone.utc).isoformat()
+
+            logger.info(f"Full collection completed: {completed_operations}/{total_operations} operations successful")
+
+            return results
+
+        except Exception as e:
+            logger.error(f"Error in full metadata collection: {str(e)}")
+            return {
+                "connection_id": connection_id,
+                "success": False,
+                "error": str(e),
+                "completed_at": datetime.now(timezone.utc).isoformat()
+            }

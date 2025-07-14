@@ -1,4 +1,3 @@
-# backend/scripts/init_metadata_tables.py
 import os
 import logging
 from dotenv import load_dotenv

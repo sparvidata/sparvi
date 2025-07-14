@@ -1,5 +1,3 @@
-# backend/core/utils/storage_verification.py - NEW FILE
-
 import logging
 import time
 from datetime import datetime, timezone, timedelta
