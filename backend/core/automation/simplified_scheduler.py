@@ -1,5 +1,5 @@
 # backend/core/automation/simplified_scheduler.py
-# UPDATED VERSION with job deduplication
+# UPDATED VERSION with job deduplication and non-blocking executor
 
 import logging
 import threading
@@ -124,7 +124,7 @@ class SimplifiedAutomationScheduler:
                 time.sleep(60)  # Sleep even on error
 
     def _check_and_execute_due_jobs(self):
-        """Check for due jobs and execute them"""
+        """Check for due jobs and execute them with detailed logging"""
         try:
             # Get jobs that are due to run
             due_jobs = self.schedule_manager.get_due_jobs(buffer_minutes=2)
@@ -134,13 +134,13 @@ class SimplifiedAutomationScheduler:
 
             logger.info(f"Found {len(due_jobs)} jobs due to run")
 
-            for scheduled_job in due_jobs:
+            for i, scheduled_job in enumerate(due_jobs):
                 try:
                     connection_id = scheduled_job["connection_id"]
                     automation_type = scheduled_job["automation_type"]
                     scheduled_job_id = scheduled_job["id"]
 
-                    logger.info(f"Executing {automation_type} for connection {connection_id}")
+                    logger.info(f"[{i+1}/{len(due_jobs)}] Executing {automation_type} for connection {connection_id}")
 
                     # Create and execute the job (with deduplication)
                     job_id = self._create_and_execute_job(
@@ -151,18 +151,26 @@ class SimplifiedAutomationScheduler:
 
                     if job_id:
                         # Mark the scheduled job as executed
+                        logger.info(f"[{i+1}/{len(due_jobs)}] Successfully created job {job_id} for {automation_type}")
                         self.schedule_manager.mark_job_executed(scheduled_job_id)
-                        logger.info(f"Scheduled {automation_type} job {job_id} for connection {connection_id}")
+                        logger.info(f"[{i+1}/{len(due_jobs)}] Marked scheduled job {scheduled_job_id} as executed")
                     else:
-                        logger.warning(
-                            f"Failed to create {automation_type} job for connection {connection_id} (likely duplicate)")
+                        logger.warning(f"[{i+1}/{len(due_jobs)}] Failed to create {automation_type} job for connection {connection_id} (likely duplicate)")
+
+                    # Small delay between jobs to prevent overwhelming the system
+                    time.sleep(1)
 
                 except Exception as job_error:
-                    logger.error(f"Error executing scheduled job: {str(job_error)}")
+                    logger.error(f"[{i+1}/{len(due_jobs)}] Error executing scheduled job {automation_type}: {str(job_error)}")
+                    logger.error(f"[{i+1}/{len(due_jobs)}] Exception details:", exc_info=True)
+                    # Continue to next job instead of stopping
                     continue
 
+            logger.info(f"Completed processing {len(due_jobs)} due jobs")
+
         except Exception as e:
-            logger.error(f"Error checking for due jobs: {str(e)}")
+            logger.error(f"Error in _check_and_execute_due_jobs: {str(e)}")
+            logger.error("Exception details:", exc_info=True)
 
     def _create_and_execute_job(self, connection_id: str, automation_type: str, scheduled_job_id: str) -> Optional[str]:
         """Create and execute a scheduled automation job WITH DEDUPLICATION"""
@@ -216,39 +224,54 @@ class SimplifiedAutomationScheduler:
             logger.info(
                 f"✅ Registered job: {automation_type} for connection {connection_id} (fingerprint: {fingerprint[:8]}...)")
 
-            # Execute the job based on type
-            if automation_type == "metadata_refresh":
-                future = self.executor.submit(
-                    self._execute_job_with_timeout,
-                    self._execute_metadata_refresh,
-                    job_id, connection_id, {"scheduled": True, "fingerprint": fingerprint},
-                    timeout_minutes=120
-                )
-            elif automation_type == "schema_change_detection":
-                future = self.executor.submit(
-                    self._execute_job_with_timeout,
-                    self._execute_schema_detection,
-                    job_id, connection_id, {"scheduled": True, "fingerprint": fingerprint},
-                    timeout_minutes=60
-                )
-            elif automation_type == "validation_automation":
-                future = self.executor.submit(
-                    self._execute_job_with_timeout,
-                    self._execute_validation_run,
-                    job_id, connection_id, {"scheduled": True, "fingerprint": fingerprint},
-                    timeout_minutes=60
-                )
-            else:
-                logger.error(f"Unknown automation type: {automation_type}")
-                # Mark job as completed since we couldn't run it
-                job_deduplication_service.mark_job_completed(fingerprint, "failed")
-                return None
+            # Step 5: Check executor health before submission
+            logger.info(f"Executor status - Active jobs: {len(self.active_jobs)}, ThreadPool workers: {self.executor._max_workers}")
+            logger.info(f"About to submit {automation_type} job {job_id} to executor...")
 
-            self.active_jobs[job_id] = future
-            return job_id
+            # Execute the job based on type with non-blocking submission
+            try:
+                if automation_type == "metadata_refresh":
+                    future = self.executor.submit(
+                        self._execute_job_with_timeout,
+                        self._execute_metadata_refresh,
+                        job_id, connection_id, {"scheduled": True, "fingerprint": fingerprint},
+                        timeout_minutes=120
+                    )
+                elif automation_type == "schema_change_detection":
+                    future = self.executor.submit(
+                        self._execute_job_with_timeout,
+                        self._execute_schema_detection,
+                        job_id, connection_id, {"scheduled": True, "fingerprint": fingerprint},
+                        timeout_minutes=60
+                    )
+                elif automation_type == "validation_automation":
+                    future = self.executor.submit(
+                        self._execute_job_with_timeout,
+                        self._execute_validation_run,
+                        job_id, connection_id, {"scheduled": True, "fingerprint": fingerprint},
+                        timeout_minutes=60
+                    )
+                else:
+                    logger.error(f"Unknown automation type: {automation_type}")
+                    job_deduplication_service.mark_job_completed(fingerprint, "failed")
+                    self._update_job_status(job_id, "failed", error_message=f"Unknown automation type: {automation_type}")
+                    return None
+
+                # Store the future for tracking but don't block
+                self.active_jobs[job_id] = future
+                logger.info(f"✅ Job {job_id} ({automation_type}) submitted to executor successfully")
+                return job_id
+
+            except Exception as executor_error:
+                logger.error(f"❌ Failed to submit job {job_id} to executor: {str(executor_error)}")
+                logger.error("Executor submission error details:", exc_info=True)
+                job_deduplication_service.mark_job_completed(fingerprint, "failed")
+                self._update_job_status(job_id, "failed", error_message=f"Executor submission failed: {str(executor_error)}")
+                return None
 
         except Exception as e:
             logger.error(f"Error creating and executing job: {str(e)}")
+            logger.error("Job creation error details:", exc_info=True)
             return None
 
     def _execute_job_with_timeout(self, job_function, job_id: str, connection_id: str, config: Dict[str, Any],
@@ -257,6 +280,7 @@ class SimplifiedAutomationScheduler:
         fingerprint = config.get("fingerprint")
 
         try:
+            logger.info(f"🚀 Starting execution of job {job_id}")
             result = job_function(job_id, connection_id, config)
 
             # PHASE 2: Mark job as completed on success
@@ -268,6 +292,7 @@ class SimplifiedAutomationScheduler:
 
         except Exception as e:
             logger.error(f"Job {job_id} failed with exception: {str(e)}")
+            logger.error(f"Job {job_id} exception details:", exc_info=True)
 
             # PHASE 2: Mark job as completed on failure too
             if fingerprint:
@@ -282,6 +307,7 @@ class SimplifiedAutomationScheduler:
         finally:
             if job_id in self.active_jobs:
                 del self.active_jobs[job_id]
+                logger.info(f"🧹 Cleaned up job {job_id} from active jobs list")
 
     def _execute_metadata_refresh(self, job_id: str, connection_id: str, config: Dict[str, Any]):
         """Execute metadata refresh job with statistics collection"""
@@ -545,8 +571,6 @@ class SimplifiedAutomationScheduler:
             logger.error(f"Error verifying statistics collection: {str(e)}")
             return False
 
-    # ... (rest of the existing methods remain the same: _wait_for_task_completion, _create_automation_run, etc.)
-
     def _wait_for_task_completion(self, task_id: str, timeout_minutes: int = 30) -> bool:
         """Wait for task completion with timeout"""
         try:
@@ -654,28 +678,105 @@ class SimplifiedAutomationScheduler:
             logger.error(f"Error cleaning up old jobs: {str(e)}")
 
     # Public methods for external control
-    def schedule_immediate_run(self, connection_id: str, automation_type: str = None, trigger_user: str = None) -> Dict[
-        str, Any]:
-        """Schedule an immediate automation run WITH DEDUPLICATION"""
+    def schedule_immediate_run(self, connection_id: str, automation_type: str = None, trigger_user: str = None) -> Dict[str, Any]:
+        """Schedule an immediate automation run WITH PROPER DEDUPLICATION"""
         try:
             jobs_created = []
+            prevented_duplicates = []
 
+            # List of automation types to run
+            automation_types = []
             if automation_type == "metadata_refresh" or automation_type is None:
-                job_id = self._create_and_execute_job(connection_id, "metadata_refresh", "manual")
-                if job_id:
-                    jobs_created.append(job_id)
-
+                automation_types.append("metadata_refresh")
             if automation_type == "schema_change_detection" or automation_type is None:
-                job_id = self._create_and_execute_job(connection_id, "schema_change_detection", "manual")
-                if job_id:
-                    jobs_created.append(job_id)
-
+                automation_types.append("schema_change_detection")
             if automation_type == "validation_automation" or automation_type is None:
-                job_id = self._create_and_execute_job(connection_id, "validation_automation", "manual")
-                if job_id:
+                automation_types.append("validation_automation")
+
+            for auto_type in automation_types:
+                # FIXED: Use the same deduplication logic as scheduled jobs
+                fingerprint = job_deduplication_service.create_job_fingerprint(
+                    connection_id, auto_type, "manual_trigger"
+                )
+
+                # Check for duplicates
+                if job_deduplication_service.is_job_duplicate(fingerprint, max_age_minutes=30):
+                    logger.warning(f"🚫 Prevented duplicate {auto_type} manual job for connection {connection_id}")
+                    prevented_duplicates.append(auto_type)
+                    continue
+
+                # Create job record
+                job_id = str(uuid.uuid4())
+                job_data = {
+                    "id": job_id,
+                    "connection_id": connection_id,
+                    "job_type": auto_type,
+                    "status": "scheduled",
+                    "scheduled_at": datetime.now(timezone.utc).isoformat(),
+                    "job_config": {
+                        "trigger": "manual_trigger",
+                        "triggered_by": trigger_user,
+                        "fingerprint": fingerprint
+                    }
+                }
+
+                response = self.supabase.supabase.table("automation_jobs").insert(job_data).execute()
+
+                if not response.data:
+                    logger.error(f"Failed to create job record for {auto_type}")
+                    continue
+
+                # Register the job for deduplication
+                success = job_deduplication_service.register_job(
+                    fingerprint, job_id, connection_id, auto_type, "manual_trigger"
+                )
+
+                if not success:
+                    logger.error(f"Failed to register manual job {job_id} for deduplication")
+                    self._update_job_status(job_id, "failed", error_message="Failed to register for deduplication")
+                    continue
+
+                logger.info(f"✅ Registered manual job: {auto_type} for connection {connection_id} (fingerprint: {fingerprint[:8]}...)")
+
+                # Execute the job based on type
+                try:
+                    if auto_type == "metadata_refresh":
+                        future = self.executor.submit(
+                            self._execute_job_with_timeout,
+                            self._execute_metadata_refresh,
+                            job_id, connection_id, {"manual": True, "fingerprint": fingerprint},
+                            timeout_minutes=120
+                        )
+                    elif auto_type == "schema_change_detection":
+                        future = self.executor.submit(
+                            self._execute_job_with_timeout,
+                            self._execute_schema_detection,
+                            job_id, connection_id, {"manual": True, "fingerprint": fingerprint},
+                            timeout_minutes=60
+                        )
+                    elif auto_type == "validation_automation":
+                        future = self.executor.submit(
+                            self._execute_job_with_timeout,
+                            self._execute_validation_run,
+                            job_id, connection_id, {"manual": True, "fingerprint": fingerprint},
+                            timeout_minutes=60
+                        )
+
+                    self.active_jobs[job_id] = future
                     jobs_created.append(job_id)
 
-            return {"success": True, "jobs_created": jobs_created}
+                except Exception as executor_error:
+                    logger.error(f"Failed to submit manual job {job_id} to executor: {str(executor_error)}")
+                    job_deduplication_service.mark_job_completed(fingerprint, "failed")
+                    self._update_job_status(job_id, "failed", error_message=f"Executor submission failed: {str(executor_error)}")
+                    continue
+
+            return {
+                "success": True,
+                "jobs_created": jobs_created,
+                "prevented_duplicates": prevented_duplicates,
+                "message": f"Created {len(jobs_created)} jobs, prevented {len(prevented_duplicates)} duplicates"
+            }
 
         except Exception as e:
             logger.error(f"Error scheduling immediate run: {str(e)}")
