@@ -399,8 +399,9 @@ class SimplifiedAutomationScheduler:
                 del self.active_jobs[job_id]
                 logger.info(f"🧹 Cleaned up job {job_id} from active jobs list")
 
+    # Keep all the execution methods from the working version
     def _execute_metadata_refresh(self, job_id: str, connection_id: str, config: Dict[str, Any]):
-        """Execute metadata refresh job with improved error handling"""
+        """Execute metadata refresh job with statistics collection"""
         run_id = None
         metadata_task_id = None
 
@@ -444,13 +445,10 @@ class SimplifiedAutomationScheduler:
 
             logger.info(f"Submitted metadata task {metadata_task_id}")
 
-            # IMPROVED: Wait for completion with better timeout handling
-            task_completed = self._wait_for_task_completion_improved(metadata_task_id, timeout_minutes=60)
+            # Wait for completion
+            task_completed = self._wait_for_task_completion(metadata_task_id, timeout_minutes=45)
 
             if task_completed:
-                logger.info(f"✅ Metadata task {metadata_task_id} completed successfully")
-
-                # Get task results
                 task_status = self.metadata_task_manager.get_task_status(metadata_task_id)
                 task_result = task_status.get("result", {})
 
@@ -462,109 +460,35 @@ class SimplifiedAutomationScheduler:
                     "task_result": task_result,
                     "statistics_collected": stats_collected,
                     "success": True,
-                    "trigger": "user_schedule",
-                    "tables_processed": len(task_result.get("tables", [])),
-                    "statistics_tables": len(task_result.get("statistics_by_table", {}))
+                    "trigger": "user_schedule"
                 }
 
-                # IMPROVED: More robust job status update
-                try:
-                    logger.info(f"📝 Updating job {job_id} status to completed...")
-                    self._update_job_status(
-                        job_id, "completed",
-                        completed_at=datetime.now(timezone.utc).isoformat(),
-                        result_summary=results
-                    )
-                    logger.info(f"✅ Job {job_id} status updated to completed")
-                except Exception as status_error:
-                    logger.error(f"❌ Error updating job status to completed: {str(status_error)}")
-                    # Don't fail the entire job if status update fails
-                    logger.warning(f"⚠️ Job {job_id} completed successfully but status update failed")
+                self._update_job_status(
+                    job_id, "completed",
+                    completed_at=datetime.now(timezone.utc).isoformat(),
+                    result_summary=results
+                )
 
-                # Update automation run
                 if run_id:
-                    try:
-                        self._update_automation_run(run_id, "completed", results)
-                        logger.info(f"✅ Automation run {run_id} updated")
-                    except Exception as run_error:
-                        logger.error(f"❌ Error updating automation run: {str(run_error)}")
+                    self._update_automation_run(run_id, "completed", results)
 
                 # Publish event
-                try:
-                    publish_automation_event(
-                        event_type=AutomationEventType.METADATA_REFRESHED,
-                        data=results,
-                        connection_id=connection_id
-                    )
-                    logger.info(f"✅ Published metadata refresh event")
-                except Exception as event_error:
-                    logger.error(f"❌ Error publishing event: {str(event_error)}")
+                publish_automation_event(
+                    event_type=AutomationEventType.METADATA_REFRESHED,
+                    data=results,
+                    connection_id=connection_id
+                )
 
-                logger.info(f"🎉 Completed metadata refresh job {job_id} - Statistics collected: {stats_collected}")
+                logger.info(f"Completed metadata refresh job {job_id} - Statistics collected: {stats_collected}")
 
             else:
-                error_msg = f"Metadata task {metadata_task_id} timed out or failed"
-                logger.error(f"❌ {error_msg}")
+                error_msg = f"Metadata task {metadata_task_id} timed out"
                 self._handle_job_failure(job_id, run_id, connection_id, error_msg)
 
         except Exception as e:
             error_msg = str(e)
-            logger.error(f"❌ Metadata refresh job {job_id} failed: {error_msg}")
-            logger.error(f"❌ Exception details:", exc_info=True)
+            logger.error(f"Metadata refresh job {job_id} failed: {error_msg}")
             self._handle_job_failure(job_id, run_id, connection_id, error_msg)
-
-    def _wait_for_task_completion_improved(self, task_id: str, timeout_minutes: int = 60) -> bool:
-        """Improved task completion waiting with better error handling"""
-        try:
-            if not self.metadata_task_manager:
-                logger.error("❌ Metadata task manager not available")
-                return False
-
-            logger.info(f"⏳ Waiting for metadata task {task_id} to complete (timeout: {timeout_minutes}min)")
-
-            start_time = time.time()
-            check_interval = 10  # Check every 10 seconds
-
-            while True:
-                try:
-                    # Get current task status
-                    task_status = self.metadata_task_manager.get_task_status(task_id)
-                    status = task_status.get("status", "unknown")
-
-                    logger.debug(f"Task {task_id} status: {status}")
-
-                    if status == "completed":
-                        logger.info(f"✅ Task {task_id} completed successfully")
-                        return True
-                    elif status == "failed":
-                        logger.error(f"❌ Task {task_id} failed")
-                        return False
-                    elif status in ["cancelled", "timeout"]:
-                        logger.error(f"❌ Task {task_id} was {status}")
-                        return False
-
-                    # Check timeout
-                    elapsed = time.time() - start_time
-                    if elapsed > (timeout_minutes * 60):
-                        logger.error(f"❌ Task {task_id} timed out after {timeout_minutes} minutes")
-                        return False
-
-                    # Wait before next check
-                    time.sleep(check_interval)
-
-                except Exception as check_error:
-                    logger.warning(f"⚠️ Error checking task status: {str(check_error)}")
-                    time.sleep(check_interval)
-
-                    # Check timeout even if status check fails
-                    elapsed = time.time() - start_time
-                    if elapsed > (timeout_minutes * 60):
-                        logger.error(f"❌ Task {task_id} timed out during status check errors")
-                        return False
-
-        except Exception as e:
-            logger.error(f"❌ Error waiting for task completion: {str(e)}")
-            return False
 
     def _verify_statistics_collection(self, connection_id: str, task_result: Dict[str, Any]) -> bool:
         """Verify that statistics were actually collected"""
@@ -728,19 +652,41 @@ class SimplifiedAutomationScheduler:
         )
 
     def _wait_for_task_completion(self, task_id: str, timeout_minutes: int = 30) -> bool:
-        """Wait for task completion with timeout"""
+        """Wait for task completion using the built-in task manager method (BEST PRACTICE)"""
         try:
             if not self.metadata_task_manager:
+                logger.error(f"❌ No metadata task manager available for task {task_id}")
                 return False
 
+            logger.info(
+                f"⏳ Waiting for metadata task {task_id} to complete using task manager (timeout: {timeout_minutes}min)")
+
+            # BEST PRACTICE: Use the built-in method that handles all the complexity
             completion_result = self.metadata_task_manager.wait_for_task_completion_sync(
                 task_id, timeout_minutes
             )
 
-            return completion_result.get("completed", False) and completion_result.get("success", False)
+            # Log the detailed result for debugging
+            logger.info(f"📊 Task {task_id} completion result: {completion_result}")
+
+            # Extract success status
+            completed = completion_result.get("completed", False)
+            success = completion_result.get("success", False)
+            error = completion_result.get("error")
+            elapsed = completion_result.get("elapsed_seconds", 0)
+
+            if completed and success:
+                logger.info(f"✅ Task {task_id} completed successfully after {elapsed}s")
+                return True
+            elif completed and not success:
+                logger.error(f"❌ Task {task_id} completed but failed after {elapsed}s: {error}")
+                return False
+            else:
+                logger.error(f"❌ Task {task_id} did not complete after {elapsed}s: {error}")
+                return False
 
         except Exception as e:
-            logger.error(f"Error waiting for task completion: {str(e)}")
+            logger.error(f"❌ Error waiting for task {task_id} completion: {str(e)}")
             return False
 
     def _create_automation_run(self, job_id: str, connection_id: str, run_type: str) -> str:
