@@ -37,8 +37,10 @@ from core.anomalies.routes import register_anomaly_routes
 from core.anomalies.scheduler_service import AnomalyDetectionSchedulerService
 from routes import notifications_bp
 
+
 # Automation system imports
 from core.automation.routes import register_automation_routes
+from core.automation.job_deduplication import job_deduplication_service
 from core.utils.app_hooks import (
     initialize_automation_system,
     automation_health_endpoint,
@@ -849,185 +851,133 @@ json_encoder = CustomJSONEncoder
 anomaly_scheduler_service = None
 
 
-def initialize_anomaly_detection():
-    global anomaly_scheduler_service
+# def initialize_anomaly_detection():
+#     global anomaly_scheduler_service
+#
+#     try:
+#         # Add debug logging
+#         logger.info("Starting anomaly detection initialization...")
+#
+#         # Register routes
+#         logger.info("Registering anomaly detection routes...")
+#         register_anomaly_routes(app, token_required)
+#
+#         # Log registered anomaly routes
+#         anomaly_routes = [rule for rule in app.url_map.iter_rules() if 'anomalies' in rule.rule]
+#         logger.info(f"Registered {len(anomaly_routes)} anomaly detection routes:")
+#         for rule in anomaly_routes:
+#             logger.info(f"  {rule.methods} {rule.rule}")
+#
+#         # Always start the anomaly detection scheduler - no environment checks
+#         logger.info("Starting anomaly detection scheduler service...")
+#
+#         try:
+#             from core.anomalies.scheduler_service import AnomalyDetectionSchedulerService
+#             anomaly_scheduler_service = AnomalyDetectionSchedulerService()
+#             anomaly_scheduler_service.start()
+#
+#             logger.info("Anomaly detection scheduler service started successfully")
+#
+#             # Verify it's actually running
+#             if hasattr(anomaly_scheduler_service, 'running') and anomaly_scheduler_service.running:
+#                 logger.info("Verified: Anomaly scheduler is running")
+#             else:
+#                 logger.warning("Warning: Anomaly scheduler may not be running properly")
+#
+#         except Exception as scheduler_error:
+#             logger.error(f"Failed to start anomaly detection scheduler: {str(scheduler_error)}")
+#             logger.error(traceback.format_exc())
+#             anomaly_scheduler_service = None
+#
+#         logger.info("Anomaly detection initialization completed")
+#         return True
+#
+#     except Exception as e:
+#         logger.error(f"Error initializing anomaly detection: {str(e)}")
+#         logger.error(traceback.format_exc())
+#         return False
 
+
+def get_metadata_task_manager():
+    """
+    Helper function to get metadata task manager instance.
+    Returns None if not available (automation disabled).
+    """
     try:
-        # Add debug logging
-        logger.info("Starting anomaly detection initialization...")
-
-        # Register routes
-        logger.info("Registering anomaly detection routes...")
-        register_anomaly_routes(app, token_required)
-
-        # Log registered anomaly routes
-        anomaly_routes = [rule for rule in app.url_map.iter_rules() if 'anomalies' in rule.rule]
-        logger.info(f"Registered {len(anomaly_routes)} anomaly detection routes:")
-        for rule in anomaly_routes:
-            logger.info(f"  {rule.methods} {rule.rule}")
-
-        # Always start the anomaly detection scheduler - no environment checks
-        logger.info("Starting anomaly detection scheduler service...")
-
-        try:
-            from core.anomalies.scheduler_service import AnomalyDetectionSchedulerService
-            anomaly_scheduler_service = AnomalyDetectionSchedulerService()
-            anomaly_scheduler_service.start()
-
-            logger.info("Anomaly detection scheduler service started successfully")
-
-            # Verify it's actually running
-            if hasattr(anomaly_scheduler_service, 'running') and anomaly_scheduler_service.running:
-                logger.info("Verified: Anomaly scheduler is running")
-            else:
-                logger.warning("Warning: Anomaly scheduler may not be running properly")
-
-        except Exception as scheduler_error:
-            logger.error(f"Failed to start anomaly detection scheduler: {str(scheduler_error)}")
-            logger.error(traceback.format_exc())
-            anomaly_scheduler_service = None
-
-        logger.info("Anomaly detection initialization completed")
-        return True
-
+        from core.metadata.manager import MetadataTaskManager
+        return MetadataTaskManager.get_instance()
     except Exception as e:
-        logger.error(f"Error initializing anomaly detection: {str(e)}")
-        logger.error(traceback.format_exc())
-        return False
-
-
-def init_metadata_task_manager():
-    """Initialize metadata task manager - UPDATED VERSION"""
-    global metadata_task_manager
-    try:
-        if metadata_task_manager is None:
-            from core.metadata.storage_service import MetadataStorageService
-
-            logger.info("Initializing improved metadata task manager...")
-            storage_service = MetadataStorageService()
-            supabase_mgr = SupabaseManager()
-
-            # Use your existing ImprovedTaskManager
-            metadata_task_manager = ImprovedTaskManager.get_instance(storage_service, supabase_mgr)
-            logger.info("Improved metadata task manager initialized successfully")
-
-            # Connect to event system if available
-            try:
-                from core.metadata.events import event_publisher
-                event_publisher.set_task_manager(metadata_task_manager)
-                logger.info("Connected event publisher to improved metadata task manager")
-            except ImportError:
-                # Define a simple stub event_publisher
-                class EventPublisher:
-                    @staticmethod
-                    def set_task_manager(task_manager):
-                        logger.warning("Stub event publisher used - no actual event publishing")
-
-                event_publisher = EventPublisher()
-                logger.warning("Could not import event publisher, using stub implementation")
-            except Exception as e:
-                logger.error(f"Error connecting to event system: {str(e)}")
-
-        return metadata_task_manager
-
-    except Exception as e:
-        logger.error(f"Error initializing improved metadata task manager: {str(e)}")
-        logger.error(traceback.format_exc())
-        metadata_task_manager = None  # Ensure it's set to None if initialization fails
+        logger.warning(f"Metadata task manager not available: {str(e)}")
         return None
 
 
-def init_automation_system():
-    """Initialize the simplified automation system - UPDATED VERSION"""
-    logger.info("Starting simplified automation system initialization...")
-
-    try:
-        # Import the app_hooks functions you're already using
-        from core.utils.app_hooks import initialize_automation_system, integrate_with_metadata_system
-        from core.automation.events import set_event_handler_supabase
-        from core.storage.supabase_manager import SupabaseManager
-
-        logger.info("Calling initialize_automation_system() with simplified scheduler...")
-        automation_success = initialize_automation_system()
-
-        logger.info(f"Simplified automation initialization result: {automation_success}")
-
-        if automation_success:
-            logger.info("Simplified automation system started successfully")
-
-            # Set up event handler with Supabase (this was missing before)
-            logger.info("Setting up automation event handler...")
-            try:
-                supabase_manager = SupabaseManager()
-                set_event_handler_supabase(supabase_manager)
-                logger.info("Automation event handler configured")
-            except Exception as event_error:
-                logger.error(f"Error setting up event handler: {str(event_error)}")
-
-            # Integrate with existing metadata system
-            logger.info("Integrating automation with metadata system...")
-            integration_success = integrate_with_metadata_system()
-
-            if integration_success:
-                logger.info("Automation integrated with metadata system")
-            else:
-                logger.warning("⚠Automation metadata integration failed")
-
-            return True
-        else:
-            logger.error("Simplified automation system failed to start")
-            return False
-
-    except ImportError as e:
-        logger.error(f"Import error in automation system: {str(e)}")
-        logger.error("This usually means missing dependencies or module path issues")
-        logger.error(traceback.format_exc())
-        return False
-    except Exception as e:
-        logger.error(f"Unexpected error initializing automation system: {str(e)}")
-        logger.error(traceback.format_exc())
-        return False
-
-    finally:
-        logger.info("Simplified automation system initialization complete")
+# def init_automation_system():
+#     """Initialize the simplified automation system - UPDATED VERSION"""
+#     logger.info("Starting simplified automation system initialization...")
+#
+#     try:
+#         # Import the app_hooks functions you're already using
+#         from core.utils.app_hooks import initialize_automation_system, integrate_with_metadata_system
+#         from core.automation.events import set_event_handler_supabase
+#         from core.storage.supabase_manager import SupabaseManager
+#
+#         logger.info("Calling initialize_automation_system() with simplified scheduler...")
+#         automation_success = initialize_automation_system()
+#
+#         logger.info(f"Simplified automation initialization result: {automation_success}")
+#
+#         if automation_success:
+#             logger.info("Simplified automation system started successfully")
+#
+#             # Set up event handler with Supabase (this was missing before)
+#             logger.info("Setting up automation event handler...")
+#             try:
+#                 supabase_manager = SupabaseManager()
+#                 set_event_handler_supabase(supabase_manager)
+#                 logger.info("Automation event handler configured")
+#             except Exception as event_error:
+#                 logger.error(f"Error setting up event handler: {str(event_error)}")
+#
+#             # Integrate with existing metadata system
+#             logger.info("Integrating automation with metadata system...")
+#             integration_success = integrate_with_metadata_system()
+#
+#             if integration_success:
+#                 logger.info("Automation integrated with metadata system")
+#             else:
+#                 logger.warning("⚠Automation metadata integration failed")
+#
+#             return True
+#         else:
+#             logger.error("Simplified automation system failed to start")
+#             return False
+#
+#     except ImportError as e:
+#         logger.error(f"Import error in automation system: {str(e)}")
+#         logger.error("This usually means missing dependencies or module path issues")
+#         logger.error(traceback.format_exc())
+#         return False
+#     except Exception as e:
+#         logger.error(f"Unexpected error initializing automation system: {str(e)}")
+#         logger.error(traceback.format_exc())
+#         return False
+#
+#     finally:
+#         logger.info("Simplified automation system initialization complete")
 
 
 def delayed_initialization():
-    """Initialize background services with comprehensive validation and better error handling"""
+    """Initialize background services with unified automation management"""
     try:
         logger.info("Starting delayed initialization of background services...")
 
         initialization_results = {
             "metadata_task_manager": False,
-            "automation_system": False,
-            "performance_optimizations": False,
-            "automation_validation": {}
+            "unified_automation": {},
+            "performance_optimizations": False
         }
 
-        # Step 0: Validate automation configuration before attempting to start
-        try:
-            logger.info("Step 0: Validating automation configuration...")
-
-            # Import validation utilities
-            from core.utils.automation_config_validation import (
-                comprehensive_automation_validation,
-                log_validation_summary
-            )
-            from core.storage.supabase_manager import SupabaseManager
-
-            # Perform comprehensive validation
-            supabase_manager = SupabaseManager()
-            validation_results = comprehensive_automation_validation(supabase_manager)
-            initialization_results["automation_validation"] = validation_results
-
-            # Log validation summary
-            log_validation_summary(validation_results)
-
-        except Exception as validation_error:
-            logger.warning(f"Could not perform automation validation: {str(validation_error)}")
-            # Continue with initialization anyway
-
-        # Step 1: Initialize metadata task manager
+        # Step 1: Initialize metadata task manager (standalone)
         try:
             logger.info("Step 1: Initializing metadata task manager...")
 
@@ -1045,45 +995,28 @@ def delayed_initialization():
 
         except Exception as e:
             logger.error(f"Failed to initialize metadata task manager: {str(e)}")
-            # Continue with other initializations
 
-        # Wait a moment before next step
+        # Wait a moment before automation
         time.sleep(1)
 
-        # Step 2: Initialize automation system (with validation results)
+        # Step 2: Initialize ALL automation systems through unified manager
         try:
-            logger.info("Step 2: Initializing automation system...")
+            logger.info("Step 2: Initializing unified automation systems...")
 
-            # Check if automation validation passed
-            validation_results = initialization_results.get("automation_validation", {})
-            can_start = validation_results.get("can_start_automation", False)
+            from core.automation.unified_manager import initialize_unified_automation
 
-            if not can_start:
-                logger.info("Automation validation indicates system cannot start")
-                environment = validation_results.get("validation_checks", {}).get("environment", {}).get("details",
-                                                                                                         {}).get(
-                    "environment", "unknown")
+            automation_results = initialize_unified_automation()
+            initialization_results["unified_automation"] = automation_results
 
-                if environment == "development":
-                    logger.info("This is expected in development environment unless ENABLE_AUTOMATION_SCHEDULER=true")
-                else:
-                    logger.warning("Automation system has configuration issues - check validation results above")
-
-                initialization_results["automation_system"] = False
+            # Check if any systems started
+            any_automation_success = any(automation_results.values())
+            if any_automation_success:
+                logger.info("✓ At least one automation system started successfully")
             else:
-                # Validation passed, attempt to start automation
-                from core.utils.app_hooks import initialize_automation_system
-                automation_success = initialize_automation_system()
-
-                if automation_success:
-                    logger.info("✓ Automation system started successfully")
-                    initialization_results["automation_system"] = True
-                else:
-                    logger.warning("Automation system failed to start despite passing validation")
-                    initialization_results["automation_system"] = False
+                logger.warning("No automation systems started successfully")
 
         except Exception as e:
-            logger.error(f"Failed to initialize automation system: {str(e)}")
+            logger.error(f"Failed to initialize unified automation: {str(e)}")
             logger.error(traceback.format_exc())
 
         # Step 3: Apply performance optimizations (non-critical)
@@ -1098,36 +1031,43 @@ def delayed_initialization():
 
         except Exception as e:
             logger.warning(f"Failed to apply performance optimizations: {str(e)}")
-            # This is non-critical, so just warn and continue
 
         # Log final results
         logger.info("Background services initialization complete")
 
-        successful_services = sum(1 for success in initialization_results.values() if success is True)
-        total_services = len([k for k, v in initialization_results.items() if isinstance(v, bool)])
+        # Count successful services
+        successful_services = 0
+        if initialization_results["metadata_task_manager"]:
+            successful_services += 1
+        if any(initialization_results["unified_automation"].values()):
+            successful_services += 1
+        if initialization_results["performance_optimizations"]:
+            successful_services += 1
 
-        logger.info(f"Initialization summary: {successful_services}/{total_services} services started successfully")
+        logger.info(f"Initialization summary: {successful_services}/3 major systems started successfully")
 
-        for service, success in initialization_results.items():
-            if isinstance(success, bool):
-                status = "SUCCESS" if success else "FAILED"
-                logger.info(f"  {service}: {status}")
+        # Detailed logging
+        logger.info(
+            f"  Metadata Task Manager: {'SUCCESS' if initialization_results['metadata_task_manager'] else 'FAILED'}")
+
+        automation_status = "PARTIAL" if any(initialization_results["unified_automation"].values()) else "FAILED"
+        if all(initialization_results["unified_automation"].values()):
+            automation_status = "SUCCESS"
+        logger.info(f"  Unified Automation: {automation_status}")
+
+        for system, success in initialization_results["unified_automation"].items():
+            logger.info(f"    - {system}: {'SUCCESS' if success else 'FAILED'}")
+
+        logger.info(
+            f"  Performance Optimizations: {'SUCCESS' if initialization_results['performance_optimizations'] else 'FAILED'}")
 
         # Provide guidance based on results
-        if not initialization_results["automation_system"]:
-            validation_results = initialization_results.get("automation_validation", {})
-            environment = validation_results.get("validation_checks", {}).get("environment", {}).get("details", {}).get(
-                "environment", "development")
-
+        if not any(initialization_results["unified_automation"].values()):
+            environment = os.getenv("ENVIRONMENT", "development")
             if environment == "development":
-                logger.info("💡 To enable automation in development: set ENABLE_AUTOMATION_SCHEDULER=true")
+                logger.info("To enable automation in development: set ENABLE_AUTOMATION_SCHEDULER=true")
             else:
-                logger.warning("⚠️ Automation system failed to start - check configuration and logs above")
-                next_steps = validation_results.get("next_steps", [])
-                if next_steps:
-                    logger.info("Recommended next steps:")
-                    for step in next_steps:
-                        logger.info(f"  • {step}")
+                logger.warning("Automation systems failed to start - check configuration and logs above")
 
     except Exception as e:
         logger.error(f"Critical error in delayed initialization: {str(e)}")
@@ -1300,7 +1240,7 @@ setup_cors(app)
 create_error_handlers(app)
 app.register_blueprint(notifications_bp, url_prefix='/api')
 
-initialize_anomaly_detection()
+#initialize_anomaly_detection()
 
 # Register automation routes with authentication
 register_automation_routes(app, token_required)
@@ -1374,12 +1314,26 @@ def health_check():
 def automation_health():
     """Health check endpoint for automation system"""
     try:
-        from core.utils.app_hooks import get_automation_health
+        from core.automation.unified_manager import get_unified_automation_status
 
-        health = get_automation_health()
-        status_code = 200 if health["healthy"] else 503
+        status = get_unified_automation_status()
 
-        return jsonify(health), status_code
+        # Determine overall health
+        healthy = (
+                status.get("automation_enabled", False) and
+                status.get("initialized", False) and
+                (status.get("main_scheduler", {}).get("running", False) or
+                 not status.get("automation_enabled", False))
+        )
+
+        health_result = {
+            "healthy": healthy,
+            "status": status,
+            "message": "Automation systems operational" if healthy else "Automation systems degraded"
+        }
+
+        status_code = 200 if healthy else 503
+        return jsonify(health_result), status_code
 
     except Exception as e:
         return jsonify({
@@ -1402,16 +1356,19 @@ def restart_automation(current_user, organization_id):
         if user_role not in ['admin', 'owner']:
             return jsonify({"error": "Insufficient permissions"}), 403
 
-        from core.utils.app_hooks import restart_automation_system
+        from core.automation.unified_manager import restart_unified_automation
 
         logger.info(f"Admin {current_user} requested automation restart")
 
-        # Restart the service
-        success = restart_automation_system()
+        # Restart all systems
+        results = restart_unified_automation()
+
+        success = any(results.values())
 
         return jsonify({
             "success": success,
-            "message": "Automation system restarted" if success else "Failed to restart automation system"
+            "results": results,
+            "message": "Automation systems restarted" if success else "Failed to restart automation systems"
         }), 200
 
     except Exception as e:
@@ -1431,6 +1388,421 @@ def automation_health_detailed(current_user, organization_id):
 
     health_result, status_code = automation_health_endpoint()
     return jsonify(health_result), status_code
+
+
+@app.route("/api/admin/automation/jobs-status", methods=["GET"])
+@token_required
+def get_automation_jobs_status(current_user, organization_id):
+    """Get active automation jobs status - PHASE 3 MONITORING"""
+    try:
+        # Check admin permissions
+        supabase = SupabaseManager()
+        user_role = supabase.get_user_role(current_user)
+        if user_role not in ['admin', 'owner']:
+            return jsonify({"error": "Admin access required"}), 403
+
+        from core.automation.job_deduplication import job_deduplication_service
+        from core.automation.unified_manager import get_unified_automation_status
+
+        # Get deduplication status
+        active_jobs = job_deduplication_service.get_active_jobs_summary()
+
+        # Get overall automation status
+        automation_status = get_unified_automation_status()
+
+        # Get recent job history from database
+        recent_jobs = supabase.supabase.table("automation_jobs") \
+            .select("id,job_type,status,connection_id,created_at,completed_at,error_message") \
+            .order("created_at", desc=True) \
+            .limit(20) \
+            .execute()
+
+        # Get connection names for better reporting
+        connection_names = {}
+        if recent_jobs.data:
+            connection_ids = list(set(job.get("connection_id") for job in recent_jobs.data if job.get("connection_id")))
+            for conn_id in connection_ids:
+                try:
+                    conn_response = supabase.supabase.table("database_connections") \
+                        .select("name") \
+                        .eq("id", conn_id) \
+                        .eq("organization_id", organization_id) \
+                        .execute()
+                    if conn_response.data:
+                        connection_names[conn_id] = conn_response.data[0]["name"]
+                except:
+                    connection_names[conn_id] = "Unknown"
+
+        # Enhance job data with connection names and analyze for duplicates
+        enhanced_jobs = []
+        duplicate_patterns = []
+
+        for job in recent_jobs.data or []:
+            # Add connection name
+            job["connection_name"] = connection_names.get(job.get("connection_id"), "Unknown")
+
+            # Calculate job duration
+            if job.get("created_at") and job.get("completed_at"):
+                try:
+                    start = datetime.fromisoformat(job["created_at"].replace('Z', '+00:00'))
+                    end = datetime.fromisoformat(job["completed_at"].replace('Z', '+00:00'))
+                    duration = (end - start).total_seconds()
+                    job["duration_seconds"] = duration
+                except:
+                    job["duration_seconds"] = None
+
+            enhanced_jobs.append(job)
+
+        # Analyze for potential duplicate patterns
+        job_groups = {}
+        for job in enhanced_jobs:
+            key = f"{job.get('connection_id')}:{job.get('job_type')}"
+            if key not in job_groups:
+                job_groups[key] = []
+            job_groups[key].append(job)
+
+        # Look for suspiciously close job timings
+        for key, jobs in job_groups.items():
+            if len(jobs) > 1:
+                # Sort by creation time
+                sorted_jobs = sorted(jobs, key=lambda x: x.get("created_at", ""))
+
+                for i in range(1, len(sorted_jobs)):
+                    try:
+                        prev_time = datetime.fromisoformat(sorted_jobs[i - 1]["created_at"].replace('Z', '+00:00'))
+                        curr_time = datetime.fromisoformat(sorted_jobs[i]["created_at"].replace('Z', '+00:00'))
+                        time_diff = (curr_time - prev_time).total_seconds()
+
+                        # Flag jobs created within 5 minutes of each other
+                        if time_diff < 300:  # 5 minutes
+                            duplicate_patterns.append({
+                                "connection_id": sorted_jobs[i]["connection_id"],
+                                "connection_name": sorted_jobs[i]["connection_name"],
+                                "job_type": sorted_jobs[i]["job_type"],
+                                "job_ids": [sorted_jobs[i - 1]["id"], sorted_jobs[i]["id"]],
+                                "time_difference_seconds": time_diff,
+                                "status": [sorted_jobs[i - 1]["status"], sorted_jobs[i]["status"]]
+                            })
+                    except:
+                        continue
+
+        # Get automation runs for additional context
+        recent_runs = supabase.supabase.table("automation_runs") \
+            .select("*") \
+            .order("started_at", desc=True) \
+            .limit(10) \
+            .execute()
+
+        return jsonify({
+            "active_jobs": active_jobs,
+            "automation_status": automation_status,
+            "recent_jobs": enhanced_jobs,
+            "duplicate_patterns": duplicate_patterns,
+            "recent_runs": recent_runs.data or [],
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "analysis": {
+                "total_recent_jobs": len(enhanced_jobs),
+                "potential_duplicates": len(duplicate_patterns),
+                "deduplication_active": active_jobs.get("total_active", 0) > 0,
+                "automation_healthy": automation_status.get("running", False)
+            }
+        })
+
+    except Exception as e:
+        logger.error(f"Error getting automation jobs status: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/admin/automation/deduplication-stats", methods=["GET"])
+@token_required
+def get_deduplication_stats(current_user, organization_id):
+    """Get detailed deduplication statistics - PHASE 3 MONITORING"""
+    try:
+        # Check admin permissions
+        supabase = SupabaseManager()
+        user_role = supabase.get_user_role(current_user)
+        if user_role not in ['admin', 'owner']:
+            return jsonify({"error": "Admin access required"}), 403
+
+        from core.automation.job_deduplication import job_deduplication_service
+
+        # Get current active jobs in deduplication service
+        active_summary = job_deduplication_service.get_active_jobs_summary()
+
+        # Get historical analysis from database
+        # Look for jobs with fingerprints in job_config
+        historical_jobs = supabase.supabase.table("automation_jobs") \
+            .select("id,job_type,connection_id,status,created_at,job_config") \
+            .gte("created_at", (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()) \
+            .order("created_at", desc=True) \
+            .execute()
+
+        # Analyze fingerprints and potential duplicates
+        fingerprint_analysis = {}
+        jobs_with_fingerprints = 0
+
+        for job in historical_jobs.data or []:
+            job_config = job.get("job_config", {})
+            if isinstance(job_config, str):
+                try:
+                    job_config = json.loads(job_config)
+                except:
+                    job_config = {}
+
+            fingerprint = job_config.get("fingerprint")
+            if fingerprint:
+                jobs_with_fingerprints += 1
+
+                if fingerprint not in fingerprint_analysis:
+                    fingerprint_analysis[fingerprint] = []
+
+                fingerprint_analysis[fingerprint].append({
+                    "job_id": job["id"],
+                    "job_type": job["job_type"],
+                    "connection_id": job["connection_id"],
+                    "status": job["status"],
+                    "created_at": job["created_at"]
+                })
+
+        # Find actual duplicates (same fingerprint, multiple jobs)
+        actual_duplicates = {}
+        for fingerprint, jobs in fingerprint_analysis.items():
+            if len(jobs) > 1:
+                actual_duplicates[fingerprint] = jobs
+
+        # Calculate prevention statistics
+        prevented_duplicates = 0
+        for jobs in actual_duplicates.values():
+            # If we have multiple jobs with same fingerprint, deduplication failed
+            # But if only one succeeded and others failed quickly, deduplication worked
+            successful_jobs = [j for j in jobs if j["status"] == "completed"]
+            if len(successful_jobs) <= 1:
+                prevented_duplicates += len(jobs) - 1
+
+        return jsonify({
+            "current_active": active_summary,
+            "last_24_hours": {
+                "total_jobs": len(historical_jobs.data or []),
+                "jobs_with_fingerprints": jobs_with_fingerprints,
+                "unique_fingerprints": len(fingerprint_analysis),
+                "duplicate_fingerprints": len(actual_duplicates),
+                "estimated_prevented_duplicates": prevented_duplicates
+            },
+            "duplicate_details": actual_duplicates,
+            "effectiveness": {
+                "deduplication_coverage": f"{(jobs_with_fingerprints / max(len(historical_jobs.data or []), 1)) * 100:.1f}%",
+                "duplicate_prevention_rate": f"{(prevented_duplicates / max(jobs_with_fingerprints, 1)) * 100:.1f}%"
+            },
+            "timestamp": datetime.now(timezone.utc).isoformat()
+        })
+
+    except Exception as e:
+        logger.error(f"Error getting deduplication stats: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/admin/automation/test-deduplication", methods=["POST"])
+@token_required
+def test_deduplication(current_user, organization_id):
+    """Test deduplication system - PHASE 3 TESTING"""
+    try:
+        # Check admin permissions
+        supabase = SupabaseManager()
+        user_role = supabase.get_user_role(current_user)
+        if user_role not in ['admin', 'owner']:
+            return jsonify({"error": "Admin access required"}), 403
+
+        data = request.get_json() or {}
+        connection_id = data.get("connection_id")
+        job_type = data.get("job_type", "metadata_refresh")
+
+        if not connection_id:
+            return jsonify({"error": "connection_id is required"}), 400
+
+        # Check if connection exists and user has access
+        connection = connection_access_check(connection_id, organization_id)
+        if not connection:
+            return jsonify({"error": "Connection not found or access denied"}), 404
+
+        from core.automation.job_deduplication import job_deduplication_service
+        from core.automation.unified_manager import unified_manager
+
+        # Test 1: Create a fingerprint
+        fingerprint = job_deduplication_service.create_job_fingerprint(
+            connection_id, job_type, "test_trigger"
+        )
+
+        # Test 2: Check if it's a duplicate (should be False initially)
+        is_duplicate_before = job_deduplication_service.is_job_duplicate(fingerprint)
+
+        # Test 3: Register a fake job
+        test_job_id = f"test-{uuid.uuid4()}"
+        registration_success = job_deduplication_service.register_job(
+            fingerprint, test_job_id, connection_id, job_type, "test_trigger"
+        )
+
+        # Test 4: Check if it's a duplicate now (should be True)
+        is_duplicate_after = job_deduplication_service.is_job_duplicate(fingerprint)
+
+        # Test 5: Try to schedule actual job (should be prevented)
+        try:
+            schedule_result = unified_manager.schedule_immediate_job(
+                connection_id, job_type, current_user
+            )
+        except Exception as e:
+            schedule_result = {"error": str(e)}
+
+        # Test 6: Clean up
+        job_deduplication_service.mark_job_completed(fingerprint, "test_completed")
+
+        # Test 7: Check if duplicate check works after cleanup
+        is_duplicate_after_cleanup = job_deduplication_service.is_job_duplicate(fingerprint)
+
+        return jsonify({
+            "test_results": {
+                "fingerprint_created": fingerprint,
+                "duplicate_check_before_registration": is_duplicate_before,
+                "registration_successful": registration_success,
+                "duplicate_check_after_registration": is_duplicate_after,
+                "schedule_attempt_result": schedule_result,
+                "duplicate_check_after_cleanup": is_duplicate_after_cleanup
+            },
+            "expected_results": {
+                "duplicate_check_before_registration": False,
+                "registration_successful": True,
+                "duplicate_check_after_registration": True,
+                "schedule_should_be_prevented": True,
+                "duplicate_check_after_cleanup": False
+            },
+            "test_passed": (
+                    not is_duplicate_before and
+                    registration_success and
+                    is_duplicate_after and
+                    not is_duplicate_after_cleanup
+            ),
+            "connection_tested": {
+                "id": connection_id,
+                "name": connection.get("name"),
+                "type": connection.get("connection_type")
+            },
+            "timestamp": datetime.now(timezone.utc).isoformat()
+        })
+
+    except Exception as e:
+        logger.error(f"Error testing deduplication: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+
+# Add this log analysis function
+def analyze_automation_logs():
+    """
+    PHASE 3: Function to analyze logs for deduplication effectiveness
+    Call this periodically or via admin endpoint
+    """
+    try:
+        from core.automation.job_deduplication import job_deduplication_service
+
+        # Get recent automation activity
+        supabase = SupabaseManager()
+        recent_jobs = supabase.supabase.table("automation_jobs") \
+            .select("*") \
+            .gte("created_at", (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()) \
+            .order("created_at", desc=True) \
+            .execute()
+
+        # Analyze patterns
+        patterns = {
+            "duplicate_prevention_success": 0,
+            "potential_missed_duplicates": 0,
+            "jobs_with_fingerprints": 0,
+            "total_jobs": len(recent_jobs.data or [])
+        }
+
+        fingerprint_groups = {}
+
+        for job in recent_jobs.data or []:
+            job_config = job.get("job_config", {})
+            if isinstance(job_config, str):
+                try:
+                    job_config = json.loads(job_config)
+                except:
+                    job_config = {}
+
+            fingerprint = job_config.get("fingerprint")
+            if fingerprint:
+                patterns["jobs_with_fingerprints"] += 1
+
+                if fingerprint not in fingerprint_groups:
+                    fingerprint_groups[fingerprint] = []
+                fingerprint_groups[fingerprint].append(job)
+
+        # Look for successful prevention
+        for fingerprint, jobs in fingerprint_groups.items():
+            if len(jobs) > 1:
+                # Multiple jobs with same fingerprint
+                completed_jobs = [j for j in jobs if j["status"] == "completed"]
+                failed_jobs = [j for j in jobs if j["status"] == "failed"]
+
+                if len(completed_jobs) <= 1 and len(failed_jobs) > 0:
+                    # Likely successful deduplication
+                    patterns["duplicate_prevention_success"] += len(failed_jobs)
+                else:
+                    # Possible missed duplicate
+                    patterns["potential_missed_duplicates"] += len(jobs) - 1
+
+        # Log the analysis
+        logger.info("=== AUTOMATION DEDUPLICATION ANALYSIS ===")
+        logger.info(f"Total jobs in last hour: {patterns['total_jobs']}")
+        logger.info(f"Jobs with fingerprints: {patterns['jobs_with_fingerprints']}")
+        logger.info(f"Successful duplicate prevention: {patterns['duplicate_prevention_success']}")
+        logger.info(f"Potential missed duplicates: {patterns['potential_missed_duplicates']}")
+
+        if patterns["potential_missed_duplicates"] > 0:
+            logger.warning(f"⚠️ Found {patterns['potential_missed_duplicates']} potential missed duplicates!")
+        else:
+            logger.info("✅ No missed duplicates detected")
+
+        return patterns
+
+    except Exception as e:
+        logger.error(f"Error analyzing automation logs: {str(e)}")
+        return {"error": str(e)}
+
+
+@app.route("/api/admin/automation/log-analysis", methods=["GET"])
+@token_required
+def get_log_analysis(current_user, organization_id):
+    """Get automated log analysis - PHASE 3 MONITORING"""
+    try:
+        # Check admin permissions
+        supabase = SupabaseManager()
+        user_role = supabase.get_user_role(current_user)
+        if user_role not in ['admin', 'owner']:
+            return jsonify({"error": "Admin access required"}), 403
+
+        # Run the analysis
+        analysis = analyze_automation_logs()
+
+        return jsonify({
+            "analysis": analysis,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "recommendations": {
+                "healthy": analysis.get("potential_missed_duplicates", 0) == 0,
+                "action_needed": analysis.get("potential_missed_duplicates", 0) > 0,
+                "next_steps": [
+                    "Monitor for duplicate jobs in the next hour",
+                    "Check scheduler logs for deduplication messages",
+                    "Verify unified manager is properly initialized"
+                ] if analysis.get("potential_missed_duplicates", 0) > 0 else [
+                    "Deduplication system is working correctly",
+                    "Continue monitoring"
+                ]
+            }
+        })
+
+    except Exception as e:
+        logger.error(f"Error getting log analysis: {str(e)}")
+        return jsonify({"error": str(e)}), 500
 
 @app.route("/api/debug/anomaly-status", methods=["GET"])
 @token_required
@@ -4332,13 +4704,19 @@ def collect_connection_metadata(current_user, organization_id, connection_id):
 
         logger.info(f"Retrieved connection details for {connection_id}: {connection['name']}")
 
-        # Make sure task manager is initialized
-        if metadata_task_manager is None:
-            init_metadata_task_manager()
+        # Try to get task manager
+        metadata_task_manager = get_metadata_task_manager()
+
+        if not metadata_task_manager:
+            return jsonify({
+                "error": "Metadata collection not available",
+                "message": "Automation system is not enabled. Contact your administrator."
+            }), 503
 
         # Determine collection type from request parameters
-        collection_type = request.json.get("collection_type", "immediate")
-        table_limit = request.json.get("table_limit", 50)
+        request_data = request.get_json() or {}
+        collection_type = request_data.get("collection_type", "immediate")
+        table_limit = request_data.get("table_limit", 50)
         logger.info(f"Collection type: {collection_type}, table limit: {table_limit}")
 
         # For immediate collection, start a task but also collect some data right away
@@ -4352,11 +4730,12 @@ def collect_connection_metadata(current_user, organization_id, connection_id):
                 connector.connect()
 
                 # Create metadata collector
+                from core.metadata.collector import MetadataCollector
                 collector = MetadataCollector(connection_id, connector)
 
                 # Get table list (limited for immediate response)
                 tables = collector.collect_table_list()
-                # Fix: Apply the slice to tables AFTER we get them
+                # Apply the slice to tables AFTER we get them
                 tables_to_process = tables[:min(len(tables), 20)]
 
                 for table in tables_to_process:
@@ -4372,7 +4751,7 @@ def collect_connection_metadata(current_user, organization_id, connection_id):
         else:
             message = "Comprehensive metadata collection scheduled"
 
-        # Queue full collection as background task with the improved task manager
+        # Queue full collection as background task
         params = {
             "depth": "medium" if collection_type == "comprehensive" else "light",
             "table_limit": table_limit
@@ -5952,27 +6331,25 @@ def get_historical_trends(current_user, organization_id, connection_id, table_na
 def schedule_metadata_task(current_user, organization_id, connection_id):
     """Schedule a metadata collection task"""
     try:
-        # Make sure task manager is initialized
-        if metadata_task_manager is None:
-            init_metadata_task_manager()
+        # Check access to connection
+        connection = connection_access_check(connection_id, organization_id)
+        if not connection:
+            return jsonify({"error": "Connection not found or access denied"}), 404
+
+        # Try to get task manager
+        metadata_task_manager = get_metadata_task_manager()
+
+        if not metadata_task_manager:
+            return jsonify({
+                "error": "Task scheduling not available",
+                "message": "Automation system is not enabled. Contact your administrator."
+            }), 503
 
         # Get task parameters from request
         data = request.get_json() or {}
         task_type = data.get("task_type", "full_collection")
         priority = data.get("priority", "medium")
         table_name = data.get("table_name")
-
-        # Check access to connection
-        supabase_mgr = SupabaseManager()
-        connection_check = supabase_mgr.supabase.table("database_connections") \
-            .select("*") \
-            .eq("id", connection_id) \
-            .eq("organization_id", organization_id) \
-            .execute()
-
-        if not connection_check.data or len(connection_check.data) == 0:
-            logger.error(f"Connection not found or access denied: {connection_id}")
-            return jsonify({"error": "Connection not found or access denied"}), 404
 
         # Submit appropriate task based on type
         task_id = None
@@ -6032,9 +6409,15 @@ def get_metadata_tasks(current_user, organization_id, connection_id):
         if not connection:
             return jsonify({"error": "Connection not found or access denied"}), 404
 
-        # Make sure task manager is initialized
-        if metadata_task_manager is None:
-            init_metadata_task_manager()
+        # Try to get task manager
+        metadata_task_manager = get_metadata_task_manager()
+
+        if not metadata_task_manager:
+            return jsonify({
+                "tasks": [],
+                "count": 0,
+                "message": "Task manager not available - automation system disabled"
+            })
 
         # Get recent tasks for this connection
         limit = request.args.get("limit", 10, type=int)
@@ -6132,9 +6515,8 @@ def get_metadata_status(current_user, organization_id, connection_id):
         if not connection:
             return jsonify({"error": "Connection not found or access denied"}), 404
 
-        # Make sure task manager is initialized
-        if metadata_task_manager is None:
-            init_metadata_task_manager()
+        # Try to get task manager (may be None if automation disabled)
+        metadata_task_manager = get_metadata_task_manager()
 
         # Helper function to calculate freshness status
         def calculate_freshness_status(collected_at):
@@ -6197,7 +6579,7 @@ def get_metadata_status(current_user, organization_id, connection_id):
                 }
 
                 # Log for debugging (remove in production)
-                logger.info(f"Metadata {metadata_type}: collected_at={collected_at}, freshness={freshness}")
+                logger.debug(f"Metadata {metadata_type}: collected_at={collected_at}, freshness={freshness}")
             else:
                 status[metadata_type] = {
                     "available": False,
@@ -6205,21 +6587,30 @@ def get_metadata_status(current_user, organization_id, connection_id):
                     "last_updated": None
                 }
 
-        # Get any pending tasks - limit to this connection only
-        tasks = metadata_task_manager.get_recent_tasks(5, connection_id)
-
-        # IMPORTANT: Fix the filter to properly detect pending tasks
+        # Get any pending tasks - only if task manager is available
         pending_tasks = []
-        for task in tasks:
-            task_status = task.get("status")
-            if task_status in ["pending", "running"]:
-                pending_tasks.append(task)
-            elif task.get("task") and task["task"].get("status") in ["pending", "running"]:
-                pending_tasks.append(task)
+        has_pending_tasks = False
+
+        if metadata_task_manager:
+            try:
+                tasks = metadata_task_manager.get_recent_tasks(5, connection_id)
+
+                # Fix the filter to properly detect pending tasks
+                for task in tasks:
+                    task_status = task.get("status")
+                    if task_status in ["pending", "running"]:
+                        pending_tasks.append(task)
+                    elif task.get("task") and task["task"].get("status") in ["pending", "running"]:
+                        pending_tasks.append(task)
+
+                has_pending_tasks = len(pending_tasks) > 0
+            except Exception as e:
+                logger.warning(f"Error getting pending tasks: {str(e)}")
 
         # Add to status
         status["pending_tasks"] = pending_tasks
-        status["has_pending_tasks"] = len(pending_tasks) > 0
+        status["has_pending_tasks"] = has_pending_tasks
+        status["task_manager_available"] = metadata_task_manager is not None
 
         # Add connection info
         status["connection"] = {
@@ -6253,12 +6644,19 @@ def get_worker_stats(current_user, organization_id):
             logger.warning(f"Non-admin user {current_user} attempted to access admin endpoint")
             return jsonify({"error": "Admin access required"}), 403
 
-        # Make sure task manager is initialized
-        if metadata_task_manager is None:
-            init_metadata_task_manager()
+        # Try to get task manager
+        metadata_task_manager = get_metadata_task_manager()
+
+        if not metadata_task_manager:
+            return jsonify({
+                "error": "Worker stats not available",
+                "message": "Automation system is not enabled",
+                "automation_enabled": False
+            })
 
         # Get worker stats from the task manager
         stats = metadata_task_manager.get_worker_stats()
+        stats["automation_enabled"] = True
 
         # Add additional stats from database if available
         try:
@@ -6311,9 +6709,14 @@ def get_metadata_task_status(current_user, organization_id, connection_id, task_
         if not connection:
             return jsonify({"error": "Connection not found or access denied"}), 404
 
-        # Make sure task manager is initialized
-        if metadata_task_manager is None:
-            init_metadata_task_manager()
+        # Try to get task manager
+        metadata_task_manager = get_metadata_task_manager()
+
+        if not metadata_task_manager:
+            return jsonify({
+                "error": "Task status not available",
+                "message": "Automation system is not enabled"
+            }), 503
 
         # Get task status
         task_status = metadata_task_manager.get_task_status(task_id)
@@ -7131,16 +7534,16 @@ def batch_requests():
 
     return jsonify({"results": results})
 
-@app.route('/test/start-automation')
-def test_start_automation():
-    """Test endpoint to manually start automation - REMOVE IN PRODUCTION"""
-    try:
-        logger.info("Manual automation startup triggered via test endpoint")
-        init_automation_system()
-        return jsonify({"message": "Automation startup attempted - check logs"})
-    except Exception as e:
-        logger.error(f"Error in manual automation startup: {str(e)}")
-        return jsonify({"error": str(e)}), 500
+# @app.route('/test/start-automation')
+# def test_start_automation():
+#     """Test endpoint to manually start automation - REMOVE IN PRODUCTION"""
+#     try:
+#         logger.info("Manual automation startup triggered via test endpoint")
+#         init_automation_system()
+#         return jsonify({"message": "Automation startup attempted - check logs"})
+#     except Exception as e:
+#         logger.error(f"Error in manual automation startup: {str(e)}")
+#         return jsonify({"error": str(e)}), 500
 
 @app.after_request
 def after_request_cors(response):

@@ -1,3 +1,6 @@
+# backend/core/automation/simplified_scheduler.py
+# UPDATED VERSION with job deduplication
+
 import logging
 import threading
 import time
@@ -10,13 +13,13 @@ import os
 from core.storage.supabase_manager import SupabaseManager
 from .events import AutomationEventType, publish_automation_event
 from .schedule_manager import ScheduleManager
-
+from .job_deduplication import job_deduplication_service  # NEW IMPORT
 
 logger = logging.getLogger(__name__)
 
 
 class SimplifiedAutomationScheduler:
-    """Simplified scheduler that uses user-defined schedules instead of complex interval logic"""
+    """Simplified scheduler that uses user-defined schedules with job deduplication"""
 
     def __init__(self, max_workers: int = 3):
         self.supabase = SupabaseManager()
@@ -28,7 +31,7 @@ class SimplifiedAutomationScheduler:
 
         self.environment = os.getenv("ENVIRONMENT", "development")
 
-        # FIXED: More flexible environment logic
+        # More flexible environment logic
         self.scheduler_enabled = True  # Default to enabled
 
         # Check if explicitly disabled
@@ -101,7 +104,7 @@ class SimplifiedAutomationScheduler:
         logger.info("Simplified automation scheduler stopped")
 
     def _run_scheduler(self):
-        """Main scheduler loop - much simpler than before"""
+        """Main scheduler loop"""
         logger.info("Scheduler loop started")
 
         while self.running:
@@ -121,7 +124,7 @@ class SimplifiedAutomationScheduler:
                 time.sleep(60)  # Sleep even on error
 
     def _check_and_execute_due_jobs(self):
-        """Check for due jobs and execute them - MUCH SIMPLER"""
+        """Check for due jobs and execute them"""
         try:
             # Get jobs that are due to run
             due_jobs = self.schedule_manager.get_due_jobs(buffer_minutes=2)
@@ -139,7 +142,7 @@ class SimplifiedAutomationScheduler:
 
                     logger.info(f"Executing {automation_type} for connection {connection_id}")
 
-                    # Create and execute the job
+                    # Create and execute the job (with deduplication)
                     job_id = self._create_and_execute_job(
                         connection_id=connection_id,
                         automation_type=automation_type,
@@ -151,7 +154,8 @@ class SimplifiedAutomationScheduler:
                         self.schedule_manager.mark_job_executed(scheduled_job_id)
                         logger.info(f"Scheduled {automation_type} job {job_id} for connection {connection_id}")
                     else:
-                        logger.error(f"Failed to create {automation_type} job for connection {connection_id}")
+                        logger.warning(
+                            f"Failed to create {automation_type} job for connection {connection_id} (likely duplicate)")
 
                 except Exception as job_error:
                     logger.error(f"Error executing scheduled job: {str(job_error)}")
@@ -161,8 +165,21 @@ class SimplifiedAutomationScheduler:
             logger.error(f"Error checking for due jobs: {str(e)}")
 
     def _create_and_execute_job(self, connection_id: str, automation_type: str, scheduled_job_id: str) -> Optional[str]:
-        """Create and execute a scheduled automation job"""
+        """Create and execute a scheduled automation job WITH DEDUPLICATION"""
         try:
+            # PHASE 2 IMPLEMENTATION: Add deduplication logic
+
+            # Step 1: Create job fingerprint
+            fingerprint = job_deduplication_service.create_job_fingerprint(
+                connection_id, automation_type, "user_schedule"
+            )
+
+            # Step 2: Check for duplicates
+            if job_deduplication_service.is_job_duplicate(fingerprint, max_age_minutes=30):
+                logger.warning(f"🚫 Prevented duplicate {automation_type} job for connection {connection_id}")
+                return None
+
+            # Step 3: Continue with existing job creation logic
             job_id = str(uuid.uuid4())
 
             # Create job record
@@ -174,7 +191,8 @@ class SimplifiedAutomationScheduler:
                 "scheduled_at": datetime.now(timezone.utc).isoformat(),
                 "job_config": {
                     "trigger": "user_schedule",
-                    "scheduled_job_id": scheduled_job_id
+                    "scheduled_job_id": scheduled_job_id,
+                    "fingerprint": fingerprint  # Store fingerprint for debugging
                 }
             }
 
@@ -184,30 +202,46 @@ class SimplifiedAutomationScheduler:
                 logger.error(f"Failed to create job record for {automation_type}")
                 return None
 
+            # Step 4: Register the job to prevent future duplicates
+            success = job_deduplication_service.register_job(
+                fingerprint, job_id, connection_id, automation_type, "user_schedule"
+            )
+
+            if not success:
+                logger.error(f"Failed to register job {job_id} for deduplication")
+                # Cancel the job since we couldn't register it
+                self._update_job_status(job_id, "failed", error_message="Failed to register for deduplication")
+                return None
+
+            logger.info(
+                f"✅ Registered job: {automation_type} for connection {connection_id} (fingerprint: {fingerprint[:8]}...)")
+
             # Execute the job based on type
             if automation_type == "metadata_refresh":
                 future = self.executor.submit(
                     self._execute_job_with_timeout,
                     self._execute_metadata_refresh,
-                    job_id, connection_id, {"scheduled": True},
+                    job_id, connection_id, {"scheduled": True, "fingerprint": fingerprint},
                     timeout_minutes=120
                 )
             elif automation_type == "schema_change_detection":
                 future = self.executor.submit(
                     self._execute_job_with_timeout,
                     self._execute_schema_detection,
-                    job_id, connection_id, {"scheduled": True},
+                    job_id, connection_id, {"scheduled": True, "fingerprint": fingerprint},
                     timeout_minutes=60
                 )
             elif automation_type == "validation_automation":
                 future = self.executor.submit(
                     self._execute_job_with_timeout,
                     self._execute_validation_run,
-                    job_id, connection_id, {"scheduled": True},
+                    job_id, connection_id, {"scheduled": True, "fingerprint": fingerprint},
                     timeout_minutes=60
                 )
             else:
                 logger.error(f"Unknown automation type: {automation_type}")
+                # Mark job as completed since we couldn't run it
+                job_deduplication_service.mark_job_completed(fingerprint, "failed")
                 return None
 
             self.active_jobs[job_id] = future
@@ -220,11 +254,26 @@ class SimplifiedAutomationScheduler:
     def _execute_job_with_timeout(self, job_function, job_id: str, connection_id: str, config: Dict[str, Any],
                                   timeout_minutes: int = 60):
         """Execute a job function with timeout protection"""
+        fingerprint = config.get("fingerprint")
+
         try:
             result = job_function(job_id, connection_id, config)
+
+            # PHASE 2: Mark job as completed on success
+            if fingerprint:
+                job_deduplication_service.mark_job_completed(fingerprint, "completed")
+                logger.info(f"✅ Job {job_id} completed successfully, marked in deduplication service")
+
             return result
+
         except Exception as e:
             logger.error(f"Job {job_id} failed with exception: {str(e)}")
+
+            # PHASE 2: Mark job as completed on failure too
+            if fingerprint:
+                job_deduplication_service.mark_job_completed(fingerprint, "failed")
+                logger.info(f"❌ Job {job_id} failed, marked in deduplication service")
+
             self._update_job_status(
                 job_id, "failed",
                 completed_at=datetime.now(timezone.utc).isoformat(),
@@ -235,9 +284,10 @@ class SimplifiedAutomationScheduler:
                 del self.active_jobs[job_id]
 
     def _execute_metadata_refresh(self, job_id: str, connection_id: str, config: Dict[str, Any]):
-        """FIXED: Execute metadata refresh job with statistics collection"""
+        """Execute metadata refresh job with statistics collection"""
         run_id = None
         metadata_task_id = None
+        fingerprint = config.get("fingerprint")
 
         try:
             logger.info(f"Starting metadata refresh job {job_id}")
@@ -259,16 +309,16 @@ class SimplifiedAutomationScheduler:
 
             logger.info(f"Collecting metadata for connection: {connection.get('name')}")
 
-            # FIXED: Submit metadata collection task with statistics
+            # Submit metadata collection task with statistics
             collection_params = {
-                "depth": "comprehensive",  # CHANGED: Use comprehensive to collect statistics
+                "depth": "comprehensive",
                 "table_limit": 50,
                 "automation_trigger": True,
                 "automation_job_id": job_id,
-                "refresh_types": ["tables", "columns", "statistics"],  # FIXED: Include statistics
-                "timeout_minutes": 45,  # INCREASED: Give more time for statistics
-                "collect_statistics": True,  # ADDED: Explicitly request statistics
-                "statistics_sample_size": 100000  # ADDED: Limit sample size for performance
+                "refresh_types": ["tables", "columns", "statistics"],
+                "timeout_minutes": 45,
+                "collect_statistics": True,
+                "statistics_sample_size": 100000
             }
 
             metadata_task_id = self.metadata_task_manager.submit_collection_task(
@@ -279,14 +329,14 @@ class SimplifiedAutomationScheduler:
 
             logger.info(f"Submitted metadata task {metadata_task_id}")
 
-            # INCREASED: Wait longer for completion to allow for statistics collection
+            # Wait for completion
             task_completed = self._wait_for_task_completion(metadata_task_id, timeout_minutes=45)
 
             if task_completed:
                 task_status = self.metadata_task_manager.get_task_status(metadata_task_id)
                 task_result = task_status.get("result", {})
 
-                # ADDED: Verify that statistics were collected
+                # Verify that statistics were collected
                 stats_collected = self._verify_statistics_collection(connection_id, task_result)
 
                 results = {
@@ -314,6 +364,9 @@ class SimplifiedAutomationScheduler:
                 )
 
                 logger.info(f"Completed metadata refresh job {job_id} - Statistics collected: {stats_collected}")
+
+                # PHASE 2: Deduplication cleanup happens in _execute_job_with_timeout
+
             else:
                 error_msg = f"Metadata task {metadata_task_id} timed out"
                 self._handle_job_failure(job_id, run_id, connection_id, error_msg)
@@ -323,36 +376,11 @@ class SimplifiedAutomationScheduler:
             logger.error(f"Metadata refresh job {job_id} failed: {error_msg}")
             self._handle_job_failure(job_id, run_id, connection_id, error_msg)
 
-    def _verify_statistics_collection(self, connection_id: str, task_result: Dict[str, Any]) -> bool:
-        """ADDED: Verify that statistics were actually collected"""
-        try:
-            # Check if statistics are in the task result
-            if "statistics" in task_result or "statistics_by_table" in task_result:
-                logger.info("Statistics found in task result")
-                return True
-
-            # Check database for recent statistics metadata
-            response = self.supabase.supabase.table("connection_metadata") \
-                .select("id, collected_at") \
-                .eq("connection_id", connection_id) \
-                .eq("metadata_type", "statistics") \
-                .gte("collected_at", (datetime.now(timezone.utc) - timedelta(minutes=10)).isoformat()) \
-                .execute()
-
-            if response.data and len(response.data) > 0:
-                logger.info(f"Found recent statistics metadata for connection {connection_id}")
-                return True
-
-            logger.warning(f"No recent statistics found for connection {connection_id}")
-            return False
-
-        except Exception as e:
-            logger.error(f"Error verifying statistics collection: {str(e)}")
-            return False
-
     def _execute_schema_detection(self, job_id: str, connection_id: str, config: Dict[str, Any]):
         """Execute schema change detection job"""
         run_id = None
+        fingerprint = config.get("fingerprint")
+
         try:
             logger.info(f"Starting schema detection job {job_id}")
 
@@ -407,6 +435,8 @@ class SimplifiedAutomationScheduler:
 
             logger.info(f"Completed schema detection job {job_id}, found {len(changes)} changes")
 
+            # PHASE 2: Deduplication cleanup happens in _execute_job_with_timeout
+
         except Exception as e:
             error_msg = str(e)
             logger.error(f"Schema detection job {job_id} failed: {error_msg}")
@@ -415,6 +445,8 @@ class SimplifiedAutomationScheduler:
     def _execute_validation_run(self, job_id: str, connection_id: str, config: Dict[str, Any]):
         """Execute validation automation job"""
         run_id = None
+        fingerprint = config.get("fingerprint")
+
         try:
             logger.info(f"Starting validation job {job_id}")
 
@@ -461,6 +493,8 @@ class SimplifiedAutomationScheduler:
 
             logger.info(f"Completed validation job {job_id}: {results.get('failed_rules', 0)} failures")
 
+            # PHASE 2: Deduplication cleanup happens in _execute_job_with_timeout
+
         except Exception as e:
             error_msg = str(e)
             logger.error(f"Validation job {job_id} failed: {error_msg}")
@@ -483,6 +517,35 @@ class SimplifiedAutomationScheduler:
             data={"job_id": job_id, "error": error_msg},
             connection_id=connection_id
         )
+
+    def _verify_statistics_collection(self, connection_id: str, task_result: Dict[str, Any]) -> bool:
+        """Verify that statistics were actually collected"""
+        try:
+            # Check if statistics are in the task result
+            if "statistics" in task_result or "statistics_by_table" in task_result:
+                logger.info("Statistics found in task result")
+                return True
+
+            # Check database for recent statistics metadata
+            response = self.supabase.supabase.table("connection_metadata") \
+                .select("id, collected_at") \
+                .eq("connection_id", connection_id) \
+                .eq("metadata_type", "statistics") \
+                .gte("collected_at", (datetime.now(timezone.utc) - timedelta(minutes=10)).isoformat()) \
+                .execute()
+
+            if response.data and len(response.data) > 0:
+                logger.info(f"Found recent statistics metadata for connection {connection_id}")
+                return True
+
+            logger.warning(f"No recent statistics found for connection {connection_id}")
+            return False
+
+        except Exception as e:
+            logger.error(f"Error verifying statistics collection: {str(e)}")
+            return False
+
+    # ... (rest of the existing methods remain the same: _wait_for_task_completion, _create_automation_run, etc.)
 
     def _wait_for_task_completion(self, task_id: str, timeout_minutes: int = 30) -> bool:
         """Wait for task completion with timeout"""
@@ -593,7 +656,7 @@ class SimplifiedAutomationScheduler:
     # Public methods for external control
     def schedule_immediate_run(self, connection_id: str, automation_type: str = None, trigger_user: str = None) -> Dict[
         str, Any]:
-        """Schedule an immediate automation run"""
+        """Schedule an immediate automation run WITH DEDUPLICATION"""
         try:
             jobs_created = []
 
@@ -637,6 +700,9 @@ class SimplifiedAutomationScheduler:
                 .eq("enabled", True) \
                 .execute()
 
+            # PHASE 2: Add deduplication stats
+            dedup_stats = job_deduplication_service.get_active_jobs_summary()
+
             return {
                 "running": self.running,
                 "environment": self.environment,
@@ -645,7 +711,8 @@ class SimplifiedAutomationScheduler:
                 "active_job_ids": list(self.active_jobs.keys()),
                 "scheduled_jobs_count": scheduled_response.count or 0,
                 "metadata_task_manager_available": self.metadata_task_manager is not None,
-                "version": "simplified_user_schedule"
+                "version": "simplified_user_schedule",
+                "deduplication_stats": dedup_stats  # NEW: Add deduplication info
             }
         except Exception as e:
             logger.error(f"Error getting scheduler stats: {str(e)}")
