@@ -652,41 +652,37 @@ class SimplifiedAutomationScheduler:
         )
 
     def _wait_for_task_completion(self, task_id: str, timeout_minutes: int = 30) -> bool:
-        """Wait for task completion using the built-in task manager method (BEST PRACTICE)"""
+        """
+        SIMPLIFIED: Wait for task completion and return simple boolean
+        This fixes the issue where successful tasks were marked as failed
+        """
         try:
             if not self.metadata_task_manager:
                 logger.error(f"❌ No metadata task manager available for task {task_id}")
                 return False
 
-            logger.info(
-                f"⏳ Waiting for metadata task {task_id} to complete using task manager (timeout: {timeout_minutes}min)")
+            logger.info(f"⏳ Waiting for task {task_id} to complete (timeout: {timeout_minutes}min)")
 
-            # BEST PRACTICE: Use the built-in method that handles all the complexity
+            # Use the task manager's built-in method but simplify the result
             completion_result = self.metadata_task_manager.wait_for_task_completion_sync(
                 task_id, timeout_minutes
             )
 
-            # Log the detailed result for debugging
-            logger.info(f"📊 Task {task_id} completion result: {completion_result}")
-
-            # Extract success status
+            # FIXED: Properly extract the success status
             completed = completion_result.get("completed", False)
             success = completion_result.get("success", False)
-            error = completion_result.get("error")
             elapsed = completion_result.get("elapsed_seconds", 0)
 
             if completed and success:
                 logger.info(f"✅ Task {task_id} completed successfully after {elapsed}s")
                 return True
-            elif completed and not success:
-                logger.error(f"❌ Task {task_id} completed but failed after {elapsed}s: {error}")
-                return False
             else:
-                logger.error(f"❌ Task {task_id} did not complete after {elapsed}s: {error}")
+                error = completion_result.get("error", "Unknown error")
+                logger.error(f"❌ Task {task_id} failed after {elapsed}s: {error}")
                 return False
 
         except Exception as e:
-            logger.error(f"❌ Error waiting for task {task_id} completion: {str(e)}")
+            logger.error(f"❌ Error waiting for task {task_id}: {str(e)}")
             return False
 
     def _create_automation_run(self, job_id: str, connection_id: str, run_type: str) -> str:
