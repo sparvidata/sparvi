@@ -3,6 +3,7 @@ import { useConnection } from '../../contexts/EnhancedConnectionContext';
 import { useUI } from '../../contexts/UIContext';
 import { useMetadataStatus, useRefreshMetadata } from '../../hooks/useMetadataStatus';
 import { useSchemaChanges } from '../../hooks/useSchemaChanges';
+import { useProgressiveMetadata } from '../../hooks/useIntegratedMetadata';
 import LoadingSpinner from '../../components/common/LoadingSpinner';
 import MetadataStatusPanel from './components/MetadataStatusPanel';
 import MetadataTasksList from './components/MetadataTasksList';
@@ -15,7 +16,8 @@ import {
   ServerIcon,
   TableCellsIcon,
   ExclamationTriangleIcon,
-  ClockIcon
+  ClockIcon,
+  CheckCircleIcon
 } from '@heroicons/react/24/outline';
 
 const MetadataPage = () => {
@@ -38,7 +40,6 @@ const MetadataPage = () => {
   const {
     data: metadataStatus,
     isLoading: isLoadingStatus,
-    error: statusError,
     refetch: refetchStatus
   } = useMetadataStatus(connectionId, {
     enabled: !!connectionId,
@@ -48,6 +49,18 @@ const MetadataPage = () => {
     }
   });
 
+  // Use progressive metadata loading for better UX
+  const {
+    summary,
+    isEnhancing,
+    hasBasicTables,
+    hasColumns,
+    hasStatistics,
+    refetch: refetchMetadata
+  } = useProgressiveMetadata(connectionId, {
+    enabled: !!connectionId && activeTab === 'metadata'
+  });
+
   // Use the schema changes hook
   const {
     changes: schemaChanges,
@@ -55,7 +68,6 @@ const MetadataPage = () => {
     detectChanges,
     isDetecting,
     acknowledgeChanges,
-    refetch: refetchChanges,
     setAcknowledgedFilter,
     acknowledgedFilter
   } = useSchemaChanges(connectionId);
@@ -77,6 +89,47 @@ const MetadataPage = () => {
     }
 
     detectChanges();
+  };
+
+  // Enhanced refresh handler that works with integrated metadata
+  const handleRefresh = (type, options = {}) => {
+    const { onSuccess, onError } = options;
+
+    if (type === 'full') {
+      // Refresh all metadata types
+      refreshMetadata({
+        metadata_type: 'full',
+        priority: 'high'
+      }, {
+        onSuccess: () => {
+          // Also refresh our integrated metadata
+          refetchMetadata();
+          refetchStatus();
+          onSuccess?.();
+        },
+        onError: (error) => {
+          console.error('Error in full metadata refresh:', error);
+          onError?.(error);
+        }
+      });
+    } else {
+      // Refresh specific metadata type
+      refreshMetadata({
+        metadata_type: type,
+        priority: 'high'
+      }, {
+        onSuccess: () => {
+          // Refresh integrated metadata after successful refresh
+          refetchMetadata();
+          refetchStatus();
+          onSuccess?.();
+        },
+        onError: (error) => {
+          console.error(`Error refreshing ${type} metadata:`, error);
+          onError?.(error);
+        }
+      });
+    }
   };
 
   // If no connection available
@@ -111,6 +164,62 @@ const MetadataPage = () => {
         </div>
       </div>
 
+      {/* Enhanced summary panel when we have data */}
+      {summary && activeTab === 'metadata' && (
+        <div className="mt-4 bg-white border border-secondary-200 rounded-lg p-4">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div className="text-center">
+              <div className="text-2xl font-bold text-secondary-900">{summary.totalTables}</div>
+              <div className="text-xs text-secondary-500">Tables</div>
+            </div>
+            <div className="text-center">
+              <div className="text-2xl font-bold text-accent-600">{summary.totalRows?.toLocaleString()}</div>
+              <div className="text-xs text-secondary-500">Total Rows</div>
+            </div>
+            <div className="text-center">
+              <div className="text-2xl font-bold text-primary-600">{summary.totalColumns}</div>
+              <div className="text-xs text-secondary-500">Columns</div>
+            </div>
+            <div className="text-center">
+              <div className="text-2xl font-bold text-warning-600">{Math.round(summary.averageHealthScore || 0)}</div>
+              <div className="text-xs text-secondary-500">Avg Health Score</div>
+            </div>
+          </div>
+
+          {/* Loading indicator for progressive data */}
+          {isEnhancing && (
+            <div className="mt-3 flex items-center justify-center text-sm text-secondary-500">
+              <LoadingSpinner size="sm" className="mr-2" />
+              Loading detailed statistics...
+            </div>
+          )}
+
+          {/* Data availability indicators */}
+          <div className="mt-3 flex items-center justify-center space-x-4 text-xs">
+            <div className={`flex items-center ${hasBasicTables ? 'text-accent-600' : 'text-secondary-400'}`}>
+              <CheckCircleIcon className="h-3 w-3 mr-1" />
+              Tables
+            </div>
+            <div className={`flex items-center ${hasColumns ? 'text-accent-600' : isEnhancing ? 'text-warning-600' : 'text-secondary-400'}`}>
+              {isEnhancing && !hasColumns ? (
+                <ClockIcon className="h-3 w-3 mr-1" />
+              ) : (
+                <CheckCircleIcon className="h-3 w-3 mr-1" />
+              )}
+              Columns
+            </div>
+            <div className={`flex items-center ${hasStatistics ? 'text-accent-600' : isEnhancing ? 'text-warning-600' : 'text-secondary-400'}`}>
+              {isEnhancing && !hasStatistics ? (
+                <ClockIcon className="h-3 w-3 mr-1" />
+              ) : (
+                <CheckCircleIcon className="h-3 w-3 mr-1" />
+              )}
+              Statistics
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Tab navigation */}
       <div className="border-b border-secondary-200 mt-4">
         <nav className="-mb-px flex space-x-8" aria-label="Tabs">
@@ -125,6 +234,9 @@ const MetadataPage = () => {
           >
             <TableCellsIcon className="mr-2 h-5 w-5" />
             Metadata Explorer
+            {isEnhancing && activeTab === 'metadata' && (
+              <ClockIcon className="ml-2 h-4 w-4 text-warning-500" />
+            )}
           </button>
 
           <button
@@ -201,7 +313,7 @@ const MetadataPage = () => {
                 {activeTab === 'metadata' ? (
                   <RefreshControls
                     connectionId={connectionId}
-                    onRefresh={refreshMetadata}
+                    onRefresh={handleRefresh}
                     isRefreshing={isRefreshing}
                     metadataStatus={metadataStatus}
                     onMetadataTypeSelect={setSelectedMetadataType}
