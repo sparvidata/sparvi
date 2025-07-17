@@ -32,6 +32,7 @@ class UnifiedAutomationManager:
 
         # Initialization flags to prevent duplicate setup
         self.initialized = False
+        self.routes_registered = False  # NEW: Track route registration
         self.main_scheduler_running = False
         self.anomaly_scheduler_running = False
 
@@ -59,10 +60,16 @@ class UnifiedAutomationManager:
         # In production, default to enabled
         return True
 
-    def initialize_all_systems(self) -> Dict[str, bool]:
+    def initialize_all_systems(self, flask_app=None, token_required=None) -> Dict[str, bool]:
         """
         Initialize all automation systems in the correct order.
-        Returns status of each system.
+
+        Args:
+            flask_app: Flask application instance (required for route registration)
+            token_required: Authentication decorator (required for route registration)
+
+        Returns:
+            Dictionary with status of each system.
         """
         with self._initialization_lock:
             if self.initialized:
@@ -74,25 +81,33 @@ class UnifiedAutomationManager:
             results = {
                 "main_automation": False,
                 "anomaly_detection": False,
+                "anomaly_routes": False,  # NEW: Track route registration
                 "metadata_integration": False
             }
 
-            if not self.automation_enabled:
-                logger.info("Automation disabled - skipping initialization")
-                self.initialized = True
-                return results
-
             try:
-                # 1. Initialize main automation scheduler
-                logger.info("Step 1: Initializing main automation scheduler...")
+                # 1. Register anomaly routes FIRST (if Flask app provided)
+                if flask_app and token_required:
+                    logger.info("Step 1: Registering anomaly detection routes...")
+                    results["anomaly_routes"] = self._register_anomaly_routes(flask_app, token_required)
+                else:
+                    logger.warning("Flask app or token_required not provided - skipping route registration")
+
+                if not self.automation_enabled:
+                    logger.info("Automation disabled - skipping scheduler initialization")
+                    self.initialized = True
+                    return results
+
+                # 2. Initialize main automation scheduler
+                logger.info("Step 2: Initializing main automation scheduler...")
                 results["main_automation"] = self._initialize_main_scheduler()
 
-                # 2. Initialize anomaly detection (separate system)
-                logger.info("Step 2: Initializing anomaly detection...")
+                # 3. Initialize anomaly detection scheduler
+                logger.info("Step 3: Initializing anomaly detection scheduler...")
                 results["anomaly_detection"] = self._initialize_anomaly_scheduler()
 
-                # 3. Set up metadata integration
-                logger.info("Step 3: Setting up metadata integration...")
+                # 4. Set up metadata integration
+                logger.info("Step 4: Setting up metadata integration...")
                 results["metadata_integration"] = self._setup_metadata_integration()
 
                 self.initialized = True
@@ -100,7 +115,7 @@ class UnifiedAutomationManager:
                 # Log final status
                 successful_systems = sum(1 for success in results.values() if success)
                 logger.info(f"=== AUTOMATION INITIALIZATION COMPLETE ===")
-                logger.info(f"Successfully initialized {successful_systems}/3 systems")
+                logger.info(f"Successfully initialized {successful_systems}/4 systems")
 
                 for system, success in results.items():
                     status = "✓ SUCCESS" if success else "✗ FAILED"
@@ -112,6 +127,124 @@ class UnifiedAutomationManager:
                 logger.error(f"Critical error in automation initialization: {str(e)}")
                 self.initialized = True  # Mark as initialized to prevent retry loops
                 return results
+
+    def _register_anomaly_routes(self, flask_app, token_required) -> bool:
+        """
+        Register anomaly detection routes with Flask app.
+        Enhanced with detailed error logging.
+        """
+        try:
+            if self.routes_registered:
+                logger.info("Anomaly routes already registered")
+                return True
+
+            logger.info("Starting anomaly route registration...")
+
+            # Check if required parameters are valid
+            if not flask_app:
+                logger.error("Flask app is None - cannot register routes")
+                return False
+
+            if not token_required:
+                logger.error("token_required decorator is None - cannot register routes")
+                return False
+
+            logger.info("Flask app and token_required are valid")
+
+            # Try to import the registration function
+            try:
+                from core.anomalies.routes import register_anomaly_routes
+                logger.info("Successfully imported register_anomaly_routes")
+            except ImportError as import_error:
+                logger.error(f"Failed to import register_anomaly_routes: {import_error}")
+                return False
+
+            # Check current route count before registration
+            routes_before = len(list(flask_app.url_map.iter_rules()))
+            logger.info(f"Route count before registration: {routes_before}")
+
+            # Try to register the routes
+            try:
+                register_anomaly_routes(flask_app, token_required)
+                logger.info("register_anomaly_routes function called successfully")
+            except Exception as reg_error:
+                logger.error(f"Error calling register_anomaly_routes: {reg_error}")
+                logger.error(f"Error type: {type(reg_error)}")
+                import traceback
+                logger.error(f"Full traceback: {traceback.format_exc()}")
+                return False
+
+            # Check route count after registration
+            routes_after = len(list(flask_app.url_map.iter_rules()))
+            new_routes = routes_after - routes_before
+            logger.info(f"Route count after registration: {routes_after} (+{new_routes} new routes)")
+
+            # Verify anomaly routes were actually added
+            anomaly_routes = [
+                rule.rule for rule in flask_app.url_map.iter_rules()
+                if 'anomalies' in rule.rule
+            ]
+
+            if len(anomaly_routes) == 0:
+                logger.error("No anomaly routes found after registration!")
+                return False
+
+            logger.info(f"Successfully registered {len(anomaly_routes)} anomaly routes:")
+            for route in anomaly_routes:
+                logger.info(f"  - {route}")
+
+            self.routes_registered = True
+            logger.info("✓ Anomaly detection routes registered successfully")
+            return True
+
+        except Exception as e:
+            logger.error(f"Unexpected error in route registration: {str(e)}")
+            logger.error(f"Error type: {type(e)}")
+            import traceback
+            logger.error(f"Full traceback: {traceback.format_exc()}")
+            return False
+
+    # Also add this debug method to your UnifiedAutomationManager class:
+
+    def debug_route_registration(self, flask_app, token_required):
+        """Debug method to test route registration in isolation"""
+        logger.info("=== DEBUGGING ROUTE REGISTRATION ===")
+
+        # Test 1: Check imports
+        try:
+            from core.anomalies.routes import register_anomaly_routes
+            from core.anomalies.api import AnomalyAPI
+            logger.info("✓ All anomaly modules import successfully")
+        except Exception as e:
+            logger.error(f"✗ Import error: {e}")
+            return False
+
+        # Test 2: Check Flask app
+        logger.info(f"Flask app type: {type(flask_app)}")
+        logger.info(f"Flask app name: {flask_app.name if flask_app else 'None'}")
+
+        # Test 3: Check token_required
+        logger.info(f"token_required type: {type(token_required)}")
+        logger.info(f"token_required callable: {callable(token_required) if token_required else 'None'}")
+
+        # Test 4: Try to create AnomalyAPI instance
+        try:
+            api = AnomalyAPI()
+            logger.info("✓ AnomalyAPI instance created successfully")
+        except Exception as e:
+            logger.error(f"✗ AnomalyAPI creation failed: {e}")
+            return False
+
+        # Test 5: Try route registration
+        try:
+            register_anomaly_routes(flask_app, token_required)
+            logger.info("✓ Route registration completed without errors")
+            return True
+        except Exception as e:
+            logger.error(f"✗ Route registration failed: {e}")
+            import traceback
+            logger.error(f"Full traceback: {traceback.format_exc()}")
+            return False
 
     def _initialize_main_scheduler(self) -> bool:
         """Initialize the main automation scheduler (SimplifiedAutomationScheduler)"""
@@ -218,9 +351,10 @@ class UnifiedAutomationManager:
                 success = False
 
         self.initialized = False
+        self.routes_registered = False  # Reset route registration flag
         return success
 
-    def restart_all_systems(self) -> Dict[str, bool]:
+    def restart_all_systems(self, flask_app=None, token_required=None) -> Dict[str, bool]:
         """Restart all automation systems"""
         logger.info("=== RESTARTING ALL AUTOMATION SYSTEMS ===")
 
@@ -232,12 +366,13 @@ class UnifiedAutomationManager:
 
         # Reinitialize
         self.initialized = False
-        return self.initialize_all_systems()
+        return self.initialize_all_systems(flask_app, token_required)
 
     def get_system_status(self) -> Dict[str, Any]:
         """Get comprehensive status of all automation systems"""
         status = {
             "initialized": self.initialized,
+            "routes_registered": self.routes_registered,  # NEW: Include route status
             "automation_enabled": self.automation_enabled,
             "environment": self.environment,
             "main_scheduler": {
@@ -275,7 +410,7 @@ class UnifiedAutomationManager:
         This prevents duplicate job submission.
         """
         try:
-            if not self.automation_enabled or not self.main_scheduler_running:
+            if not self.automation_enabled:
                 return {
                     "success": False,
                     "error": "Automation system not available"
@@ -283,6 +418,9 @@ class UnifiedAutomationManager:
 
             # Route to appropriate scheduler
             if job_type in ["metadata_refresh", "schema_change_detection", "validation_automation"]:
+                if not self.main_scheduler_running:
+                    return {"success": False, "error": "Main scheduler not running"}
+
                 if hasattr(self.main_scheduler, 'scheduler'):
                     return self.main_scheduler.scheduler.schedule_immediate_run(
                         connection_id, job_type, trigger_user
@@ -291,9 +429,18 @@ class UnifiedAutomationManager:
                     return {"success": False, "error": "Main scheduler not available"}
 
             elif job_type == "anomaly_detection":
+                if not self.anomaly_scheduler_running:
+                    return {"success": False, "error": "Anomaly scheduler not running"}
+
                 if self.anomaly_scheduler:
-                    # Implement anomaly scheduling if needed
-                    return {"success": False, "error": "Anomaly scheduling not implemented"}
+                    # Use the anomaly scheduler's detection run method
+                    from core.anomalies.scheduler import AnomalyDetectionScheduler
+                    scheduler = AnomalyDetectionScheduler()
+                    return scheduler.schedule_detection_run(
+                        organization_id=None,  # Will need to get from connection
+                        connection_id=connection_id,
+                        trigger_type='manual'
+                    )
                 else:
                     return {"success": False, "error": "Anomaly scheduler not available"}
 
@@ -304,15 +451,36 @@ class UnifiedAutomationManager:
             logger.error(f"Error scheduling immediate job: {str(e)}")
             return {"success": False, "error": str(e)}
 
+    def register_routes_only(self, flask_app, token_required) -> bool:
+        """
+        Public method to register only the anomaly routes without starting schedulers.
+        Useful when you want API access but not background processing.
+        """
+        return self._register_anomaly_routes(flask_app, token_required)
+
 
 # Global instance
 unified_manager = UnifiedAutomationManager.get_instance()
 
 
-# Public API functions
-def initialize_unified_automation():
-    """Initialize all automation systems through unified manager"""
-    return unified_manager.initialize_all_systems()
+# Updated public API functions
+def initialize_unified_automation(flask_app=None, token_required=None):
+    """
+    Initialize all automation systems through unified manager.
+
+    Args:
+        flask_app: Flask application instance (required for route registration)
+        token_required: Authentication decorator (required for route registration)
+    """
+    return unified_manager.initialize_all_systems(flask_app, token_required)
+
+
+def register_anomaly_routes_only(flask_app, token_required):
+    """
+    Register only the anomaly detection routes without starting schedulers.
+    Use this in your Flask app initialization.
+    """
+    return unified_manager.register_routes_only(flask_app, token_required)
 
 
 def stop_unified_automation():
@@ -320,9 +488,9 @@ def stop_unified_automation():
     return unified_manager.stop_all_systems()
 
 
-def restart_unified_automation():
+def restart_unified_automation(flask_app=None, token_required=None):
     """Restart all automation systems"""
-    return unified_manager.restart_all_systems()
+    return unified_manager.restart_all_systems(flask_app, token_required)
 
 
 def get_unified_automation_status():

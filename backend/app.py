@@ -911,63 +911,14 @@ def get_metadata_task_manager():
         return None
 
 
-# def init_automation_system():
-#     """Initialize the simplified automation system - UPDATED VERSION"""
-#     logger.info("Starting simplified automation system initialization...")
-#
-#     try:
-#         # Import the app_hooks functions you're already using
-#         from core.utils.app_hooks import initialize_automation_system, integrate_with_metadata_system
-#         from core.automation.events import set_event_handler_supabase
-#         from core.storage.supabase_manager import SupabaseManager
-#
-#         logger.info("Calling initialize_automation_system() with simplified scheduler...")
-#         automation_success = initialize_automation_system()
-#
-#         logger.info(f"Simplified automation initialization result: {automation_success}")
-#
-#         if automation_success:
-#             logger.info("Simplified automation system started successfully")
-#
-#             # Set up event handler with Supabase (this was missing before)
-#             logger.info("Setting up automation event handler...")
-#             try:
-#                 supabase_manager = SupabaseManager()
-#                 set_event_handler_supabase(supabase_manager)
-#                 logger.info("Automation event handler configured")
-#             except Exception as event_error:
-#                 logger.error(f"Error setting up event handler: {str(event_error)}")
-#
-#             # Integrate with existing metadata system
-#             logger.info("Integrating automation with metadata system...")
-#             integration_success = integrate_with_metadata_system()
-#
-#             if integration_success:
-#                 logger.info("Automation integrated with metadata system")
-#             else:
-#                 logger.warning("⚠Automation metadata integration failed")
-#
-#             return True
-#         else:
-#             logger.error("Simplified automation system failed to start")
-#             return False
-#
-#     except ImportError as e:
-#         logger.error(f"Import error in automation system: {str(e)}")
-#         logger.error("This usually means missing dependencies or module path issues")
-#         logger.error(traceback.format_exc())
-#         return False
-#     except Exception as e:
-#         logger.error(f"Unexpected error initializing automation system: {str(e)}")
-#         logger.error(traceback.format_exc())
-#         return False
-#
-#     finally:
-#         logger.info("Simplified automation system initialization complete")
+def delayed_initialization(flask_app, token_required_decorator):
+    """
+    Initialize background services with unified automation management
 
-
-def delayed_initialization():
-    """Initialize background services with unified automation management"""
+    Args:
+        flask_app: Flask application instance
+        token_required_decorator: Authentication decorator for routes
+    """
     try:
         logger.info("Starting delayed initialization of background services...")
 
@@ -1005,7 +956,7 @@ def delayed_initialization():
 
             from core.automation.unified_manager import initialize_unified_automation
 
-            automation_results = initialize_unified_automation()
+            automation_results = initialize_unified_automation(flask_app, token_required_decorator)
             initialization_results["unified_automation"] = automation_results
 
             # Check if any systems started
@@ -1240,8 +1191,6 @@ setup_cors(app)
 create_error_handlers(app)
 app.register_blueprint(notifications_bp, url_prefix='/api')
 
-#initialize_anomaly_detection()
-
 # Register automation routes with authentication
 register_automation_routes(app, token_required)
 
@@ -1264,8 +1213,7 @@ except Exception as e:
     optimized_classes = {}
 
 logger.info("Scheduling delayed initialization in 15 seconds...")
-threading.Timer(15.0, delayed_initialization).start()
-
+threading.Timer(15.0, lambda: delayed_initialization(app, token_required)).start()
 logger.info("Flask app initialization complete, background services will start shortly...")
 
 @app.route('/health')
