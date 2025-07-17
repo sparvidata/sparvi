@@ -1,5 +1,3 @@
-# core/analytics/historical_metrics.py (modified to support anomaly detection)
-
 import logging
 import uuid
 from typing import Dict, Any, List, Optional

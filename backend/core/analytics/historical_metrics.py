@@ -1,6 +1,6 @@
 import logging
 import json
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from typing import Dict, List, Any, Optional, Union
 from dotenv import load_dotenv
 from supabase import create_client
@@ -66,7 +66,7 @@ class HistoricalMetricsTracker:
 
             # Format timestamp
             if timestamp is None:
-                timestamp = datetime.datetime.now(datetime.timezone.utc).isoformat()
+                timestamp = datetime.now(timezone.utc).isoformat()
 
             # Create record data
             record = {
@@ -120,7 +120,7 @@ class HistoricalMetricsTracker:
             # Prepare records for batch insertion
             records = []
 
-            timestamp = datetime.datetime.now(datetime.timezone.utc).isoformat()
+            timestamp = datetime.now(timezone.utc).isoformat()
 
             for metric in metrics:
                 # Determine value storage
@@ -189,8 +189,7 @@ class HistoricalMetricsTracker:
         """
         try:
             # Calculate date range
-            from datetime import datetime, timedelta
-            start_date = (datetime.datetime.now(datetime.timezone.utc)- timedelta(days=days)).isoformat()
+            start_date = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
 
             # Start building query
             query = self.supabase.table("historical_metrics") \

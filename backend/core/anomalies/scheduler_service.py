@@ -1,5 +1,3 @@
-# core/anomalies/scheduler_service.py
-
 import time
 import logging
 import threading
@@ -7,7 +5,7 @@ import traceback
 import schedule
 from datetime import datetime, timedelta, timezone
 
-from core.anomalies.scheduler import AnomalyDetectionScheduler
+from .scheduler import AnomalyDetectionScheduler
 from core.storage.supabase_manager import SupabaseManager
 
 logger = logging.getLogger(__name__)

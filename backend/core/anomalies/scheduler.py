@@ -1,13 +1,11 @@
-# core/anomalies/scheduler.py
-
 import logging
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from concurrent.futures import ThreadPoolExecutor
 from typing import Dict, Any, List, Optional
 
-from core.anomalies.detector import AnomalyDetector
-from core.anomalies.events import AnomalyEventType, publish_anomaly_event
+from .detector import AnomalyDetector
+from .events import AnomalyEventType, publish_anomaly_event
 from core.storage.supabase_manager import SupabaseManager
 
 logger = logging.getLogger(__name__)
@@ -140,7 +138,7 @@ class AnomalyDetectionScheduler:
         """
         data = {
             "status": status,
-            "completed_at": datetime.datetime.now(timezone.utc).isoformat(),
+            "completed_at": datetime.now(timezone.utc).isoformat(),
             "metrics_processed": metrics_processed,
             "anomalies_detected": anomalies_detected,
             "execution_time_ms": self._calculate_execution_time(run_id)
@@ -176,10 +174,10 @@ class AnomalyDetectionScheduler:
                 return 0
 
             # Parse start time
-            start_time = datetime.datetime.fromisoformat(started_at.replace('Z', '+00:00'))
+            start_time = datetime.fromisoformat(started_at.replace('Z', '+00:00'))
 
             # Calculate time difference
-            time_diff = datetime.datetime.now(timezone.utc) - start_time
+            time_diff = datetime.now(timezone.utc) - start_time
             return int(time_diff.total_seconds() * 1000)
 
         except Exception as e:
@@ -327,7 +325,7 @@ class AnomalyDetectionScheduler:
                 "severity": severity,
                 "score": anomaly.get("score", 0),
                 "threshold": anomaly.get("threshold", 0),
-                "detected_at": datetime.datetime.now(timezone.utc).isoformat(),
+                "detected_at": datetime.now(timezone.utc).isoformat(),
                 "status": "open"
             })
 
