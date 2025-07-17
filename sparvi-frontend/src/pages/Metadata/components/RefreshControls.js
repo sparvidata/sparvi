@@ -14,9 +14,8 @@ import {
   PlayIcon,
   PauseIcon,
   Cog6ToothIcon,
-  CalendarIcon
 } from '@heroicons/react/24/outline';
-import { formatNextRunTime, getNextRunStatusColor, hasEnabledAutomation } from '../../../utils/scheduleUtils';
+import { hasEnabledAutomation } from '../../../utils/scheduleUtils';
 
 const RefreshControls = ({
   connectionId,
@@ -32,12 +31,8 @@ const RefreshControls = ({
 
   const {
     nextRuns,
-    loading: nextRunsLoading,
-    error: nextRunsError,
     refresh: refreshNextRuns,
     triggerManualRun,
-    circuitBreakerOpen,
-    consecutiveErrors
   } = useNextRunTimes(connectionId, {
     refreshInterval: 60000, // Update every minute
     enabled: !!connectionId,
@@ -205,7 +200,8 @@ const RefreshControls = ({
                 <span className="text-xs text-secondary-700">Metadata Refresh</span>
                 {metadataAutomation.enabled && metadataAutomation.schedule && !metadataAutomation.loading && (
                   <span className="ml-2 text-xs text-secondary-500">
-                    ({metadataAutomation.schedule.schedule_type === 'daily' ? 'Daily' : 'Weekly'} at {metadataAutomation.schedule.time})
+                    Runs {metadataAutomation.schedule.schedule_type === 'daily' ? 'Daily' : 'Weekly'} at {metadataAutomation.schedule.time}
+                    {schemaAutomation.schedule.timezone && ` (${schemaAutomation.schedule.timezone})`}
                   </span>
                 )}
               </div>
@@ -253,45 +249,6 @@ const RefreshControls = ({
                 )}
               </div>
             </div>
-
-            {/* Next Run Time for Metadata */}
-            {metadataAutomation.enabled && !metadataAutomation.loading && (
-              <div className="ml-0 text-xs">
-                {nextRunsLoading ? (
-                  <div className="text-secondary-400 flex items-center">
-                    <LoadingSpinner size="xs" className="mr-1" />
-                    Loading next run...
-                  </div>
-                ) : nextRunsError && !circuitBreakerOpen ? (
-                  <div className="text-warning-600 flex items-center">
-                    <ExclamationTriangleIcon className="h-3 w-3 mr-1" />
-                    Error loading schedule
-                    {consecutiveErrors > 0 && ` (${consecutiveErrors} errors)`}
-                  </div>
-                ) : circuitBreakerOpen ? (
-                  <div className="text-danger-600 flex items-center">
-                    <ExclamationTriangleIcon className="h-3 w-3 mr-1" />
-                    Schedule loading paused
-                  </div>
-                ) : metadataAutomation.nextRun ? (
-                  <div className={`flex items-center ${getNextRunStatusColor(metadataAutomation.nextRun)}`}>
-                    <CalendarIcon className="h-3 w-3 mr-1" />
-                    {metadataAutomation.nextRun.currently_running ? (
-                      'Currently running'
-                    ) : metadataAutomation.nextRun.is_overdue ? (
-                      'Next run overdue'
-                    ) : (
-                      `Next: ${formatNextRunTime(metadataAutomation.nextRun)}`
-                    )}
-                  </div>
-                ) : (
-                  <div className="text-secondary-400 flex items-center">
-                    <CalendarIcon className="h-3 w-3 mr-1" />
-                    Calculating next run...
-                  </div>
-                )}
-              </div>
-            )}
           </div>
 
           {/* Schema Change Detection */}
@@ -301,7 +258,8 @@ const RefreshControls = ({
                 <span className="text-xs text-secondary-700">Schema Detection</span>
                 {schemaAutomation.enabled && schemaAutomation.schedule && !schemaAutomation.loading && (
                   <span className="ml-2 text-xs text-secondary-500">
-                    ({schemaAutomation.schedule.schedule_type === 'daily' ? 'Daily' : 'Weekly'} at {schemaAutomation.schedule.time})
+                    Runs {schemaAutomation.schedule.schedule_type === 'daily' ? 'Daily' : 'Weekly'} at {schemaAutomation.schedule.time}
+                    {schemaAutomation.schedule.timezone && ` (${schemaAutomation.schedule.timezone})`}
                   </span>
                 )}
               </div>
@@ -349,45 +307,6 @@ const RefreshControls = ({
                 )}
               </div>
             </div>
-
-            {/* Next Run Time for Schema Detection */}
-            {schemaAutomation.enabled && !schemaAutomation.loading && (
-              <div className="ml-0 text-xs">
-                {nextRunsLoading ? (
-                  <div className="text-secondary-400 flex items-center">
-                    <LoadingSpinner size="xs" className="mr-1" />
-                    Loading next run...
-                  </div>
-                ) : nextRunsError && !circuitBreakerOpen ? (
-                  <div className="text-warning-600 flex items-center">
-                    <ExclamationTriangleIcon className="h-3 w-3 mr-1" />
-                    Error loading schedule
-                    {consecutiveErrors > 0 && ` (${consecutiveErrors} errors)`}
-                  </div>
-                ) : circuitBreakerOpen ? (
-                  <div className="text-danger-600 flex items-center">
-                    <ExclamationTriangleIcon className="h-3 w-3 mr-1" />
-                    Schedule loading paused
-                  </div>
-                ) : schemaAutomation.nextRun ? (
-                  <div className={`flex items-center ${getNextRunStatusColor(schemaAutomation.nextRun)}`}>
-                    <CalendarIcon className="h-3 w-3 mr-1" />
-                    {schemaAutomation.nextRun.currently_running ? (
-                      'Currently running'
-                    ) : schemaAutomation.nextRun.is_overdue ? (
-                      'Next run overdue'
-                    ) : (
-                      `Next: ${formatNextRunTime(schemaAutomation.nextRun)}`
-                    )}
-                  </div>
-                ) : (
-                  <div className="text-secondary-400 flex items-center">
-                    <CalendarIcon className="h-3 w-3 mr-1" />
-                    Calculating next run...
-                  </div>
-                )}
-              </div>
-            )}
           </div>
 
           {/* No automation configured message */}

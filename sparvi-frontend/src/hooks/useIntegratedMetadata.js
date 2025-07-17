@@ -104,6 +104,19 @@ export const useProgressiveMetadata = (connectionId, options = {}) => {
   // Choose the best available data
   const bestAvailableData = hasFullData ? fullQuery.data : hasBasicTables ? tablesQuery.data : null;
 
+  // Debug logging
+  React.useEffect(() => {
+    console.log('[useProgressiveMetadata] State update:', {
+      hasBasicTables,
+      hasFullData,
+      tablesQueryStatus: tablesQuery.status,
+      fullQueryStatus: fullQuery.status,
+      bestDataAvailable: !!bestAvailableData,
+      columnsLength: bestAvailableData?.data?.columns?.length || 0,
+      statisticsLength: bestAvailableData?.data?.statistics?.length || 0
+    });
+  }, [hasBasicTables, hasFullData, tablesQuery.status, fullQuery.status, bestAvailableData]);
+
   return {
     // Data states
     data: bestAvailableData?.data,

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { useProgressiveMetadata } from '../../../hooks/useIntegratedMetadata';
+import { useIntegratedMetadata } from '../../../hooks/useIntegratedMetadata';
 import LoadingSpinner from '../../../components/common/LoadingSpinner';
 import SearchInput from '../../../components/common/SearchInput';
 import {
@@ -15,23 +15,35 @@ const MetadataExplorer = ({ connectionId, metadataType, metadataStatus }) => {
   const [sortField, setSortField] = useState('name');
   const [sortDirection, setSortDirection] = useState('asc');
 
-  // Use progressive metadata loading
+  // Use integrated metadata directly - simpler approach
   const {
-    tables,
-    columns,
-    statistics,
-    summary,
-    isLoadingInitial,
-    isEnhancing,
-    hasBasicTables,
-    hasColumns,
-    hasStatistics,
+    data: integratedData,
+    isLoading,
     error,
     refetch
-  } = useProgressiveMetadata(connectionId, {
+  } = useIntegratedMetadata(connectionId, {
     enabled: !!connectionId,
-    refetchInterval: false
+    includeColumns: true,
+    includeStatistics: true
   });
+
+  // Extract data from integrated response using useMemo to avoid re-renders
+  const tables = React.useMemo(() =>
+    integratedData?.success ? integratedData.data.tables : [],
+    [integratedData]
+  );
+  const columns = React.useMemo(() =>
+    integratedData?.success ? integratedData.data.columns : [],
+    [integratedData]
+  );
+  const statistics = React.useMemo(() =>
+    integratedData?.success ? integratedData.data.statistics : [],
+    [integratedData]
+  );
+  const summary = React.useMemo(() =>
+    integratedData?.success ? integratedData.data.summary : null,
+    [integratedData]
+  );
 
   // Handle search
   const handleSearch = (query) => {
@@ -50,6 +62,12 @@ const MetadataExplorer = ({ connectionId, metadataType, metadataStatus }) => {
 
   // Get data based on selected metadata type
   const getDataForType = React.useCallback(() => {
+    console.log('[MetadataExplorer] Getting data for type:', metadataType, {
+      tablesLength: tables?.length || 0,
+      columnsLength: columns?.length || 0,
+      statisticsLength: statistics?.length || 0
+    });
+
     switch (metadataType) {
       case 'tables':
         return tables || [];
@@ -122,24 +140,11 @@ const MetadataExplorer = ({ connectionId, metadataType, metadataStatus }) => {
 
   // Render loading state
   const renderLoadingState = () => {
-    if (isLoadingInitial) {
+    if (isLoading) {
       return (
         <div className="flex justify-center py-8">
           <LoadingSpinner size="lg" />
           <span className="ml-3 text-secondary-600">Loading metadata...</span>
-        </div>
-      );
-    }
-
-    if (isEnhancing) {
-      return (
-        <div className="space-y-4">
-          {/* Show basic tables while enhancing */}
-          {renderDataTable()}
-          <div className="flex justify-center py-4 border-t border-secondary-200">
-            <LoadingSpinner size="sm" />
-            <span className="ml-2 text-secondary-500">Loading detailed information...</span>
-          </div>
         </div>
       );
     }
@@ -212,17 +217,17 @@ const MetadataExplorer = ({ connectionId, metadataType, metadataStatus }) => {
   const getDataAvailabilityIndicator = () => {
     const indicators = [];
 
-    if (hasBasicTables) {
+    if (tables.length > 0) {
       indicators.push({ label: 'Tables', available: true });
     }
-    if (hasColumns) {
+    if (columns.length > 0) {
       indicators.push({ label: 'Columns', available: true });
-    } else if (isEnhancing) {
+    } else if (isLoading) {
       indicators.push({ label: 'Columns', available: false, loading: true });
     }
-    if (hasStatistics) {
+    if (statistics.length > 0) {
       indicators.push({ label: 'Statistics', available: true });
-    } else if (isEnhancing) {
+    } else if (isLoading) {
       indicators.push({ label: 'Statistics', available: false, loading: true });
     }
 
@@ -269,17 +274,11 @@ const MetadataExplorer = ({ connectionId, metadataType, metadataStatus }) => {
               <td className="px-6 py-4 whitespace-nowrap text-sm text-secondary-500">
                 <div className="flex items-center">
                   {formatNumber(table.row_count)}
-                  {!hasStatistics && isEnhancing && (
-                    <ClockIcon className="ml-1 h-3 w-3 text-secondary-400" title="Loading statistics..." />
-                  )}
                 </div>
               </td>
               <td className="px-6 py-4 whitespace-nowrap text-sm text-secondary-500">
                 <div className="flex items-center">
                   {formatNumber(table.column_count)}
-                  {!hasColumns && isEnhancing && (
-                    <ClockIcon className="ml-1 h-3 w-3 text-secondary-400" title="Loading columns..." />
-                  )}
                 </div>
               </td>
               <td className="px-6 py-4 whitespace-nowrap text-sm text-secondary-500">
@@ -451,9 +450,9 @@ const MetadataExplorer = ({ connectionId, metadataType, metadataStatus }) => {
                 )}
               </td>
               <td className="px-6 py-4 whitespace-nowrap text-sm text-secondary-500">
-                {stat.is_unique === true ? (
+                {stat.is_unique === 1 || stat.is_unique === true ? (
                   <CheckCircleIcon className="h-4 w-4 text-accent-500" />
-                ) : stat.is_unique === false ? (
+                ) : stat.is_unique === 0 || stat.is_unique === false ? (
                   <span className="text-secondary-400">No</span>
                 ) : (
                   '-'
@@ -485,12 +484,12 @@ const MetadataExplorer = ({ connectionId, metadataType, metadataStatus }) => {
   };
 
   // Handle error state
-  if (error && !hasBasicTables) {
+  if (error && !tables.length) {
     return renderErrorState();
   }
 
   // Handle initial loading
-  if (isLoadingInitial) {
+  if (isLoading && !tables.length) {
     return renderLoadingState();
   }
 
@@ -529,7 +528,6 @@ const MetadataExplorer = ({ connectionId, metadataType, metadataStatus }) => {
           {summary && (
             <p className="mt-1 text-sm text-secondary-500">
               {summary.totalTables} tables • {formatNumber(summary.totalRows)} total rows • {summary.totalColumns} columns
-              {isEnhancing && ' • Loading enhanced data...'}
             </p>
           )}
         </div>
@@ -546,18 +544,6 @@ const MetadataExplorer = ({ connectionId, metadataType, metadataStatus }) => {
 
       {/* Data table or loading state */}
       {renderLoadingState() || renderDataTable()}
-
-      {/* Show enhancing indicator if we have basic data but are loading more */}
-      {isEnhancing && hasBasicTables && (
-        <div className="mt-4 text-center">
-          <div className="inline-flex items-center px-3 py-2 border border-secondary-200 rounded-md bg-secondary-50">
-            <LoadingSpinner size="sm" className="mr-2" />
-            <span className="text-sm text-secondary-600">
-              Loading {metadataType === 'tables' ? 'row counts and column details' : 'detailed statistics'}...
-            </span>
-          </div>
-        </div>
-      )}
     </div>
   );
 };

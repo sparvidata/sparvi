@@ -3,7 +3,7 @@ import { useConnection } from '../../contexts/EnhancedConnectionContext';
 import { useUI } from '../../contexts/UIContext';
 import { useMetadataStatus, useRefreshMetadata } from '../../hooks/useMetadataStatus';
 import { useSchemaChanges } from '../../hooks/useSchemaChanges';
-import { useProgressiveMetadata } from '../../hooks/useIntegratedMetadata';
+import { useIntegratedMetadata } from '../../hooks/useIntegratedMetadata';
 import LoadingSpinner from '../../components/common/LoadingSpinner';
 import MetadataStatusPanel from './components/MetadataStatusPanel';
 import MetadataTasksList from './components/MetadataTasksList';
@@ -49,17 +49,22 @@ const MetadataPage = () => {
     }
   });
 
-  // Use progressive metadata loading for better UX
+  // Use integrated metadata loading for better UX
   const {
-    summary,
-    isEnhancing,
-    hasBasicTables,
-    hasColumns,
-    hasStatistics,
+    data: integratedData,
+    isLoading: isLoadingIntegrated,
     refetch: refetchMetadata
-  } = useProgressiveMetadata(connectionId, {
-    enabled: !!connectionId && activeTab === 'metadata'
+  } = useIntegratedMetadata(connectionId, {
+    enabled: !!connectionId && activeTab === 'metadata',
+    includeColumns: true,
+    includeStatistics: true
   });
+
+  // Extract data from integrated response
+  const summary = integratedData?.success ? integratedData.data.summary : null;
+  const hasColumns = integratedData?.success && integratedData.data.columns.length > 0;
+  const hasStatistics = integratedData?.success && integratedData.data.statistics.length > 0;
+  const hasBasicTables = integratedData?.success && integratedData.data.tables.length > 0;
 
   // Use the schema changes hook
   const {
@@ -169,25 +174,25 @@ const MetadataPage = () => {
         <div className="mt-4 bg-white border border-secondary-200 rounded-lg p-4">
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
             <div className="text-center">
-              <div className="text-2xl font-bold text-secondary-900">{summary.totalTables}</div>
+              <div className="text-2xl font-bold text-secondary-900">{summary.total_tables || summary.totalTables || 0}</div>
               <div className="text-xs text-secondary-500">Tables</div>
             </div>
             <div className="text-center">
-              <div className="text-2xl font-bold text-accent-600">{summary.totalRows?.toLocaleString()}</div>
+              <div className="text-2xl font-bold text-accent-600">{(summary.totalRows || summary.total_rows || 0).toLocaleString()}</div>
               <div className="text-xs text-secondary-500">Total Rows</div>
             </div>
             <div className="text-center">
-              <div className="text-2xl font-bold text-primary-600">{summary.totalColumns}</div>
+              <div className="text-2xl font-bold text-primary-600">{summary.total_columns || summary.totalColumns || 0}</div>
               <div className="text-xs text-secondary-500">Columns</div>
             </div>
             <div className="text-center">
-              <div className="text-2xl font-bold text-warning-600">{Math.round(summary.averageHealthScore || 0)}</div>
+              <div className="text-2xl font-bold text-warning-600">{Math.round(summary.averageHealthScore || summary.average_health_score || 0)}</div>
               <div className="text-xs text-secondary-500">Avg Health Score</div>
             </div>
           </div>
 
           {/* Loading indicator for progressive data */}
-          {isEnhancing && (
+          {isLoadingIntegrated && (
             <div className="mt-3 flex items-center justify-center text-sm text-secondary-500">
               <LoadingSpinner size="sm" className="mr-2" />
               Loading detailed statistics...
@@ -200,16 +205,16 @@ const MetadataPage = () => {
               <CheckCircleIcon className="h-3 w-3 mr-1" />
               Tables
             </div>
-            <div className={`flex items-center ${hasColumns ? 'text-accent-600' : isEnhancing ? 'text-warning-600' : 'text-secondary-400'}`}>
-              {isEnhancing && !hasColumns ? (
+            <div className={`flex items-center ${hasColumns && summary.total_columns > 0 ? 'text-accent-600' : isLoadingIntegrated ? 'text-warning-600' : 'text-secondary-400'}`}>
+              {isLoadingIntegrated && !(hasColumns && summary.total_columns > 0) ? (
                 <ClockIcon className="h-3 w-3 mr-1" />
               ) : (
                 <CheckCircleIcon className="h-3 w-3 mr-1" />
               )}
               Columns
             </div>
-            <div className={`flex items-center ${hasStatistics ? 'text-accent-600' : isEnhancing ? 'text-warning-600' : 'text-secondary-400'}`}>
-              {isEnhancing && !hasStatistics ? (
+            <div className={`flex items-center ${hasStatistics && summary.total_statistics > 0 ? 'text-accent-600' : isLoadingIntegrated ? 'text-warning-600' : 'text-secondary-400'}`}>
+              {isLoadingIntegrated && !(hasStatistics && summary.total_statistics > 0) ? (
                 <ClockIcon className="h-3 w-3 mr-1" />
               ) : (
                 <CheckCircleIcon className="h-3 w-3 mr-1" />
@@ -234,9 +239,6 @@ const MetadataPage = () => {
           >
             <TableCellsIcon className="mr-2 h-5 w-5" />
             Metadata Explorer
-            {isEnhancing && activeTab === 'metadata' && (
-              <ClockIcon className="ml-2 h-4 w-4 text-warning-500" />
-            )}
           </button>
 
           <button

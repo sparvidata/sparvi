@@ -1,4 +1,3 @@
-// src/services/metadataIntegrationService.js
 import { metadataAPI } from '../api/enhancedApiService';
 
 /**
@@ -6,11 +5,6 @@ import { metadataAPI } from '../api/enhancedApiService';
  * Handles the complex nested API response structures and combines them into unified data
  */
 class MetadataIntegrationService {
-
-  constructor() {
-    // Cache for table row counts extracted from statistics
-    this._tableRowCounts = {};
-  }
 
   /**
    * Fetch and integrate all metadata types for a connection
@@ -103,42 +97,41 @@ class MetadataIntegrationService {
       statistics: extractedStatistics.length
     });
 
+    // Extract table-level statistics directly from the statistics response
+    const tableStatistics = this.extractTableStatistics(statistics);
+
     // Create lookup maps for efficient integration
     const columnsByTable = this.createColumnsByTableMap(extractedColumns);
-    const statisticsByTable = this.createStatisticsByTableMap(extractedStatistics);
 
     // Integrate tables with their columns and statistics
     const integratedTables = extractedTables.map(table => {
       const tableColumns = columnsByTable[table.name] || [];
-      const tableStatistics = statisticsByTable[table.name] || {};
-
-      // Get row count from statistics (this is where the row count actually lives)
-      const rowCount = this._tableRowCounts?.[table.name] || tableStatistics.row_count || table.row_count || 0;
+      const tableStats = tableStatistics[table.name] || {};
 
       return {
         ...table,
         // Enhanced column information
         columns: tableColumns,
-        column_count: tableColumns.length || table.column_count || 0,
+        column_count: tableStats.column_count || tableColumns.length || table.column_count || 0,
 
-        // Enhanced row count from statistics (this is the key fix)
-        row_count: rowCount,
+        // Enhanced row count from statistics
+        row_count: tableStats.row_count || table.row_count || 0,
 
         // Additional statistics
-        health_score: tableStatistics.health_score,
-        has_primary_key: tableStatistics.has_primary_key || false,
-        primary_keys: tableStatistics.primary_keys || table.primary_key || [],
+        health_score: tableStats.health_score || 65,
+        has_primary_key: tableStats.has_primary_key || false,
+        primary_keys: tableStats.primary_keys || table.primary_key || [],
 
         // Column type distribution
-        column_type_distribution: tableStatistics.column_type_distribution || {},
+        column_type_distribution: tableStats.column_type_distribution || {},
 
         // Nullable/non-nullable column counts
-        nullable_columns: tableStatistics.nullable_columns || 0,
-        non_nullable_columns: tableStatistics.non_nullable_columns || 0,
+        nullable_columns: tableStats.nullable_columns || 0,
+        non_nullable_columns: tableStats.non_nullable_columns || 0,
 
         // Table metadata
-        size_bytes: tableStatistics.size_bytes,
-        last_analyzed: tableStatistics.collected_at
+        size_bytes: tableStats.size_bytes,
+        last_analyzed: tableStats.collected_at
       };
     });
 
@@ -148,39 +141,60 @@ class MetadataIntegrationService {
         stat.table_name === column.table_name && stat.column_name === column.name
       );
 
+      // Debug log for missing statistics
+      if (!columnStats) {
+        console.log(`[MetadataIntegration] No statistics found for ${column.table_name}.${column.name}`);
+      }
+
       return {
         ...column,
-        // Add statistical information
-        null_count: columnStats?.null_count,
-        null_percentage: columnStats?.null_percentage,
-        distinct_count: columnStats?.distinct_count,
-        distinct_percentage: columnStats?.distinct_percentage,
-        is_unique: columnStats?.is_unique,
+        // Add statistical information - make sure we have the data
+        null_count: columnStats?.null_count ?? null,
+        null_percentage: columnStats?.null_percentage ?? null,
+        distinct_count: columnStats?.distinct_count ?? null,
+        distinct_percentage: columnStats?.distinct_percentage ?? null,
+        is_unique: this.convertNumericBoolean(columnStats?.is_unique),
+
+        // Use the data type from columns API first (most reliable), then statistics
+        data_type: column.type || column.data_type || columnStats?.data_type || 'unknown',
 
         // Numeric statistics
-        min_value: columnStats?.min,
-        max_value: columnStats?.max,
-        avg_value: columnStats?.avg,
+        min_value: columnStats?.min ?? null,
+        max_value: columnStats?.max ?? null,
+        avg_value: columnStats?.avg ?? null,
 
         // String statistics
-        min_length: columnStats?.min,
-        max_length: columnStats?.max,
-        avg_length: columnStats?.avg
+        min_length: columnStats?.min ?? null,
+        max_length: columnStats?.max ?? null,
+        avg_length: columnStats?.avg ?? null
       };
     });
+
+    const summaryData = {
+      total_tables: integratedTables.length,
+      totalTables: integratedTables.length, // Also include camelCase version
+      total_columns: integratedColumns.length,
+      totalColumns: integratedColumns.length, // Also include camelCase version
+      total_statistics: extractedStatistics.length,
+      totalStatistics: extractedStatistics.length, // Also include camelCase version
+      tables_with_data: integratedTables.filter(t => t.row_count > 0).length,
+      totalRows: integratedTables.reduce((sum, t) => sum + (t.row_count || 0), 0),
+      total_rows: integratedTables.reduce((sum, t) => sum + (t.row_count || 0), 0), // snake_case version
+      largest_table: this.findLargestTable(integratedTables),
+      averageHealthScore: integratedTables.length > 0 ?
+        integratedTables.reduce((sum, t) => sum + (t.health_score || 0), 0) / integratedTables.length : 0,
+      average_health_score: integratedTables.length > 0 ?
+        integratedTables.reduce((sum, t) => sum + (t.health_score || 0), 0) / integratedTables.length : 0, // snake_case version
+      column_types: this.summarizeColumnTypes(integratedColumns)
+    };
+
+    console.log('[MetadataIntegration] Summary data:', summaryData);
 
     return {
       tables: integratedTables,
       columns: integratedColumns,
       statistics: extractedStatistics,
-      summary: {
-        total_tables: integratedTables.length,
-        total_columns: integratedColumns.length,
-        total_statistics: extractedStatistics.length,
-        tables_with_data: integratedTables.filter(t => t.row_count > 0).length,
-        largest_table: this.findLargestTable(integratedTables),
-        column_types: this.summarizeColumnTypes(integratedColumns)
-      }
+      summary: summaryData
     };
   }
 
@@ -280,7 +294,6 @@ class MetadataIntegrationService {
     if (!statisticsResponse) return [];
 
     let extractedStatistics = [];
-    let tableRowCounts = {}; // To track row counts per table
 
     // Handle statistics_by_table structure (new format)
     const statisticsByTable = statisticsResponse?.metadata?.metadata?.statistics_by_table ||
@@ -289,44 +302,51 @@ class MetadataIntegrationService {
 
     if (statisticsByTable) {
       Object.entries(statisticsByTable).forEach(([tableName, tableData]) => {
-        // Store table-level row count
-        if (tableData.row_count !== undefined) {
-          tableRowCounts[tableName] = tableData.row_count;
-        }
-
         // Process column statistics
         if (tableData.column_statistics) {
           Object.entries(tableData.column_statistics).forEach(([columnName, columnStats]) => {
-            const basicStats = columnStats.basic || {};
-            const numericStats = columnStats.numeric || {};
-            const stringStats = columnStats.string || {};
+            // Handle both nested and flat statistics structures
+            let basicStats, numericStats, stringStats;
+
+            if (columnStats.basic || columnStats.numeric || columnStats.string) {
+              // Nested structure
+              basicStats = columnStats.basic || {};
+              numericStats = columnStats.numeric || {};
+              stringStats = columnStats.string || {};
+            } else {
+              // Flat structure - all stats are at the top level
+              basicStats = columnStats;
+              numericStats = columnStats;
+              stringStats = columnStats;
+            }
 
             extractedStatistics.push({
               table_name: tableName,
               column_name: columnName,
-              data_type: columnStats.type || 'unknown',
+              // Get data type from the column stats - your API doesn't seem to have 'type' field
+              data_type: this.inferDataTypeFromStats(columnStats, columnName) || 'unknown',
 
-              // Basic statistics
-              null_count: basicStats.null_count,
-              null_percentage: basicStats.null_percentage,
-              distinct_count: basicStats.distinct_count,
-              distinct_percentage: basicStats.distinct_percentage,
-              is_unique: basicStats.is_unique,
+              // Basic statistics - handle both nested and flat, and convert numeric booleans
+              null_count: basicStats.null_count ?? columnStats.null_count ?? null,
+              null_percentage: basicStats.null_percentage ?? columnStats.null_percentage ?? null,
+              distinct_count: basicStats.distinct_count ?? columnStats.distinct_count ?? null,
+              distinct_percentage: basicStats.distinct_percentage ?? columnStats.distinct_percentage ?? null,
+              is_unique: this.convertNumericBoolean(basicStats.is_unique ?? columnStats.is_unique),
 
               // Table-level information
-              row_count: tableData.row_count || 0,
+              row_count: tableData.general?.row_count || tableData.row_count || 0,
 
               // Type-specific statistics
-              min: numericStats.min || stringStats.min_length,
-              max: numericStats.max || stringStats.max_length,
-              avg: numericStats.avg || stringStats.avg_length,
+              min: numericStats.min_value || numericStats.min || stringStats.min_length || columnStats.min_value || columnStats.min,
+              max: numericStats.max_value || numericStats.max || stringStats.max_length || columnStats.max_value || columnStats.max,
+              avg: numericStats.avg_value || numericStats.avg || stringStats.avg_length || columnStats.avg_value || columnStats.avg,
 
               // Additional numeric stats
-              sum: numericStats.sum,
-              stddev: numericStats.stddev,
+              sum: numericStats.sum || columnStats.sum,
+              stddev: numericStats.stddev || columnStats.stddev,
 
               // Additional string stats
-              empty_count: stringStats.empty_count,
+              empty_count: stringStats.empty_count || columnStats.empty_count,
 
               // Metadata
               collected_at: tableData.collected_at
@@ -334,9 +354,6 @@ class MetadataIntegrationService {
           });
         }
       });
-
-      // Store table row counts for use in integration
-      this._tableRowCounts = tableRowCounts;
     } else {
       // Handle flat statistics structure (older format)
       const possiblePaths = [
@@ -356,8 +373,41 @@ class MetadataIntegrationService {
     }
 
     console.log('[MetadataIntegration] Extracted statistics:', extractedStatistics.length);
-    console.log('[MetadataIntegration] Table row counts:', this._tableRowCounts);
     return extractedStatistics;
+  }
+
+  /**
+   * Extract table-level statistics directly from the API response
+   * @param {Object} statisticsResponse - API response containing statistics
+   * @returns {Object} Map of table name to table statistics
+   */
+  extractTableStatistics(statisticsResponse) {
+    if (!statisticsResponse) return {};
+
+    const tableStatistics = {};
+
+    // Handle statistics_by_table structure
+    const statisticsByTable = statisticsResponse?.metadata?.metadata?.statistics_by_table ||
+                             statisticsResponse?.metadata?.statistics_by_table ||
+                             statisticsResponse?.statistics_by_table;
+
+    if (statisticsByTable) {
+      Object.entries(statisticsByTable).forEach(([tableName, tableData]) => {
+        tableStatistics[tableName] = {
+          row_count: tableData.general?.row_count || tableData.row_count || 0,
+          column_count: tableData.column_count || 0,
+          health_score: tableData.health_score || 65,
+          has_primary_key: tableData.has_primary_key || false,
+          primary_keys: tableData.primary_keys || [],
+          column_type_distribution: tableData.column_type_distribution || {},
+          nullable_columns: tableData.nullable_columns || 0,
+          non_nullable_columns: tableData.non_nullable_columns || 0,
+          collected_at: tableData.collected_at
+        };
+      });
+    }
+
+    return tableStatistics;
   }
 
   /**
@@ -380,57 +430,65 @@ class MetadataIntegrationService {
   }
 
   /**
-   * Create a map of statistics grouped by table name
-   * @param {Array} statistics - Array of statistics objects
-   * @returns {Object} Map of table name to aggregated statistics
+   * Convert numeric boolean values (1.0/0.0) to actual booleans
+   * @param {any} value - Value to convert
+   * @returns {boolean|null} Boolean value or null if undefined
    */
-  createStatisticsByTableMap(statistics) {
-    const statisticsByTable = {};
+  convertNumericBoolean(value) {
+    if (value === null || value === undefined) return null;
+    if (value === 1 || value === 1.0 || value === true) return true;
+    if (value === 0 || value === 0.0 || value === false) return false;
+    return null;
+  }
 
-    statistics.forEach(stat => {
-      const tableName = stat.table_name;
-      if (!statisticsByTable[tableName]) {
-        statisticsByTable[tableName] = {
-          row_count: stat.row_count || this._tableRowCounts?.[tableName] || 0, // Use cached row count
-          columns_analyzed: 0,
-          health_score: 65, // Default health score
-          has_primary_key: false,
-          primary_keys: [],
-          column_type_distribution: {},
-          nullable_columns: 0,
-          non_nullable_columns: 0,
-          collected_at: stat.collected_at
-        };
+  /**
+   * Infer data type from statistics when type field is not available
+   * @param {Object} columnStats - Column statistics object
+   * @param {string} columnName - Column name for pattern matching
+   * @returns {string} Inferred data type
+   */
+  inferDataTypeFromStats(columnStats, columnName) {
+    // Check if we have explicit type field
+    if (columnStats.type) {
+      return columnStats.type;
+    }
+
+    // Look for numeric indicators
+    if (columnStats.avg_value !== undefined || columnStats.min_value !== undefined || columnStats.sum !== undefined) {
+      // Looks like numeric data
+      if (columnName.toLowerCase().includes('key') || columnName.toLowerCase().includes('id')) {
+        return 'DECIMAL(38, 0)'; // Likely an ID field
       }
+      return 'DECIMAL'; // Generic decimal
+    }
 
-      const tableStats = statisticsByTable[tableName];
-      tableStats.columns_analyzed++;
-
-      // Track column type distribution
-      if (stat.data_type) {
-        const typeCategory = this.categorizeDataType(stat.data_type);
-        tableStats.column_type_distribution[typeCategory] = (tableStats.column_type_distribution[typeCategory] || 0) + 1;
+    // Look for string indicators
+    if (columnStats.avg_length !== undefined || columnStats.min_length !== undefined) {
+      const maxLen = columnStats.max_length;
+      if (maxLen && maxLen <= 50) {
+        return `VARCHAR(${maxLen})`;
       }
+      return 'VARCHAR'; // Generic varchar
+    }
 
-      // Track nullable columns
-      if (stat.null_percentage !== undefined) {
-        if (stat.null_percentage === 0) {
-          tableStats.non_nullable_columns++;
-        } else {
-          tableStats.nullable_columns++;
-        }
-      }
+    // Look for date indicators
+    if (columnStats.min_date !== undefined || columnStats.max_date !== undefined) {
+      return 'DATE';
+    }
 
-      // Update health score based on data quality indicators
-      if (stat.null_percentage > 50) {
-        tableStats.health_score = Math.max(0, tableStats.health_score - 10);
-      }
-      if (stat.is_unique) {
-        tableStats.health_score = Math.min(100, tableStats.health_score + 5);
-      }
-    });
+    // Pattern matching on column names
+    const lowerName = columnName.toLowerCase();
+    if (lowerName.includes('date') || lowerName.includes('time')) {
+      return 'DATE';
+    }
+    if (lowerName.includes('comment') || lowerName.includes('description') || lowerName.includes('name')) {
+      return 'VARCHAR';
+    }
+    if (lowerName.includes('key') || lowerName.includes('id') || lowerName.includes('number')) {
+      return 'DECIMAL';
+    }
 
-    return statisticsByTable;
+    return 'unknown';
   }
 
   /**
