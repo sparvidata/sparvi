@@ -8,7 +8,7 @@ import LoadingSpinner from '../../components/common/LoadingSpinner';
 import MetadataStatusPanel from './components/MetadataStatusPanel';
 import MetadataTasksList from './components/MetadataTasksList';
 import MetadataExplorer from './components/MetadataExplorer';
-import MetadataHistoryPanel from './components/MetadataHistoryPanel';
+// import MetadataHistoryPanel from './components/MetadataHistoryPanel'; // TEMPORARILY REMOVED
 import SchemaChangesPanel from './components/SchemaChangesPanel';
 import RefreshControls from './components/RefreshControls';
 import EmptyState from '../../components/common/EmptyState';
@@ -241,6 +241,7 @@ const MetadataPage = () => {
             Metadata Explorer
           </button>
 
+          {/* TEMPORARILY REMOVED: Metadata History tab
           <button
             className={`
               ${activeTab === 'history' 
@@ -253,6 +254,7 @@ const MetadataPage = () => {
             <ClockIcon className="mr-2 h-5 w-5" />
             Metadata History
           </button>
+          */}
 
           <button
             aria-label="Schema Changes"
@@ -399,10 +401,6 @@ const MetadataPage = () => {
                   connectionId={connectionId}
                   metadataType={selectedMetadataType}
                   metadataStatus={metadataStatus}
-                />
-              ) : activeTab === 'history' ? (
-                <MetadataHistoryPanel
-                  connectionId={connectionId}
                 />
               ) : (
                 <SchemaChangesPanel

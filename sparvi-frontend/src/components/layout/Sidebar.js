@@ -7,7 +7,7 @@ import {
   Cog6ToothIcon,
   ShieldCheckIcon,
   CommandLineIcon,
-  ExclamationTriangleIcon,
+  // ExclamationTriangleIcon, // TEMPORARILY REMOVED - was used for Anomalies
   ClockIcon
 } from '@heroicons/react/24/outline';
 import { useUI } from '../../contexts/UIContext';
@@ -27,7 +27,7 @@ const Sidebar = () => {
     { name: 'Connections', icon: ServerIcon, href: '/connections' },
     { name: 'Validations', icon: ClipboardDocumentCheckIcon, href: '/validations' },
     { name: 'Metadata', icon: CommandLineIcon, href: '/metadata' },
-    { name: 'Anomalies', icon: ExclamationTriangleIcon, href: '/anomalies' },
+    // { name: 'Anomalies', icon: ExclamationTriangleIcon, href: '/anomalies' }, // TEMPORARILY REMOVED
     {
       name: 'Automation',
       icon: ClockIcon,

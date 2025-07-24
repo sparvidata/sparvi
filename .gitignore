@@ -119,3 +119,5 @@ temp/
 
 # Supabase
 .supabase/
+/backend/REFACTORING_SUMMARY.md
+/.claude/settings.local.json
